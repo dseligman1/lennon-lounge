@@ -1,0 +1,145 @@
+name: FPL Data Sync
+
+on:
+  schedule:
+    # During active gameweeks: every 30 min Sat 12:00-23:00 and Sun 12:00-23:00 (UK time = UTC+1 BST)
+    - cron: '*/30 11-22 * * 6,0'
+    # Daily refresh at 6am UTC every day
+    - cron: '0 6 * * *'
+  workflow_dispatch: # allow manual trigger from GitHub Actions UI
+
+jobs:
+  sync-fpl:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch FPL data and write to Firebase
+        env:
+          FIREBASE_DB_URL: ${{ secrets.FIREBASE_DB_URL }}
+          FIREBASE_SERVICE_KEY: ${{ secrets.FIREBASE_SERVICE_KEY }}
+          FPL_LEAGUE_ID: ${{ secrets.FPL_LEAGUE_ID }}
+        run: |
+          node - << 'EOF'
+          const https = require('https');
+
+          const LEAGUE_ID = process.env.FPL_LEAGUE_ID;
+          const DB_URL = process.env.FIREBASE_DB_URL;
+          const SERVICE_KEY = JSON.parse(process.env.FIREBASE_SERVICE_KEY);
+
+          function fetchJson(url) {
+            return new Promise((resolve, reject) => {
+              const opts = {
+                headers: {
+                  'User-Agent': 'Mozilla/5.0',
+                  'Accept': 'application/json',
+                }
+              };
+              https.get(url, opts, res => {
+                let data = '';
+                res.on('data', chunk => data += chunk);
+                res.on('end', () => {
+                  try { resolve(JSON.parse(data)); }
+                  catch(e) { reject(new Error('Parse error: ' + data.slice(0,200))); }
+                });
+              }).on('error', reject);
+            });
+          }
+
+          async function getAccessToken(serviceKey) {
+            // Generate a JWT for Firebase service account
+            const { privateKey, clientEmail } = serviceKey;
+            const now = Math.floor(Date.now() / 1000);
+            const payload = {
+              iss: clientEmail, sub: clientEmail,
+              aud: 'https://oauth2.googleapis.com/token',
+              iat: now, exp: now + 3600,
+              scope: 'https://www.googleapis.com/auth/firebase.database https://www.googleapis.com/auth/userinfo.email'
+            };
+            const { createSign } = require('crypto');
+            const header = Buffer.from(JSON.stringify({alg:'RS256',typ:'JWT'})).toString('base64url');
+            const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+            const sign = createSign('RSA-SHA256');
+            sign.update(`${header}.${body}`);
+            const sig = sign.sign(privateKey, 'base64url');
+            const jwt = `${header}.${body}.${sig}`;
+
+            return new Promise((resolve, reject) => {
+              const postData = `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`;
+              const req = https.request({
+                hostname: 'oauth2.googleapis.com', path: '/token', method: 'POST',
+                headers: {'Content-Type':'application/x-www-form-urlencoded','Content-Length':postData.length}
+              }, res => {
+                let d = '';
+                res.on('data', c => d += c);
+                res.on('end', () => { try { resolve(JSON.parse(d).access_token); } catch(e) { reject(e); } });
+              });
+              req.on('error', reject);
+              req.write(postData);
+              req.end();
+            });
+          }
+
+          async function writeToFirebase(path, data, token) {
+            const dbHost = DB_URL.replace('https://','').replace(/\/$/, '');
+            return new Promise((resolve, reject) => {
+              const body = JSON.stringify(data);
+              const req = https.request({
+                hostname: dbHost, path: `/${path}.json`,
+                method: 'PATCH',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Content-Length': Buffer.byteLength(body),
+                  'Authorization': `Bearer ${token}`
+                }
+              }, res => {
+                let d = '';
+                res.on('data', c => d += c);
+                res.on('end', () => { console.log(`PATCH ${path}: ${res.statusCode}`); resolve(d); });
+              });
+              req.on('error', reject);
+              req.write(body);
+              req.end();
+            });
+          }
+
+          async function main() {
+            if (!LEAGUE_ID) { console.log('No FPL_LEAGUE_ID set — skipping'); return; }
+
+            console.log(`Fetching FPL league ${LEAGUE_ID}...`);
+
+            const [details, bootstrap] = await Promise.all([
+              fetchJson(`https://draft.premierleague.com/api/league/${LEAGUE_ID}/details`),
+              fetchJson('https://draft.premierleague.com/api/bootstrap-static'),
+            ]);
+
+            // Build entry map: FPL entry_id → our team name/owner
+            const league = details.league_entries || [];
+            const entryMap = {};
+            league.forEach(e => {
+              entryMap[e.entry_id] = { name: e.entry_name, owner: e.player_first_name + ' ' + e.player_last_name };
+            });
+
+            // Get current GW scores
+            const currentEvent = bootstrap.events?.find(e => e.is_current);
+            const events = {};
+            if (currentEvent) {
+              try {
+                const picks = await fetchJson(`https://draft.premierleague.com/api/event/${currentEvent.id}/live`);
+                events[currentEvent.id] = { live: true, scores: picks };
+              } catch(e) {
+                console.log('Could not fetch live scores:', e.message);
+              }
+            }
+
+            const token = await getAccessToken(SERVICE_KEY);
+            await writeToFirebase('lennon-lounge/fpl', {
+              leagueId: LEAGUE_ID,
+              entryMap,
+              events,
+              lastSync: Date.now(),
+            }, token);
+
+            console.log('FPL sync complete');
+          }
+
+          main().catch(e => { console.error('FPL sync failed:', e); process.exit(1); });
+          EOF
