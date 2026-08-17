@@ -1,0 +1,2318 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Lennon Lounge">
+<meta name="theme-color" content="#0b0014">
+<meta name="description" content="Lennon Lounge — private fantasy football betting league">
+<title>Lennon Lounge — The Bookies</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+
+<!-- Firebase SDK (compat v9) -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
+<style>
+  :root{
+    --bg0:#0b0014; --bg1:#160026; --bg2:#1f0533;
+    --card:rgba(255,255,255,.045); --card2:rgba(255,255,255,.07); --line:rgba(255,255,255,.10);
+    --teal:#00ff87; --cyan:#00d9ff; --pink:#ff2d78; --orange:#ff9d00; --gold:#ffc931; --violet:#9b5cff;
+    --text:#f6f2fa; --muted:#a995ba; --danger:#ff4d6d;
+    --grad:linear-gradient(135deg,var(--teal),var(--cyan));
+    --gradHot:linear-gradient(135deg,var(--pink),var(--orange));
+    --gradGold:linear-gradient(135deg,var(--gold),var(--orange));
+    --shadow:0 10px 40px rgba(0,0,0,.45);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;color:var(--text);min-height:100vh;
+    background:
+      radial-gradient(1200px 600px at 80% -10%, rgba(155,92,255,.22), transparent 60%),
+      radial-gradient(900px 500px at -10% 30%, rgba(0,217,255,.13), transparent 55%),
+      radial-gradient(800px 600px at 50% 110%, rgba(255,45,120,.14), transparent 60%),
+      linear-gradient(170deg,var(--bg1),var(--bg0) 70%);
+    background-attachment:fixed;
+  }
+  .display{font-family:'Archivo Black','Inter',sans-serif;letter-spacing:-.5px}
+  button{font-family:inherit;cursor:pointer;border:none;border-radius:12px}
+  input,select,textarea{font-family:inherit;background:rgba(0,0,0,.35);border:1px solid var(--line);color:var(--text);border-radius:10px;padding:9px 11px;font-size:14px}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--teal);box-shadow:0 0 0 3px rgba(0,255,135,.15)}
+  select option{background:var(--bg2)}
+  .btn{padding:11px 18px;font-weight:800;font-size:14px;background:var(--grad);color:#00210f;transition:transform .12s,box-shadow .12s,filter .12s;box-shadow:0 4px 18px rgba(0,255,135,.25)}
+  .btn:hover{transform:translateY(-2px);filter:brightness(1.08)}
+  .btn:active{transform:translateY(0)}
+  .btn.hot{background:var(--gradHot);color:#fff;box-shadow:0 4px 18px rgba(255,45,120,.3)}
+  .btn.gold{background:var(--gradGold);color:#3a2300;box-shadow:0 4px 18px rgba(255,201,49,.3)}
+  .btn.secondary{background:var(--card2);color:var(--text);border:1px solid var(--line);box-shadow:none}
+  .btn.ghost{background:transparent;color:var(--teal);border:1.5px solid var(--teal);box-shadow:none}
+  .btn.danger{background:rgba(255,77,109,.15);color:var(--danger);border:1px solid rgba(255,77,109,.4);box-shadow:none}
+  .btn.small{padding:6px 12px;font-size:12px;border-radius:9px}
+  .btn.big{padding:15px 26px;font-size:16px;border-radius:14px}
+  .btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+  /* ---------- login ---------- */
+  #login{max-width:480px;margin:5vh auto;padding:20px}
+  .login-card{background:var(--card);backdrop-filter:blur(18px);border:1px solid var(--line);border-radius:24px;padding:36px 30px;text-align:center;box-shadow:var(--shadow)}
+  .biglogo{font-size:34px;line-height:1.05}
+  .biglogo .l1{display:block;font-size:15px;color:var(--muted);font-weight:700;letter-spacing:3px;text-transform:uppercase;margin-bottom:6px}
+  .gradtxt{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .hottxt{background:var(--gradHot);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .tagline{color:var(--muted);font-size:13px;margin:10px 0 26px}
+  /* ---------- shell ---------- */
+  #app{display:none;max-width:1150px;margin:0 auto;padding:0 14px 90px}
+  header{position:sticky;top:0;z-index:40;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 16px;margin:10px 0 16px;background:rgba(15,0,28,.75);backdrop-filter:blur(16px);border:1px solid var(--line);border-radius:18px;flex-wrap:wrap}
+  .userswitch{display:flex;align-items:center;gap:8px}
+  .userswitch select{font-weight:700;max-width:230px}
+  .balancechip{font-size:12px;font-weight:800;padding:7px 13px;border-radius:20px;background:var(--card2);border:1px solid var(--line)}
+  nav{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}
+  nav button{position:relative;background:var(--card);border:1px solid var(--line);color:var(--muted);padding:11px 17px;font-weight:800;font-size:13.5px;border-radius:14px;transition:all .15s}
+  nav button:hover{color:var(--text);transform:translateY(-1px)}
+  nav button.active{background:var(--grad);color:#00210f;border-color:transparent;box-shadow:0 4px 20px rgba(0,255,135,.3)}
+  nav button.houseTab{border-color:rgba(255,201,49,.25);color:#d9b25c}
+  nav button.houseTab.active{background:var(--gradGold);color:#3a2300;box-shadow:0 4px 20px rgba(255,201,49,.3)}
+  nav .badge{position:absolute;top:-7px;right:-7px;background:var(--gradHot);color:#fff;border-radius:11px;padding:2px 8px;font-size:11px;font-weight:900;animation:pulse 1.6s infinite}
+  @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.18)}}
+  h2{font-size:24px;margin-bottom:6px}
+  .sub{color:var(--muted);font-size:13.5px;margin-bottom:18px}
+  h3{font-size:15px;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+  .card{background:var(--card);backdrop-filter:blur(14px);border:1px solid var(--line);border-radius:20px;padding:20px;margin-bottom:16px;box-shadow:var(--shadow)}
+  .card.glow{border-color:rgba(0,255,135,.3)}
+  .grid2{display:grid;grid-template-columns:1fr 370px;gap:18px;align-items:start}
+  @media(max-width:880px){.grid2{grid-template-columns:1fr}}
+  .muted{color:var(--muted);font-size:13px}
+  .small{font-size:12px}
+  .mono{font-variant-numeric:tabular-nums}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th{text-align:left;color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:1px;padding:9px 8px;border-bottom:1px solid var(--line)}
+  td{padding:10px 8px;border-bottom:1px solid rgba(255,255,255,.05)}
+  tr:last-child td{border-bottom:none}
+  .pos{color:var(--teal);font-weight:800}.neg{color:var(--pink);font-weight:800}
+  .hr{border:none;border-top:1px solid var(--line);margin:16px 0}
+  details summary{cursor:pointer;font-weight:700;font-size:13.5px;padding:6px 0;color:var(--muted)}
+  /* ---------- matches & odds ---------- */
+  .gwhead{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+  .deadline{font-size:12.5px;font-weight:800;padding:6px 12px;border-radius:20px;background:rgba(255,201,49,.12);color:var(--gold);border:1px solid rgba(255,201,49,.3)}
+  .deadline.passed{background:rgba(255,45,120,.12);color:var(--pink);border-color:rgba(255,45,120,.35)}
+  .match{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;padding:14px 16px;border:1px solid var(--line);border-radius:16px;margin-bottom:10px;background:var(--card2);transition:border-color .15s}
+  .match:hover{border-color:rgba(0,255,135,.25)}
+  .match .names{font-weight:800;font-size:14.5px}
+  .match .names .vs{color:var(--muted);font-weight:600;font-size:12px;padding:0 6px}
+  .oddsbtns{display:flex;gap:7px}
+  .oddbtn{position:relative;background:rgba(0,0,0,.35);border:1px solid var(--line);color:var(--muted);border-radius:12px;padding:8px 12px;min-width:70px;text-align:center;font-size:11px;font-weight:700;transition:all .13s}
+  .oddbtn b{display:block;font-size:15px;color:var(--text);margin-top:2px}
+  .oddbtn:hover{transform:translateY(-2px);border-color:var(--teal)}
+  .oddbtn.sel{background:var(--grad);color:#00210f;border-color:transparent;box-shadow:0 4px 16px rgba(0,255,135,.35)}
+  .oddbtn.sel b{color:#00210f}
+  .oddbtn.boost{border-color:var(--gold);box-shadow:0 0 14px rgba(255,201,49,.25)}
+  .oddbtn .was{text-decoration:line-through;opacity:.55;font-size:10px;margin-right:4px}
+  .oddbtn .fire{position:absolute;top:-9px;right:-6px;font-size:14px;filter:drop-shadow(0 0 6px rgba(255,157,0,.8))}
+  /* ---------- slip ---------- */
+  .slip{position:sticky;top:84px}
+  .slipleg{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px dashed var(--line);font-size:13px;gap:8px}
+  .x{background:none;color:var(--pink);font-size:17px;font-weight:900;padding:0 4px}
+  .bigodds{font-size:26px;font-weight:900}
+  /* ---------- pills/status ---------- */
+  .pill{display:inline-block;padding:4px 11px;border-radius:14px;font-size:10.5px;font-weight:900;text-transform:uppercase;letter-spacing:.6px}
+  .st-pending{background:rgba(255,201,49,.15);color:var(--gold)}
+  .st-accepted{background:rgba(0,255,135,.13);color:var(--teal)}
+  .st-rejected,.st-expired{background:rgba(255,45,120,.13);color:var(--pink)}
+  .st-cancelled{background:var(--card2);color:var(--muted)}
+  .st-counter_house,.st-counter_user{background:rgba(0,217,255,.12);color:var(--cyan)}
+  .st-won{background:var(--grad);color:#00210f}
+  .st-lost{background:var(--gradHot);color:#fff}
+  .st-void{background:#444;color:#ddd}
+  .flag{display:inline-block;padding:2px 9px;border-radius:10px;font-size:10px;font-weight:800;margin-left:6px}
+  .flag.late{background:var(--gradHot);color:#fff}
+  .flag.limit{background:rgba(255,201,49,.2);color:var(--gold);border:1px solid rgba(255,201,49,.4)}
+  /* ---------- bet cards ---------- */
+  .bet{border:1px solid var(--line);border-radius:18px;padding:16px;margin-bottom:12px;background:var(--card2)}
+  .bet.needsme{border-color:var(--cyan);box-shadow:0 0 18px rgba(0,217,255,.15)}
+  .bet .top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+  .bet .legs{font-size:13px;margin:8px 0;list-style:none}
+  .bet .legs li{padding:5px 0}
+  .nums{display:flex;gap:22px;font-size:12px;margin:10px 0;flex-wrap:wrap;color:var(--muted)}
+  .nums b{display:block;font-size:15px;color:var(--text);margin-top:2px}
+  .chat{background:rgba(0,0,0,.3);border-radius:12px;padding:12px;margin-top:10px;max-height:230px;overflow-y:auto}
+  .msg{margin-bottom:9px;font-size:13px}
+  .msg .who{font-weight:800;font-size:10.5px;color:var(--muted)}
+  .msg.house .who{color:var(--gold)}
+  .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .counterbox{background:rgba(0,0,0,.3);border-radius:12px;padding:14px;margin-top:10px;display:none}
+  .counterbox.open{display:block}
+  .formrow{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px}
+  .formrow label{display:block;font-size:10.5px;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.8px;font-weight:700}
+  textarea{width:100%;min-height:80px}
+  /* ---------- section tabs (My Bets / Results) ---------- */
+  .sectabs{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:16px}
+  .sectabs button{background:var(--card);border:1px solid var(--line);color:var(--muted);padding:8px 14px;border-radius:20px;font-weight:800;font-size:12.5px;position:relative}
+  .sectabs button.active{background:var(--card2);color:var(--text);border-color:var(--teal)}
+  .sectabs .cnt{margin-left:6px;opacity:.7;font-weight:700}
+  .sectabs .dotflag{position:absolute;top:-3px;right:-3px;width:10px;height:10px;border-radius:50%;background:var(--gradHot);animation:pulse 1.6s infinite}
+  /* ---------- THE ALGO ---------- */
+  .algozone{border:1px solid rgba(155,92,255,.35);border-radius:20px;padding:22px;margin-bottom:16px;background:linear-gradient(160deg,rgba(155,92,255,.10),rgba(0,217,255,.05));box-shadow:0 0 30px rgba(155,92,255,.12)}
+  .algocard{background:rgba(0,0,0,.35);border:1px solid rgba(155,92,255,.4);border-radius:18px;padding:20px;margin:14px 0;min-height:150px;display:flex;flex-direction:column;justify-content:center;transition:transform .15s}
+  .algocard.spinning .roll{animation:rollblur .14s linear infinite}
+  @keyframes rollblur{0%{filter:blur(0);transform:translateY(0)}50%{filter:blur(3px);transform:translateY(-7px)}100%{filter:blur(0);transform:translateY(0)}}
+  .algoodds{font-size:30px;font-weight:900}
+  .algoactions{display:flex;gap:10px;justify-content:center;margin-top:6px}
+  /* ---------- overlays ---------- */
+  #bosh{position:fixed;inset:0;z-index:90;display:none;align-items:center;justify-content:center;pointer-events:none;overflow:hidden}
+  #bosh.go{display:flex}
+  #bosh .flashbg{position:absolute;inset:0;background:radial-gradient(circle,rgba(0,255,135,.28),transparent 65%);animation:flashin .5s ease-out}
+  @keyframes flashin{from{opacity:0}to{opacity:1}}
+  #bosh .ball{position:absolute;font-size:90px;animation:kick 1.5s cubic-bezier(.2,.8,.3,1) forwards}
+  @keyframes kick{0%{transform:translate(-60vw,40vh) rotate(0)}45%{transform:translate(0,-4vh) rotate(540deg) scale(1.25)}60%{transform:translate(4vw,-2vh) rotate(620deg) scale(1.1)}100%{transform:translate(70vw,-45vh) rotate(1080deg) scale(.6);opacity:.3}}
+  #bosh .boshtxt{font-family:'Archivo Black',sans-serif;font-size:13vw;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;transform:skew(-8deg);animation:boshpop 1.5s cubic-bezier(.2,1.6,.4,1) forwards;filter:drop-shadow(0 8px 30px rgba(0,255,135,.5))}
+  @keyframes boshpop{0%{transform:scale(0) skew(-8deg);opacity:0}30%{transform:scale(1.15) skew(-8deg);opacity:1}55%{transform:scale(1) skew(-8deg)}80%{opacity:1}100%{transform:scale(1.05) skew(-8deg);opacity:0}}
+  .confetto{position:absolute;width:10px;height:14px;top:45%;left:50%;opacity:0;animation:conf 1.5s ease-out forwards}
+  @keyframes conf{0%{opacity:1;transform:translate(0,0) rotate(0)}100%{opacity:0;transform:translate(var(--dx),var(--dy)) rotate(var(--rot))}}
+  /* promo popup */
+  #promoPop{position:fixed;right:18px;bottom:18px;z-index:80;width:320px;display:none;border-radius:20px;padding:2px;background:conic-gradient(from var(--ang,0deg),var(--gold),var(--pink),var(--cyan),var(--gold));animation:spinborder 3s linear infinite, slidein .5s cubic-bezier(.2,1.4,.4,1)}
+  @property --ang{syntax:'<angle>';initial-value:0deg;inherits:false}
+  @keyframes spinborder{to{--ang:360deg}}
+  @keyframes slidein{from{transform:translateY(120%)}to{transform:translateY(0)}}
+  #promoPop .inner{background:var(--bg2);border-radius:18px;padding:18px}
+  #promoPop .ptitle{font-family:'Archivo Black',sans-serif;font-size:18px}
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--grad);color:#00210f;font-weight:800;padding:13px 24px;border-radius:14px;display:none;z-index:99;box-shadow:var(--shadow);font-size:14px}
+  .toast.err{background:var(--gradHot);color:#fff}
+  /* ---------- loader / calendar ---------- */
+  .calgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin:10px 0}
+  .calgrid .dayhead{text-align:center;font-size:10px;color:var(--muted);font-weight:800;text-transform:uppercase}
+  .daychip{padding:9px 0;text-align:center;border-radius:10px;background:rgba(0,0,0,.3);border:1px solid var(--line);font-size:12.5px;font-weight:700;cursor:pointer}
+  .daychip:hover{border-color:var(--teal)}
+  .daychip.sel{background:var(--grad);color:#00210f;border-color:transparent}
+  .daychip.off{opacity:.25;pointer-events:none}
+  .timechips{display:flex;gap:7px;flex-wrap:wrap;margin:8px 0}
+  .timechip{padding:8px 14px;border-radius:20px;background:rgba(0,0,0,.3);border:1px solid var(--line);font-size:13px;font-weight:800;cursor:pointer}
+  .timechip:hover{border-color:var(--teal)}
+  .timechip.sel{background:var(--grad);color:#00210f;border-color:transparent}
+  .fixrow{display:grid;grid-template-columns:24px 1fr 30px 1fr;gap:8px;align-items:center;margin-bottom:8px}
+  .fixrow .num{color:var(--muted);font-weight:800;font-size:12px}
+  .fixrow .vsmid{text-align:center;color:var(--muted);font-weight:800;font-size:11px}
+  .dropzone{border:2px dashed var(--line);border-radius:16px;padding:24px;text-align:center;color:var(--muted);font-size:13px;cursor:pointer;transition:border-color .15s}
+  .dropzone:hover{border-color:var(--cyan)}
+  .dropzone img{max-width:100%;max-height:260px;border-radius:10px;margin-top:10px}
+  .codegrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:9px}
+  .codecard{background:rgba(0,0,0,.3);border:1px solid var(--line);border-radius:12px;padding:12px;font-size:13px}
+  .statgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:9px}
+  .helpbox{background:rgba(0,217,255,.06);border:1px solid rgba(0,217,255,.22);border-radius:14px;padding:14px;font-size:13px;margin-bottom:16px;color:var(--muted)}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px}
+  .kpi{background:var(--card2);border:1px solid var(--line);border-radius:16px;padding:14px}
+  .kpi .v{font-size:22px;font-weight:900;margin-top:4px}
+  .kpi .l{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;font-weight:700}
+  /* ---------- topbar ---------- */
+  #topbar{position:sticky;top:0;z-index:40;background:rgba(11,0,20,.9);backdrop-filter:blur(18px);margin:0 -14px 18px;padding:8px 14px 0;border-bottom:1px solid var(--line)}
+  #topbar header{position:static;background:transparent;border:none;margin:0 0 8px;padding:6px 2px;backdrop-filter:none}
+  #topbar nav{margin-bottom:10px}
+  .homegrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:16px;align-items:start}
+  .quickrow{display:flex;gap:10px;flex-wrap:wrap;margin:4px 0 18px}
+  .lr{display:inline-block;min-width:22px;text-align:center;border-radius:8px;font-size:11px;font-weight:900;padding:2px 7px;margin-right:7px}
+  .lr.won{background:rgba(0,255,135,.18);color:var(--teal)}
+  .lr.lost{background:rgba(255,45,120,.18);color:var(--pink)}
+  .lr.pend{background:var(--card2);color:var(--muted)}
+  .lr.void{background:#444;color:#ddd}
+  .legscore{color:var(--muted);font-size:11px;margin-left:6px}
+  .livechip{background:rgba(255,45,120,.15);color:var(--pink);border:1px solid rgba(255,45,120,.4);border-radius:12px;padding:3px 10px;font-size:10.5px;font-weight:900;animation:pulse 1.6s infinite;display:inline-block}
+  .chatbox{max-height:280px;overflow-y:auto;background:rgba(0,0,0,.3);border-radius:12px;padding:12px;margin-bottom:10px}
+  .chatmsg{margin-bottom:10px;font-size:13px}
+  .chatmsg .cwho{font-weight:800;font-size:11px;color:var(--cyan)}
+  .chatmsg.h .cwho{color:var(--gold)}
+  .chatrow{display:flex;gap:8px}
+  .chatrow input{flex:1}
+  .warnbox{border-radius:12px;padding:10px 14px;font-size:13px;font-weight:700;margin:10px 0}
+  .warnbox.red{background:rgba(255,45,120,.12);color:var(--pink);border:1px solid rgba(255,45,120,.35)}
+  .warnbox.amber{background:rgba(255,201,49,.1);color:var(--gold);border:1px solid rgba(255,201,49,.3)}
+  /* ---------- Mobile Bottom Nav ---------- */
+  #bottomNav{position:fixed;bottom:0;left:0;right:0;z-index:50;background:rgba(11,0,20,.95);backdrop-filter:blur(16px);border-top:1px solid var(--line);padding:8px 4px env(safe-area-inset-bottom);display:none;justify-content:space-around;align-items:center}
+  @media(min-width:700px){#bottomNav{display:none!important}}
+  @media(max-width:699px){#bottomNav{display:flex}#app{padding-bottom:80px}#topbar nav{display:none}}
+  .bnav-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 4px;background:none;border:none;color:var(--muted);font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;cursor:pointer;transition:color .15s;position:relative;border-radius:12px}
+  .bnav-btn.active{color:var(--teal)}
+  .bnav-btn .icon{font-size:20px;line-height:1}
+  .bnav-btn .badge{position:absolute;top:2px;right:calc(50% - 18px);background:var(--gradHot);color:#fff;border-radius:10px;padding:1px 6px;font-size:10px;font-weight:900}
+  /* ---------- Notification Bell + Panel ---------- */
+  .notif-bell{position:relative;background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:8px 10px;cursor:pointer;font-size:18px;line-height:1;transition:border-color .15s}
+  .notif-bell:hover{border-color:var(--cyan)}
+  .notif-bell .dot{position:absolute;top:-4px;right:-4px;width:14px;height:14px;border-radius:50%;background:var(--gradHot);border:2px solid var(--bg1);font-size:8px;font-weight:900;color:#fff;display:flex;align-items:center;justify-content:center;animation:pulse 1.6s infinite}
+  #notifPanel{position:fixed;top:0;right:0;bottom:0;width:340px;max-width:95vw;z-index:60;background:rgba(15,0,28,.97);backdrop-filter:blur(20px);border-left:1px solid var(--line);transform:translateX(100%);transition:transform .3s;padding:20px;overflow-y:auto}
+  #notifPanel.open{transform:translateX(0)}
+  #notifOverlay{position:fixed;inset:0;z-index:59;background:rgba(0,0,0,.5);display:none}
+  #notifOverlay.open{display:block}
+  .notif-item{padding:12px;border-radius:14px;margin-bottom:10px;background:var(--card2);border:1px solid var(--line);font-size:13px;cursor:pointer;transition:border-color .15s}
+  .notif-item:hover{border-color:var(--cyan)}
+  .notif-item.unread{border-color:var(--cyan);background:rgba(0,217,255,.06)}
+  .notif-item .nt{font-size:10.5px;color:var(--muted);margin-top:4px}
+  /* ---------- PIN Login ---------- */
+  .pin-input{display:flex;gap:10px;justify-content:center;margin:18px 0}
+  .pin-digit{width:48px;height:58px;font-size:24px;font-weight:900;text-align:center;border:2px solid var(--line);border-radius:14px;background:rgba(0,0,0,.4);color:var(--text);caret-color:var(--teal)}
+  .pin-digit:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(0,255,135,.15);outline:none}
+  .team-select-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin:14px 0;max-height:280px;overflow-y:auto}
+  .team-chip{background:var(--card2);border:1px solid var(--line);border-radius:14px;padding:12px;cursor:pointer;transition:all .15s;text-align:center}
+  .team-chip:hover,.team-chip.sel{border-color:var(--teal);background:rgba(0,255,135,.08)}
+  .team-chip .tc-name{font-weight:800;font-size:13px;margin-bottom:2px}
+  .team-chip .tc-owner{color:var(--muted);font-size:11px}
+</style>
+</head>
+<body>
+
+<!-- Login Screen -->
+<div id="login">
+  <div class="login-card">
+    <div class="biglogo display">
+      <span class="l1">When life gives you Lennons</span>
+      <span class="gradtxt">LENNON</span> <span class="hottxt">LOUNGE</span>
+    </div>
+    <div class="tagline">Private members' bookmaker · est. in a group chat</div>
+    <div style="margin-bottom:14px">
+      <div class="muted small" style="margin-bottom:10px;text-align:center">Select your team:</div>
+      <div class="team-select-grid" id="teamGrid"></div>
+    </div>
+    <div style="text-align:center;margin-bottom:10px">
+      <div class="muted small" style="margin-bottom:10px">Enter your 6-digit PIN:</div>
+      <div class="pin-input">
+        <input class="pin-digit" type="password" inputmode="numeric" maxlength="1" id="pin0">
+        <input class="pin-digit" type="password" inputmode="numeric" maxlength="1" id="pin1">
+        <input class="pin-digit" type="password" inputmode="numeric" maxlength="1" id="pin2">
+        <input class="pin-digit" type="password" inputmode="numeric" maxlength="1" id="pin3">
+        <input class="pin-digit" type="password" inputmode="numeric" maxlength="1" id="pin4">
+        <input class="pin-digit" type="password" inputmode="numeric" maxlength="1" id="pin5">
+      </div>
+    </div>
+    <button class="btn big" style="width:100%" onclick="doLogin()">Enter the Lounge</button>
+    <div id="loginErr" class="muted" style="color:var(--pink);margin-top:10px;display:none;text-align:center">Incorrect PIN — try again</div>
+    <div id="loginLoading" style="display:none;text-align:center;color:var(--muted);margin-top:10px;font-size:13px">Connecting to Lennon Lounge...</div>
+  </div>
+</div>
+
+<!-- Main App -->
+<div id="app" style="display:none">
+  <div id="topbar">
+    <header>
+      <div class="display" style="font-size:17px"><span class="gradtxt">LENNON</span> <span class="hottxt">LOUNGE</span></div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <span class="balancechip" id="myPnl"></span>
+        <button class="notif-bell" id="notifBell" onclick="toggleNotifPanel()">🔔<span class="dot" id="notifDot" style="display:none">!</span></button>
+        <button class="btn small secondary" onclick="logout()">Out</button>
+      </div>
+    </header>
+    <nav id="nav"></nav>
+  </div>
+  <main id="view"></main>
+</div>
+
+<!-- Mobile Bottom Nav -->
+<div id="bottomNav">
+  <button class="bnav-btn" id="bn-home" onclick="go('home')"><span class="icon">🏟️</span>Home</button>
+  <button class="bnav-btn" id="bn-builder" onclick="go('builder')"><span class="icon">⚽</span>Bets</button>
+  <button class="bnav-btn" id="bn-mybets" onclick="go('mybets')"><span class="icon">🧾</span>My Bets</button>
+  <button class="bnav-btn" id="bn-results" onclick="go('results')"><span class="icon">🏆</span>Results</button>
+  <button class="bnav-btn" id="bn-more" onclick="go('usettings')"><span class="icon">⚙️</span>More</button>
+</div>
+
+<!-- Notification Panel -->
+<div id="notifOverlay" onclick="closeNotifPanel()"></div>
+<div id="notifPanel">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+    <h3 style="margin:0">🔔 Notifications</h3>
+    <button class="btn small secondary" onclick="markAllRead()">Mark all read</button>
+  </div>
+  <div id="notifList"><div class="muted" style="text-align:center;padding:20px">Loading...</div></div>
+</div>
+
+<!-- BOSH! overlay -->
+<div id="bosh"><div class="flashbg"></div><div class="boshtxt">BOSH!</div><div class="ball">⚽</div><div id="confetti"></div></div>
+<div id="promoPop"></div>
+<div class="toast" id="toast"></div>
+
+
+<script>
+/* ================================================================
+   LENNON LOUNGE v2.0 — Firebase-backed multi-device webapp
+   ================================================================
+
+   SETUP REQUIRED:
+   1. Create a Firebase project at console.firebase.google.com
+   2. Enable Realtime Database (start in test mode initially)
+   3. Replace FIREBASE_CONFIG below with your project's values
+      (Project Settings → Your apps → Web app)
+   4. Set your FPL league numeric ID in Back Office → FPL Settings
+      (find it in the URL: draft.premierleague.com/league/XXXXX/standings)
+
+   FIRST-RUN: On first load, PINs are auto-generated for all 12 teams.
+   Go to Back Office (admin only) to see all PINs and share with players.
+
+   HOSTING: Deploy to GitHub Pages — just commit this file to your
+   repo and enable Pages. Push updates and everyone gets them instantly.
+================================================================ */
+
+// ── PART 2: Core JS (Firebase + Auth + State + Pricing) ─────────────
+// ══════════════════════════════════════════════════════════
+//  FIREBASE CONFIG — replace with your project's values
+//  Firebase Console → Project Settings → Your apps → Web app
+// ══════════════════════════════════════════════════════════
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyBZ--_agcsiLe2JVxhhliy8pQgm_6DQmOM",
+  authDomain: "lennon-lounge---draft-bet.firebaseapp.com",
+  databaseURL: "https://lennon-lounge---draft-bet-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "lennon-lounge---draft-bet",
+  storageBucket: "lennon-lounge---draft-bet.firebasestorage.app",
+  messagingSenderId: "563963852636",
+  appId: "1:563963852636:web:3f60fdb194e5bf016bf399",
+  measurementId: "G-KMF6MKCSVF"
+};
+firebase.initializeApp(FIREBASE_CONFIG);
+const db = firebase.database();
+const ROOT = 'lennon-lounge';
+const AUTH_ROOT = 'lennon-lounge-auth';
+
+/* ================================================================
+   SEED DATA
+   ================================================================ */
+const TEAMS = [
+  {id:'selig',  name:"Selig's Shakers",      owner:'Daniel',  admin:true,  base:56},
+  {id:'rowez',  name:'Inter Rowe-Z',          owner:'Jack',    admin:true,  base:48},
+  {id:'murov',  name:'The Murovers',          owner:'Alex',    admin:false, base:55},
+  {id:'fride',  name:'Fride FC',              owner:'Benjamin',admin:false, base:53},
+  {id:'round',  name:'Roundabout Rangers',    owner:'Adam',    admin:false, base:52},
+  {id:'dunny',  name:'DUNNEY MONSTERS',       owner:'James',   admin:false, base:51},
+  {id:'adder',  name:'The Adders FC',         owner:'Jacob',   admin:false, base:50},
+  {id:'kapil',  name:'KapilaMockingbirds',    owner:'Sam',     admin:false, base:49},
+  {id:'blank',  name:'Blanks Bruisers',       owner:'Simon',   admin:false, base:49},
+  {id:'henry',  name:"Henry's Heroes",        owner:'Ben',     admin:false, base:47},
+  {id:'disco',  name:"Disco Dave's Dodgers",  owner:'Jason',   admin:false, base:46},
+  {id:'huxle',  name:'HUXLEY',                owner:'Ryan',    admin:false, base:45},
+];
+const DEFAULT_SETTINGS = { maxStake:300, maxPayout:10000, accaMarginPct:10, algoEdgePct:20, minStake:1 };
+const SD = 15;
+
+/* ================================================================
+   GLOBALS
+   ================================================================ */
+let S = null, me = null, slip = [], slipBundles = [], activeTab = 'home';
+let myBetsSec = 'auto', resultsSec = 'standings', algoCurrent = null;
+let builderSec = 'pre', boosterSel = null, algoStakeVal = 10;
+let dbListener = null;
+let authPins = {};
+
+/* ================================================================
+   STATE
+   ================================================================ */
+function freshState() {
+  return {
+    v: 3,
+    settings: {...DEFAULT_SETTINGS},
+    teams: TEAMS.map(t => ({id:t.id, name:t.name, owner:t.owner, admin:t.admin})),
+    stats: Object.fromEntries(TEAMS.map(t => [t.id, {base:t.base}])),
+    gameweeks: [], bets: [], promos: [], chat: [], audit: [], boosters: {},
+    fpl: {leagueId:'', entryMap:{}, events:{}, lastSync:null},
+    history: [], fplFixtures: {},
+    sim: {holdback:5, events:{}},
+    seq: 1
+  };
+}
+
+function migrate(s) {
+  ['chat','audit','history'].forEach(k => { if (!Array.isArray(s[k])) s[k] = []; });
+  if (!s.promos) s.promos = [];
+  if (!s.boosters) s.boosters = {};
+  if (!s.fpl) s.fpl = {leagueId:'', entryMap:{}, events:{}, lastSync:null};
+  if (!s.fplFixtures) s.fplFixtures = {};
+  if (!s.sim) s.sim = {holdback:5, events:{}};
+  if (s.settings && s.settings.algoEdgePct == null) s.settings.algoEdgePct = 20;
+  if (s.settings && s.settings.maxPayout === 1000) s.settings.maxPayout = 10000;
+  if (!s.seq) s.seq = 1;
+  return s;
+}
+
+function nid(p) { return p + '_' + (S.seq++); }
+
+/* ================================================================
+   FIREBASE SAVE / LOAD
+   ================================================================ */
+let _saveTimer = null;
+function save() {
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(() => {
+    if (!S) return;
+    db.ref(ROOT).set(S).catch(e => console.error('Save failed:', e));
+  }, 300);
+}
+
+function saveNow() {
+  if (!S) return Promise.resolve();
+  return db.ref(ROOT).set(S);
+}
+
+function load() {
+  S = freshState();
+}
+
+function startListener() {
+  if (dbListener) return;
+  dbListener = db.ref(ROOT).on('value', snap => {
+    const data = snap.val();
+    if (!data) {
+      S = freshState();
+      db.ref(ROOT).set(S);
+    } else {
+      S = migrate(data);
+    }
+    if (me) render();
+  }, err => {
+    toast('Connection error: ' + err.message, true);
+  });
+}
+
+/* ================================================================
+   AUTH — 6-digit PIN
+   ================================================================ */
+function genPin() {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+async function loadAuth() {
+  const snap = await db.ref(AUTH_ROOT).once('value');
+  const data = snap.val() || {};
+  if (Object.keys(data).length === 0) {
+    authPins = {};
+    TEAMS.forEach(t => { authPins[t.id] = genPin(); });
+    await db.ref(AUTH_ROOT).set(authPins);
+  } else {
+    authPins = data;
+  }
+}
+
+function getPinFromInputs() {
+  return [0,1,2,3,4,5].map(i => {
+    const el = document.getElementById('pin'+i);
+    return el ? el.value : '';
+  }).join('');
+}
+
+function doLogin() {
+  const selectedChip = document.querySelector('.team-chip.sel');
+  if (!selectedChip) { toast('Please select your team first', true); return; }
+  const tid = selectedChip.dataset.id;
+  const pin = getPinFromInputs();
+  if (pin.length !== 6) { toast('Enter your full 6-digit PIN', true); return; }
+
+  // Check if entered PIN matches the target team's PIN
+  const correctPin = authPins[tid] === pin;
+
+  // Admin override: admins can access any account with their own PIN
+  const adminOverride = TEAMS.filter(t => t.admin).some(t => authPins[t.id] === pin);
+
+  if (correctPin || adminOverride) {
+    switchUser(tid);
+  } else {
+    document.getElementById('loginErr').style.display = 'block';
+    [0,1,2,3,4,5].forEach(i => {
+      const el = document.getElementById('pin'+i);
+      if (el) el.value = '';
+    });
+    const p0 = document.getElementById('pin0');
+    if (p0) p0.focus();
+  }
+}
+
+function changePin(newPin) {
+  if (!me || newPin.length !== 6 || !/^\d{6}$/.test(newPin)) return Promise.reject('Invalid PIN');
+  authPins[me.id] = newPin;
+  return db.ref(AUTH_ROOT + '/' + me.id).set(newPin);
+}
+
+function switchUser(tid) {
+  const t = TEAMS.find(x => x.id === tid);
+  if (!t) return;
+  me = S ? S.teams.find(x => x.id === tid) : null;
+  if (!me) me = {id:t.id, name:t.name, owner:t.owner, admin:t.admin};
+  sessionStorage.setItem('wlgyl_user', tid);
+  slip = []; slipBundles = []; boosterSel = null; algoCurrent = null;
+  activeTab = 'home'; myBetsSec = 'auto'; builderSec = 'pre';
+  document.getElementById('login').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  const bn = document.getElementById('bottomNav');
+  if (bn) bn.style.display = '';
+  startListener();
+  if (S) render();
+  setTimeout(maybeShowPromo, 900);
+}
+
+function logout() {
+  if (dbListener) {
+    db.ref(ROOT).off('value', dbListener);
+    dbListener = null;
+  }
+  me = null;
+  sessionStorage.removeItem('wlgyl_user');
+  document.getElementById('login').style.display = '';
+  document.getElementById('app').style.display = 'none';
+  const bn = document.getElementById('bottomNav');
+  if (bn) bn.style.display = 'none';
+  closeNotifPanel();
+}
+
+/* ================================================================
+   HELPERS
+   ================================================================ */
+const team = id => S && S.teams ? S.teams.find(t=>t.id===id) : TEAMS.find(t=>t.id===id);
+const gw = id => S.gameweeks.find(g=>g.id===id);
+const GBP = n => (n<0?'-£':'£') + Math.abs(n).toFixed(2);
+const fmtOdds = n => Number(n).toFixed(2);
+const fmtDT = ts => ts ? new Date(ts).toLocaleString('en-GB',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',timeZone:'Europe/London'}) : '—';
+
+function ukOffsetMin(ts){
+  const p=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/London',hour12:false,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).formatToParts(ts);
+  const g=t=>+p.find(x=>x.type===t).value;
+  return (Date.UTC(g('year'),g('month')-1,g('day'),g('hour')%24,g('minute'))-ts)/60000;
+}
+function ukWallToTs(y,mo,d,hh,mm){
+  let ts=Date.UTC(y,mo-1,d,hh,mm);
+  ts=Date.UTC(y,mo-1,d,hh,mm)-ukOffsetMin(ts)*60000;
+  ts=Date.UTC(y,mo-1,d,hh,mm)-ukOffsetMin(ts)*60000;
+  return ts;
+}
+function ukToday(){
+  const p=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/London',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(Date.now());
+  const g=t=>+p.find(x=>x.type===t).value;
+  return {y:g('year'), m:g('month'), d:g('day')};
+}
+function parseDTLocal(val){
+  const m=String(val).match(/(\d+)-(\d+)-(\d+)T(\d+):(\d+)/);
+  return m? ukWallToTs(+m[1],+m[2],+m[3],+m[4],+m[5]) : null;
+}
+const esc = s => String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function toast(msg, err){
+  const t=document.getElementById('toast');
+  if (!t) return;
+  t.textContent=msg; t.className='toast'+(err?' err':''); t.style.display='block';
+  clearTimeout(t._h); t._h=setTimeout(()=>t.style.display='none',2800);
+}
+function gwDeadlinePassed(g){ return g.deadline && Date.now()>g.deadline; }
+function publishedGws(){ return S.gameweeks.filter(g=>g.status==='open'); }
+function bettableNow(g){
+  if(g.status!=='open') return null;
+  const now=Date.now();
+  if(!g.deadline||now<g.deadline) return 'pre';
+  if(g.kickoff&&now>=g.kickoff&&(!g.inplayCutoff||now<g.inplayCutoff)) return 'inplay';
+  return null;
+}
+function audit(action, detail){
+  S.audit.push({at:Date.now(), by:me?me.id:'system', action, detail:String(detail||'')});
+  if(S.audit.length>500) S.audit=S.audit.slice(-500);
+}
+
+/* ================================================================
+   PRICING & SETTLEMENT ENGINE (pure functions — copied verbatim)
+   ================================================================ */
+const phi = x => 1/(1+Math.exp(-1.702*x));
+function teamAvg(state, tid){
+  const base = (state.stats[tid]&&state.stats[tid].base)||50;
+  let sum=0,n=0;
+  const localEvents=new Set(state.gameweeks.filter(g=>g.event&&g.matches.some(m=>m.result)).map(g=>g.event));
+  (state.history||[]).forEach(h=>{
+    if(localEvents.has(h.event)) return;
+    if(h.a===tid){sum+=h.ap;n++;}
+    if(h.b===tid){sum+=h.bp;n++;}
+  });
+  state.gameweeks.forEach(g=>g.matches.forEach(m=>{
+    if(!m.result) return;
+    if(m.home===tid){sum+=m.result.homePts;n++;}
+    if(m.away===tid){sum+=m.result.awayPts;n++;}
+  }));
+  return n? (base*2+sum)/(2+n) : base;
+}
+function recOdds(state, homeId, awayId){
+  const dA=teamAvg(state,homeId), dB=teamAvg(state,awayId);
+  const pD=0.08;
+  const pH=(1-pD)/(1+Math.pow(10,-(dA-dB)/20));
+  const pA=1-pD-pH;
+  const juice=1.08;
+  const o=p=>Math.max(1.05, Math.round((1/(p*juice))*100)/100);
+  return {home:o(pH), draw:o(pD), away:o(pA)};
+}
+function edgedOdds(fairP, edgePct){
+  const fair=1/Math.min(.97,Math.max(.03,fairP));
+  return Math.max(1.05, Math.round(fair*(1-edgePct/100)*100)/100);
+}
+function pOver(line, avg){ return 1-phi((line-avg)/SD); }
+function accaFactor(n, marginPct){ return n<=1 ? 1 : Math.max(.05, 1-(marginPct/100)*n); }
+function combinedOdds(legOdds, marginPct){
+  const base=legOdds.reduce((a,b)=>a*b,1);
+  return Math.max(1.01, base*accaFactor(legOdds.length, marginPct));
+}
+function betLimitFlags(stake, potential, settings){
+  const f=[];
+  if(stake>settings.maxStake) f.push('Stake over £'+settings.maxStake+' house limit');
+  if(potential>settings.maxPayout) f.push('Payout over £'+settings.maxPayout+' house limit');
+  return f;
+}
+function evalLeg(leg, g){
+  if(leg.type==='match'){
+    const m=g.matches.find(m=>m.id===leg.matchId);
+    if(!m||!m.result) return null;
+    const r=m.result.homePts===m.result.awayPts?'draw':(m.result.homePts>m.result.awayPts?'home':'away');
+    return r===leg.pick?'won':'lost';
+  }
+  const findPts = tid => {
+    const m=g.matches.find(m=>m.home===tid||m.away===tid);
+    if(!m||!m.result) return null;
+    return m.home===tid? m.result.homePts : m.result.awayPts;
+  };
+  if(leg.kind==='team_pts'){
+    const pts=findPts(leg.teamId); if(pts===null) return null;
+    return (leg.dir==='over'? pts>leg.line : pts<leg.line) ? 'won':'lost';
+  }
+  if(leg.kind==='haul'){
+    const pts=findPts(leg.teamId); if(pts===null) return null;
+    return pts>=leg.line?'won':'lost';
+  }
+  if(leg.kind==='match_total'){
+    const m=g.matches.find(m=>m.id===leg.matchId);
+    if(!m||!m.result) return null;
+    const tot=m.result.homePts+m.result.awayPts;
+    return (leg.dir==='over'? tot>leg.line : tot<leg.line)?'won':'lost';
+  }
+  if(leg.kind==='top_score'){
+    const played=g.matches.filter(m=>m.home&&m.away);
+    if(played.some(m=>!m.result)) return null;
+    const scores=[];
+    played.forEach(m=>{scores.push([m.home,m.result.homePts]);scores.push([m.away,m.result.awayPts]);});
+    const max=Math.max(...scores.map(s=>s[1]));
+    const top=scores.filter(s=>s[1]===max);
+    if(top.length>1) return top.some(s=>s[0]===leg.teamId)?'void':'lost';
+    return top[0][0]===leg.teamId?'won':'lost';
+  }
+  return 'void';
+}
+function settleBet(bet, state){
+  const g=state.gameweeks.find(x=>x.id===bet.gwId);
+  const evals=bet.legs.map(l=>({odds:l.odds, out:evalLeg(l,g)}));
+  if(evals.some(e=>e.out===null)) return null;
+  if(evals.some(e=>e.out==='lost')) return {outcome:'lost', payout:0};
+  const active=evals.filter(e=>e.out==='won');
+  if(active.length===0) return {outcome:'void', payout:bet.stake};
+  const orig=combinedOdds(bet.legs.map(l=>l.odds), state.settings.accaMarginPct);
+  const recomputed=combinedOdds(active.map(e=>e.odds), state.settings.accaMarginPct);
+  const ratio=bet.effOdds/orig;
+  const payout=bet.stake*Math.max(1, recomputed*ratio);
+  return {outcome:'won', payout};
+}
+function computePnl(state){
+  const pnl={}; state.teams.forEach(t=>pnl[t.id]=0);
+  let house=0;
+  state.bets.filter(b=>['won','lost'].includes(b.status)).forEach(b=>{
+    const p=b.status==='won'?(b.settledPayout-b.stake):-b.stake;
+    pnl[b.teamId]+=p; house-=p;
+  });
+  return {pnl, house};
+}
+
+/* ================================================================
+   THE ALGO — random bet generator (copied verbatim from prototype)
+   ================================================================ */
+function genAlgoBet(state){
+  const gws=state.gameweeks.filter(g=>bettableNow(g));
+  if(gws.length===0) return null;
+  const g=gws[gws.length-1];
+  const fixtures=g.matches.filter(m=>m.home&&m.away);
+  if(fixtures.length===0) return null;
+  const edge=state.settings.algoEdgePct;
+  const rnd=a=>a[Math.floor(Math.random()*a.length)];
+  const makers=[
+    ()=>{
+      const m=rnd(fixtures);
+      const picks=['home','home','away','away','draw'];
+      const pick=rnd(picks);
+      const label= pick==='draw' ? `Draw — ${team(m.home).name} v ${team(m.away).name}` : `${team(pick==='home'?m.home:m.away).name} to WIN v ${team(pick==='home'?m.away:m.home).name}`;
+      const board=promoPrice(g.id,m.id,pick) ?? m.odds[pick];
+      return {type:'match', gwId:g.id, matchId:m.id, pick, odds:Math.max(1.05, Math.round(board*(1-edge/100)*100)/100), label};
+    },
+    ()=>{
+      const m=rnd(fixtures); const tid=rnd([m.home,m.away]);
+      const avg=teamAvg(state,tid);
+      const off=rnd([-10,-5,0,5,10,15]);
+      const line=Math.round(avg+off)+0.5;
+      const dir=rnd(['over','over','under']);
+      const p=dir==='over'?pOver(line,avg):1-pOver(line,avg);
+      return {type:'special', gwId:g.id, kind:'team_pts', teamId:tid, line, dir,
+        odds:edgedOdds(p,edge), label:`${team(tid).name} ${dir.toUpperCase()} ${line} pts`};
+    },
+    ()=>{
+      const m=rnd(fixtures); const tid=rnd([m.home,m.away]);
+      const avg=teamAvg(state,tid);
+      const line=Math.round(avg*rnd([1.2,1.3,1.45]));
+      const p=pOver(line-0.5,avg);
+      return {type:'special', gwId:g.id, kind:'haul', teamId:tid, line,
+        odds:edgedOdds(p,edge), label:`${team(tid).name} BIG HAUL — ${line}+ pts`};
+    },
+    ()=>{
+      const m=rnd(fixtures);
+      const tot=teamAvg(state,m.home)+teamAvg(state,m.away);
+      const off=rnd([-12,-6,6,12,20]);
+      const line=Math.round(tot+off)+0.5;
+      const dir=rnd(['over','under']);
+      const p=dir==='over'?1-phi((line-tot)/(SD*1.414)):phi((line-tot)/(SD*1.414));
+      return {type:'special', gwId:g.id, kind:'match_total', matchId:m.id, line, dir,
+        odds:edgedOdds(p,edge), label:`${team(m.home).name} v ${team(m.away).name} — combined ${dir.toUpperCase()} ${line}`};
+    },
+    ()=>{
+      const tids=[...new Set(fixtures.flatMap(m=>[m.home,m.away]))];
+      const ws=tids.map(tid=>({tid,w:Math.exp(0.12*teamAvg(state,tid))}));
+      const tot=ws.reduce((s,x)=>s+x.w,0);
+      const x=rnd(ws);
+      return {type:'special', gwId:g.id, kind:'top_score', teamId:x.tid,
+        odds:edgedOdds(x.w/tot,edge), label:`${team(x.tid).name} — TOP SCORE of the week`};
+    },
+  ];
+  const n=rnd([1,1,1,2,2,2,2,3,3,4]);
+  const legs=[]; const seen=new Set(); let guard=0;
+  while(legs.length<n && guard++<40){
+    const leg=rnd(makers)();
+    const key=leg.label;
+    if(seen.has(key)) continue;
+    if(leg.type==='match' && legs.some(l=>l.type==='match'&&l.matchId===leg.matchId)) continue;
+    seen.add(key); legs.push(leg);
+  }
+  const odds=legs.length===1? legs[0].odds : Math.max(1.05, Math.round(legs.reduce((a,l)=>a*l.odds,1)*100)/100);
+  return {gwId:g.id, legs, odds, n:legs.length};
+}
+
+/* ================================================================
+   PROMOS (copied verbatim from prototype)
+   ================================================================ */
+function promoPrice(gwId, matchId, pick){
+  const p=S.promos.find(p=>p.active&&p.gwId===gwId&&p.matchId===matchId&&p.pick===pick);
+  return p? p.odds : null;
+}
+const PROMO_LINES=['🚀 ODDS BOOST!','🔥 SUPER BOOST!','💎 LOUNGE SPECIAL!','⚡ FLASH BOOST!'];
+function createPromoForGw(g){
+  const fixtures=g.matches.filter(m=>m.home&&m.away);
+  if(!fixtures.length) return;
+  const m=fixtures[Math.floor(Math.random()*fixtures.length)];
+  const pick=['draw','draw','home','away'][Math.floor(Math.random()*4)];
+  const pct = pick==='draw' ? 15 : 5;
+  const old=m.odds[pick];
+  const boosted=Math.round(old*(1+pct/100)*100)/100;
+  const who= pick==='draw' ? 'THE DRAW' : team(pick==='home'?m.home:m.away).name.toUpperCase();
+  S.promos.push({id:nid('promo'), gwId:g.id, matchId:m.id, pick, pct, oldOdds:old, odds:boosted, active:true,
+    title:PROMO_LINES[Math.floor(Math.random()*PROMO_LINES.length)],
+    text:`+${pct}% on ${who} in ${team(m.home).name} v ${team(m.away).name} — now ${fmtOdds(boosted)} (was ${fmtOdds(old)})`});
+}
+function maybeShowPromo(){
+  if(!me) return;
+  if(me.admin && activeTab!=='builder') return;
+  const gws=publishedGws().filter(g=>!gwDeadlinePassed(g)).map(g=>g.id);
+  const p=S.promos.find(p=>p.active&&gws.includes(p.gwId)&&!sessionStorage.getItem('seen_'+p.id));
+  if(!p) return;
+  const el=document.getElementById('promoPop');
+  el.innerHTML=`<div class="inner">
+    <div class="ptitle hottxt">${esc(p.title)}</div>
+    <div style="font-size:13.5px;margin:8px 0 12px">${esc(p.text)}</div>
+    <div style="display:flex;gap:8px">
+      <button class="btn gold small" onclick="claimPromo('${p.id}')">⚡ Add to slip</button>
+      <button class="btn secondary small" onclick="dismissPromo('${p.id}')">Maybe later</button>
+    </div></div>`;
+  el.style.display='block';
+}
+function claimPromo(pid){
+  const p=S.promos.find(x=>x.id===pid);
+  sessionStorage.setItem('seen_'+pid,'1');
+  document.getElementById('promoPop').style.display='none';
+  if(p){ addMatchLeg(p.gwId,p.matchId,p.pick); go('builder'); }
+}
+function dismissPromo(pid){
+  sessionStorage.setItem('seen_'+pid,'1');
+  document.getElementById('promoPop').style.display='none';
+}
+
+/* ================================================================
+   BOSH OVERLAY
+   ================================================================ */
+function bosh(){
+  const el=document.getElementById('bosh');
+  const conf=document.getElementById('confetti');
+  const cols=['#00ff87','#00d9ff','#ff2d78','#ffc931','#9b5cff'];
+  conf.innerHTML=Array.from({length:28},()=>{
+    const dx=(Math.random()*2-1)*60+'vw', dy=(Math.random()*-1)*55-5+'vh', rot=Math.random()*720-360+'deg';
+    const c=cols[Math.floor(Math.random()*cols.length)];
+    return `<span class="confetto" style="--dx:${dx};--dy:${dy};--rot:${rot};background:${c};left:${30+Math.random()*40}%"></span>`;
+  }).join('');
+  el.classList.remove('go'); void el.offsetWidth; el.classList.add('go');
+  setTimeout(()=>el.classList.remove('go'),1600);
+}
+
+/* ================================================================
+   NOTIFICATIONS
+   ================================================================ */
+async function loadNotifications() {
+  if (!me) return [];
+  const snap = await db.ref('lennon-lounge-notifs/' + me.id).once('value');
+  const data = snap.val();
+  return data ? Object.values(data) : [];
+}
+
+async function pushNotif(teamId, type, msg) {
+  const notif = {id: Date.now()+'_'+Math.random().toString(36).slice(2), type, msg, ts: Date.now(), read: false};
+  return db.ref('lennon-lounge-notifs/' + teamId).push(notif);
+}
+
+async function markAllRead() {
+  if (!me) return;
+  const snap = await db.ref('lennon-lounge-notifs/' + me.id).once('value');
+  const data = snap.val();
+  if (!data) return;
+  const updates = {};
+  Object.keys(data).forEach(k => { updates[k + '/read'] = true; });
+  await db.ref('lennon-lounge-notifs/' + me.id).update(updates);
+  renderNotifications();
+  const dot = document.getElementById('notifDot');
+  if (dot) dot.style.display = 'none';
+}
+
+async function renderNotifications() {
+  const notifs = await loadNotifications();
+  const list = document.getElementById('notifList');
+  if (!list) return;
+  notifs.sort((a,b) => b.ts - a.ts);
+  const unread = notifs.filter(n => !n.read).length;
+  const dot = document.getElementById('notifDot');
+  if (dot) {
+    dot.style.display = unread > 0 ? 'flex' : 'none';
+    dot.textContent = unread > 9 ? '9+' : String(unread);
+  }
+  list.innerHTML = notifs.length === 0
+    ? '<div class="muted" style="text-align:center;padding:30px">No notifications yet</div>'
+    : notifs.map(n => `<div class="notif-item ${n.read?'':'unread'}">
+        <div>${esc(n.msg)}</div>
+        <div class="nt">${fmtDT(n.ts)}</div>
+      </div>`).join('');
+}
+
+function toggleNotifPanel() {
+  const panel = document.getElementById('notifPanel');
+  const overlay = document.getElementById('notifOverlay');
+  const isOpen = panel.classList.contains('open');
+  if (isOpen) {
+    panel.classList.remove('open');
+    overlay.classList.remove('open');
+  } else {
+    panel.classList.add('open');
+    overlay.classList.add('open');
+    renderNotifications();
+  }
+}
+
+function closeNotifPanel() {
+  const panel = document.getElementById('notifPanel');
+  const overlay = document.getElementById('notifOverlay');
+  if (panel) panel.classList.remove('open');
+  if (overlay) overlay.classList.remove('open');
+}
+
+/* ================================================================
+   LOGIN UI HELPERS
+   ================================================================ */
+function renderTeamGrid() {
+  const grid = document.getElementById('teamGrid');
+  if (!grid) return;
+  grid.innerHTML = TEAMS.map(t => `
+    <div class="team-chip" data-id="${t.id}" onclick="selectTeamChip(this,'${t.id}')">
+      <div class="tc-name">${t.admin ? '🏠 ' : ''}${esc(t.name)}</div>
+      <div class="tc-owner">${esc(t.owner)}</div>
+    </div>`).join('');
+}
+
+function selectTeamChip(el, tid) {
+  document.querySelectorAll('.team-chip').forEach(c => c.classList.remove('sel'));
+  el.classList.add('sel');
+  document.getElementById('loginErr').style.display = 'none';
+  const p0 = document.getElementById('pin0');
+  if (p0) p0.focus();
+}
+
+function setupPinInputs() {
+  [0,1,2,3,4,5].forEach(i => {
+    const el = document.getElementById('pin'+i);
+    if (!el) return;
+    el.addEventListener('input', () => {
+      el.value = el.value.replace(/\D/g, '').slice(0, 1);
+      if (el.value.length === 1 && i < 5) document.getElementById('pin'+(i+1)).focus();
+      if (el.value.length === 1 && i === 5) doLogin();
+    });
+    el.addEventListener('keydown', e => {
+      if (e.key === 'Backspace' && !el.value && i > 0) document.getElementById('pin'+(i-1)).focus();
+    });
+  });
+}
+
+
+// ── PART 3: Main View Functions ──────────────────────────────────────
+/* ================================================================
+   LENNON LOUNGE v2 — MAIN VIEW FUNCTIONS
+   (embedded after part2_core.txt in the <script> block)
+   ================================================================ */
+
+/* ---- Algo Zone ---- */
+function vAlgoZone(){
+  const live=publishedGws().some(g=>bettableNow(g)&&g.matches.some(m=>m.home&&m.away));
+  return `<div class="algozone">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <div><span class="display" style="font-size:20px;background:linear-gradient(135deg,var(--violet),var(--cyan));-webkit-background-clip:text;background-clip:text;color:transparent">⚡ THE ALGO</span>
+      <div class="muted small">Can't decide? Let the machine cook. Smash generate, keep what you like.</div></div>
+      <button class="btn hot" onclick="spinAlgo()" ${live?'':'disabled'}>🎰 ${algoCurrent?'Spin again':'Generate me a bet'}</button>
+    </div>
+    ${algoCurrent?`<div class="algocard" id="algoCard">
+      <div class="roll">
+        <div class="muted small" style="text-transform:uppercase;letter-spacing:1px;font-weight:800;margin-bottom:8px">${algoCurrent.n===1?'⚡ Algo single':'⚡ Algo '+algoCurrent.n+'-leg special'} · ${esc(gw(algoCurrent.gwId).name)}</div>
+        ${algoCurrent.legs.map(l=>`<div style="padding:4px 0;font-weight:700;font-size:14px">› ${esc(l.label)} <span class="muted mono">@ ${fmtOdds(l.odds)}</span></div>`).join('')}
+        <div style="margin-top:10px">Combined odds <span class="algoodds gradtxt mono">${fmtOdds(algoCurrent.odds)}</span></div>
+      </div>
+      <div class="formrow" style="justify-content:center;margin-top:12px;margin-bottom:0">
+        <div><label>Stake £</label><input id="algoStake" type="number" min="1" value="${algoStakeVal}" style="width:90px;font-weight:800" oninput="algoStakeVal=parseFloat(this.value)||0;var r=document.getElementById('algoRet');if(r)r.textContent='£'+(algoStakeVal*${algoCurrent.odds}).toFixed(2)"></div>
+        <span class="small muted">returns <b class="mono" id="algoRet" style="color:var(--teal)">${GBP(algoStakeVal*algoCurrent.odds)}</b></span>
+      </div>
+      <div class="algoactions">
+        <button class="btn secondary" onclick="spinAlgo()">❌ Nah, next</button>
+        <button class="btn ghost" onclick="acceptAlgo()">＋ Add to slip</button>
+        <button class="btn hot" onclick="placeAlgoBet()">🔥 BOSH — place bet</button>
+      </div>
+    </div>`:''}
+  </div>`;
+}
+
+function spinAlgo(){
+  const b=genAlgoBet(S);
+  if(!b){ toast('No live gameweek to generate from', true); return; }
+  algoCurrent=b; render();
+  const card=document.getElementById('algoCard');
+  if(card){ card.classList.add('spinning'); setTimeout(()=>{const c=document.getElementById('algoCard');c&&c.classList.remove('spinning');},650); }
+}
+
+function acceptAlgo(){
+  if(!algoCurrent) return;
+  slipBundles.push({gwId:algoCurrent.gwId, legs:algoCurrent.legs.map(l=>({...l})), odds:algoCurrent.odds, stake:algoStakeVal||10});
+  algoCurrent=null; render(); toast('Algo bet added to your slip as its own bet ⚡');
+}
+
+function placeAlgoBet(){
+  if(!algoCurrent) return;
+  const stake=parseFloat(document.getElementById('algoStake').value)||0;
+  if(stake<S.settings.minStake){ toast('Enter a stake',true); return; }
+  algoStakeVal=stake;
+  submitBet({gwId:algoCurrent.gwId, legs:algoCurrent.legs.map(l=>({...l})), effOdds:algoCurrent.odds, stake, viaAlgo:true});
+  algoCurrent=null;
+}
+
+function placeBundle(i){
+  const bd=slipBundles[i];
+  if(!bd||!(bd.stake>=S.settings.minStake)){ toast('Enter a stake',true); return; }
+  if(submitBet({gwId:bd.gwId, legs:bd.legs.map(l=>({...l})), effOdds:bd.odds, stake:bd.stake, viaAlgo:true})) slipBundles.splice(i,1);
+}
+
+function submitBet({gwId, legs, effOdds, stake, viaAlgo, boostPct, message}){
+  const g=gw(gwId); const mode=bettableNow(g);
+  if(!mode){ toast('Betting is closed for '+g.name+' right now', true); render(); return false; }
+  const now=Date.now();
+  const bet={
+    id:nid('bet'), teamId:me.id, gwId, legs, stake, effOdds,
+    status:'pending', placedAt:now, inplay:mode==='inplay', afterCutoff:false,
+    algo:!!viaAlgo, boostPct:boostPct||0,
+    limitFlags:betLimitFlags(stake, stake*effOdds, S.settings),
+    history:[{by:me.id, role:'player', action:'placed'+(viaAlgo?' via The Algo':'')+(mode==='inplay'?' (in-play)':''), stake, odds:effOdds, message:message||'', at:now}],
+  };
+  S.bets.push(bet);
+  // Also push to Firebase for concurrent safety
+  db.ref(ROOT+'/bets').push(bet).catch(e=>console.error('Bet push error:',e));
+  const granted=maybeGrantBooster(me.id);
+  // Notify admins
+  TEAMS.filter(t=>t.admin&&t.id!==me.id).forEach(t=>{
+    pushNotif(t.id,'bet_placed',`${me.name} placed a bet — ${legs.length} leg(s) @ ${fmtOdds(effOdds)} · £${stake}`);
+  });
+  save(); bosh();
+  setTimeout(()=>{ toast(granted?`🎁 Booster unlocked: +${granted}% on a future bet!`:'Bet placed — the house is on it'); go('mybets'); },1200);
+  return true;
+}
+
+function maybeGrantBooster(tid){
+  const n=S.bets.filter(b=>b.teamId===tid).length;
+  if(n>=2&&n%2===0){
+    const tier=[5,10,15][Math.min(2,n/2-1)];
+    if(!S.boosters[tid]) S.boosters[tid]=[];
+    S.boosters[tid].push({id:nid('boost'),pct:tier,used:false});
+    return tier;
+  }
+  return 0;
+}
+
+/* ---- Bet Builder ---- */
+function vBuilder(){
+  const open=publishedGws();
+  const pre=open.filter(g=>bettableNow(g)==='pre');
+  const inplay=open.filter(g=>bettableNow(g)==='inplay');
+  const paused=open.filter(g=>!bettableNow(g));
+  const list=builderSec==='pre'?pre:inplay;
+  return `<div class="grid2"><div>
+    <h2>Bet Builder</h2>
+    <div class="sub">Pick your spots, stack your legs, back yourself.</div>
+    <div class="sectabs">
+      <button class="${builderSec==='pre'?'active':''}" onclick="builderSec='pre';render()">📅 Pre-match<span class="cnt">${pre.length}</span></button>
+      <button class="${builderSec==='inplay'?'active':''}" onclick="builderSec='inplay';render()">🔴 In-Play<span class="cnt">${inplay.length}</span>${inplay.length?'<span class="dotflag"></span>':''}</button>
+    </div>
+    ${vAlgoZone()}
+    ${list.length===0?`<div class="card"><h3>😴 Nothing ${builderSec==='pre'?'open for pre-match betting':'live in-play right now'}</h3><p class="muted">${builderSec==='inplay'?'In-play opens at first kick-off and runs until the house closes the window.':'The house has not published a board yet.'}</p>${me.admin?`<button class="btn small gold" style="margin-top:10px" onclick="seedTestData()">🧪 Load test gameweeks & odds</button>`:''}</div>`:''}
+    ${builderSec==='pre'&&paused.length?paused.map(g=>`<div class="card"><h3>⏸ ${esc(g.name)}</h3><p class="muted">Cutoff passed — betting is paused until first kick-off${g.kickoff?' ('+fmtDT(g.kickoff)+')':''}, then In-Play opens.</p></div>`).join(''):''}
+    ${list.slice().reverse().map((g,idx)=>vGwBoard(g,idx===0,builderSec)).join('')}
+  </div>
+  <div class="slip">${vSlip()}</div></div>`;
+}
+
+function vGwBoard(g,openByDefault,mode){
+  const inplay=mode==='inplay';
+  const head=inplay
+    ?`<span class="livechip">🔴 IN-PLAY${g.inplayCutoff?' · accepting until '+fmtDT(g.inplayCutoff):''}</span>`
+    :`<span class="deadline">⏱ Cutoff ${fmtDT(g.deadline)}</span>`;
+  const inner=`
+    <div class="gwhead">
+      <h3 style="margin:0">📅 ${esc(g.name)}</h3>
+      ${head}
+    </div>
+    ${inplay?'<p class="muted small" style="margin-bottom:10px">Live odds — the house may move prices while play is on. Accepted in-play bets are locked.</p>':''}
+    ${g.matches.filter(m=>m.home&&m.away).map(m=>{
+      const btn=(pick,lab)=>{
+        const boosted=promoPrice(g.id,m.id,pick);
+        const price=boosted??m.odds[pick];
+        const sel=slip.some(l=>l.type==='match'&&l.matchId===m.id&&l.pick===pick)?'sel':'';
+        return `<button class="oddbtn ${sel} ${boosted?'boost':''}" onclick="addMatchLeg('${g.id}','${m.id}','${pick}')">${boosted?'<span class="fire">🔥</span>':''}${lab}<b>${boosted?`<span class="was">${fmtOdds(m.odds[pick])}</span>`:''}${fmtOdds(price)}</b></button>`;
+      };
+      const liveScore=inplay&&m.result?`<span class="livechip" style="animation:none">${m.result.homePts??0}–${m.result.awayPts??0}</span>`:'';
+      return `<div class="match">
+        <div class="names">${esc(team(m.home).name)}<span class="vs">v</span>${esc(team(m.away).name)} ${liveScore}</div>
+        <div class="oddsbtns">${btn('home','HOME')}${btn('draw','DRAW')}${btn('away','AWAY')}</div>
+      </div>`;
+    }).join('')||'<p class="muted">Fixtures coming soon.</p>'}`;
+  return openByDefault?`<div class="card">${inner}</div>`
+    :`<div class="card"><details><summary>📅 ${esc(g.name)} — view board</summary><div style="margin-top:12px">${inner}</div></details></div>`;
+}
+
+/* ---- Slip ---- */
+function addMatchLeg(gwId,matchId,pick){
+  const g=gw(gwId); const m=g.matches.find(m=>m.id===matchId);
+  const i=slip.findIndex(l=>l.type==='match'&&l.matchId===matchId);
+  if(i>-1&&slip[i].pick===pick){ slip.splice(i,1); render(); return; }
+  const boosted=promoPrice(gwId,matchId,pick);
+  const label=pick==='draw'?`Draw — ${team(m.home).name} v ${team(m.away).name}`:`${team(pick==='home'?m.home:m.away).name} to WIN v ${team(pick==='home'?m.away:m.home).name}`;
+  const leg={type:'match',gwId,matchId,pick,odds:boosted??m.odds[pick],label:label+(boosted?' 🔥BOOSTED':'')};
+  if(i>-1) slip[i]=leg; else slip.push(leg);
+  render();
+}
+
+function addSpecialLeg(leg){
+  slip.push(leg); render();
+}
+
+function removeFromSlip(i){ slip.splice(i,1); render(); }
+
+function slipOdds(){
+  if(slip.length===0) return 0;
+  if(slip.length===1) return slip[0].odds;
+  return combinedOdds(slip.map(l=>l.odds),S.settings.accaMarginPct);
+}
+
+function selectedBooster(){ return (S.boosters[me.id]||[]).find(t=>t.id===boosterSel&&!t.used)||null; }
+function slipOddsFinal(){ const t=selectedBooster(); const o=slipOdds(); return t?Math.round(o*(1+t.pct/100)*100)/100:o; }
+
+function slipContext(){
+  const gwIds=[...new Set(slip.map(l=>l.gwId))];
+  if(gwIds.length===0) return {ok:false,reason:'empty'};
+  if(gwIds.length>1) return {ok:false,reason:'All legs must be in the same gameweek'};
+  const g=gw(gwIds[0]); const mode=bettableNow(g);
+  if(!mode) return {ok:false,reason:'Betting is closed for '+g.name+' right now'};
+  return {ok:true,g,mode};
+}
+
+function clearSlip(){ slip=[]; slipBundles=[]; boosterSel=null; render(); }
+
+function vSlip(){
+  if(slip.length===0&&slipBundles.length===0) return `<div class="card"><h3>🧾 Bet slip</h3><p class="muted">Tap odds to build your own bet, or fire up The Algo — Algo picks land here as their own ready-to-place bets.</p></div>`;
+  let html=`<div class="card glow"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><h3 style="margin:0">🧾 Bet slip</h3><button class="btn danger small" onclick="clearSlip()">Clear all</button></div>`;
+  if(slip.length){
+    const eff=slipOddsFinal();
+    const stake=parseFloat(document.getElementById('stakeInput')?.value)||0;
+    const potential=stake*eff;
+    const flags=betLimitFlags(stake,potential,S.settings);
+    const ctx=slipContext();
+    const toks=(S.boosters[me.id]||[]).filter(t=>!t.used);
+    html+=`<div class="muted small" style="font-weight:800;text-transform:uppercase;letter-spacing:.6px;margin-top:6px">Your build · ${slip.length===1?'Single':slip.length+'-leg Acca'}</div>
+    ${slip.map((l,i)=>`<div class="slipleg"><span>${esc(l.label)}</span><span style="display:flex;gap:6px;align-items:center"><b class="mono">${fmtOdds(l.odds)}</b><button class="x" onclick="slip.splice(${i},1);render()">×</button></span></div>`).join('')}
+    ${toks.length?`<div style="margin:10px 0 2px"><span class="muted small">🎁 Apply a booster:</span> ${toks.map(t=>`<span class="timechip ${boosterSel===t.id?'sel':''}" onclick="boosterSel=boosterSel==='${t.id}'?null:'${t.id}';render()">+${t.pct}%</span>`).join('')}</div>`:''}
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px">
+      <span class="muted small">Total odds${selectedBooster()?' (boosted 🚀)':''}</span>
+      <span class="bigodds gradtxt mono">${fmtOdds(eff)}</span>
+    </div>
+    <div class="formrow" style="margin-top:8px">
+      <div><label>Stake £</label><input id="stakeInput" type="number" min="1" step="1" value="${stake||''}" style="width:110px;font-size:16px;font-weight:800" oninput="render()"></div>
+      <div class="small muted">Potential return<br><b class="mono" style="font-size:19px;color:var(--teal)">${GBP(potential)}</b></div>
+    </div>
+    ${flags.map(f=>`<div class="small" style="color:var(--gold);margin-bottom:6px">⚠ ${f} — submit anyway and the house will review.</div>`).join('')}
+    ${ctx.ok&&ctx.mode==='inplay'?`<div class="small" style="color:var(--pink);margin-bottom:6px">🔴 In-play bet — once accepted it's locked in.</div>`:''}
+    ${!ctx.ok&&ctx.reason!=='empty'?`<div class="small" style="color:var(--pink);margin-bottom:6px">⚠ ${ctx.reason}</div>`:''}
+    <textarea id="betMsg" placeholder="Optional message to the house…" style="min-height:48px;margin:8px 0"></textarea>
+    <button class="btn big" style="width:100%" onclick="placeBet()" ${stake>0&&ctx.ok?'':'disabled'}>PLACE BET · ${GBP(stake)}</button>`;
+  }
+  slipBundles.forEach((bd,bi)=>{
+    const g=gw(bd.gwId); const mode=bettableNow(g);
+    html+=`<div style="margin-top:16px;border-top:1px dashed var(--line);padding-top:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center"><span class="muted small" style="font-weight:800;text-transform:uppercase;letter-spacing:.6px">⚡ Algo bet · standalone</span><button class="x" onclick="slipBundles.splice(${bi},1);render()">×</button></div>
+      ${bd.legs.map(l=>`<div class="slipleg"><span>${esc(l.label)}</span><b class="mono">${fmtOdds(l.odds)}</b></div>`).join('')}
+      <div class="formrow" style="margin-top:8px;margin-bottom:6px">
+        <div><label>Stake £</label><input type="number" min="1" value="${bd.stake}" style="width:90px;font-weight:800" onchange="slipBundles[${bi}].stake=parseFloat(this.value)||0;render()"></div>
+        <div class="small muted">@ <b class="mono">${fmtOdds(bd.odds)}</b> · returns <b class="mono" style="color:var(--teal)">${GBP((bd.stake||0)*bd.odds)}</b></div>
+      </div>
+      ${mode?'':`<div class="small" style="color:var(--pink);margin-bottom:6px">⚠ Betting closed for ${esc(g.name)}</div>`}
+      <button class="btn hot" style="width:100%" onclick="placeBundle(${bi})" ${bd.stake>0&&mode?'':'disabled'}>PLACE ALGO BET · ${GBP(bd.stake||0)}</button>
+    </div>`;
+  });
+  return html+'</div>';
+}
+
+function placeBet(){
+  const stake=parseFloat(document.getElementById('stakeInput').value);
+  if(!stake||stake<S.settings.minStake){ toast('Enter a stake',true); return; }
+  const ctx=slipContext();
+  if(!ctx.ok){ toast(ctx.reason,true); return; }
+  const tok=selectedBooster();
+  const eff=slipOddsFinal();
+  const msg=document.getElementById('betMsg').value.trim();
+  if(submitBet({gwId:ctx.g.id,legs:slip.map(l=>({...l})),effOdds:eff,stake,boostPct:tok?tok.pct:0,message:msg})){
+    if(tok) tok.used=true;
+    boosterSel=null; slip=[]; save();
+  }
+}
+
+/* ---- Shared bet card + negotiation ---- */
+const getBet=id=>S.bets.find(b=>b.id===id);
+function pushHist(b,action,extra={}){
+  if(!b.history) b.history=[];
+  b.history.push({by:me.id,role:(me.admin&&b.teamId!==me.id)?'house':'player',action,at:Date.now(),...extra});
+}
+
+function legLiveInfo(leg,g){
+  if(!g) return {out:null,score:''};
+  const out=evalLeg(leg,g);
+  let score='';
+  if(leg.type==='match'||leg.kind==='match_total'){
+    const m=g.matches.find(m=>m.id===leg.matchId);
+    if(m&&m.result) score=m.result.homePts+'–'+m.result.awayPts+(leg.kind==='match_total'?' ('+(m.result.homePts+m.result.awayPts)+' total)':'');
+  } else if(leg.kind==='top_score'){
+    const played=g.matches.filter(m=>m.home&&m.away&&m.result);
+    if(played.length){
+      let best=null;
+      played.forEach(m=>{[[m.home,m.result.homePts],[m.away,m.result.awayPts]].forEach(([t,p])=>{ if(!best||p>best[1]) best=[t,p]; });});
+      if(best) score='top: '+team(best[0]).name+' '+best[1];
+    }
+  } else if(leg.teamId){
+    const m=g.matches.find(m=>m.home===leg.teamId||m.away===leg.teamId);
+    if(m&&m.result) score=(m.home===leg.teamId?m.result.homePts:m.result.awayPts)+' pts';
+  }
+  return {out,score};
+}
+
+function legChip(info){
+  if(info.out==='won') return '<span class="lr won">✓</span>';
+  if(info.out==='lost') return '<span class="lr lost">✗</span>';
+  if(info.out==='void') return '<span class="lr void">–</span>';
+  return '<span class="lr pend">·</span>';
+}
+
+function updCounterRet(id){
+  const s=parseFloat(document.getElementById('cs_'+id).value)||0;
+  const o=parseFloat(document.getElementById('co_'+id).value)||0;
+  const el=document.getElementById('cret_'+id);
+  if(el) el.textContent=GBP(s*o);
+}
+
+function betCard(b,perspective){
+  const g=gw(b.gwId);
+  const passed=g?gwDeadlinePassed(g):true;
+  const offer=b.offer;
+  const stLabel={pending:'Pending review',accepted:'Accepted ✓',rejected:'Rejected',cancelled:'Cancelled',
+    counter_house:'House offer 📨',counter_user:'Your counter sent',won:'WON 🎉',lost:'LOST',void:'Void',expired:'Expired'}[b.status]||b.status;
+  let actions='';
+  if(perspective==='player'&&b.teamId===me.id){
+    if(b.status==='counter_house'){
+      actions+=`<button class="btn small" onclick="acceptOffer('${b.id}')">Accept ${GBP(offer.stake)} @ ${fmtOdds(offer.effOdds)}</button>
+                <button class="btn danger small" onclick="declineOffer('${b.id}')">Decline</button>
+                <button class="btn ghost small" onclick="toggleBox('counter_${b.id}')">Counter</button>`;
+    }
+    if(['pending','accepted','counter_house','counter_user'].includes(b.status)&&!passed)
+      actions+=`<button class="btn secondary small" onclick="cancelBet('${b.id}')">Cancel</button>`;
+    if(['pending','counter_house','counter_user'].includes(b.status))
+      actions+=`<button class="btn secondary small" onclick="toggleBox('msg_${b.id}')">💬</button>`;
+  }
+  if(perspective==='house'&&me.admin&&['pending','counter_user'].includes(b.status)){
+    actions+=`<button class="btn small" onclick="houseAccept('${b.id}')">Accept</button>
+              <button class="btn danger small" onclick="houseReject('${b.id}')">Reject</button>
+              <button class="btn ghost small" onclick="toggleBox('counter_${b.id}')">Counter-offer</button>
+              <button class="btn secondary small" onclick="toggleBox('msg_${b.id}')">💬</button>`;
+  }
+  const needsMe=(perspective==='player'&&b.status==='counter_house')||(perspective==='house'&&['pending','counter_user'].includes(b.status));
+  const houseEdgeInfo=perspective==='house'&&b.legs.length>1
+    ?`<span class="muted">Raw odds<b class="mono">${fmtOdds(b.legs.reduce((a,l)=>a*l.odds,1))}</b></span>`:'';
+  return `<div class="bet ${needsMe?'needsme':''}">
+    <div class="top">
+      <div><b>${esc(team(b.teamId).name)}</b> <span class="muted small">· ${esc(g?g.name:'?')} · ${b.legs.length===1?'Single':b.legs.length+'-leg Acca'}${b.algo?' · ⚡Algo':''}</span>
+        ${b.inplay?'<span class="flag late">🔴 IN-PLAY</span>':''}
+        ${b.afterCutoff?'<span class="flag late">AFTER CUTOFF</span>':''}
+        ${b.boostPct?`<span class="flag limit">🚀 +${b.boostPct}% BOOST</span>`:''}
+        ${(b.limitFlags||[]).length?'<span class="flag limit">OVER LIMIT</span>':''}</div>
+      <span class="pill st-${b.status}">${stLabel}</span>
+    </div>
+    <ul class="legs">${b.legs.map(l=>{
+      const info=legLiveInfo(l,g);
+      return `<li>${legChip(info)}${esc(l.label)} <b class="mono">@ ${fmtOdds(l.odds)}</b>${info.score?`<span class="legscore">(${esc(info.score)})</span>`:''}</li>`;
+    }).join('')}</ul>
+    <div class="nums">
+      <span>Stake<b class="mono">${GBP(b.stake)}</b></span>
+      <span>Odds<b class="mono">${fmtOdds(b.effOdds)}</b></span>
+      <span>Returns<b class="mono" style="color:var(--teal)">${GBP(b.stake*b.effOdds)}</b></span>
+      ${houseEdgeInfo}
+      ${b.status==='won'?`<span>Paid<b class="mono" style="color:var(--teal)">${GBP(b.settledPayout)}</b></span>`:''}
+      <span>Placed<b>${fmtDT(b.placedAt)}</b></span>
+    </div>
+    ${offer&&['counter_house','counter_user'].includes(b.status)?`<div class="small" style="color:var(--cyan);margin-bottom:6px">📨 On the table from ${offer.by==='house'?'the house':'the player'}: <b>${GBP(offer.stake)} @ ${fmtOdds(offer.effOdds)}</b> → returns ${GBP(offer.stake*offer.effOdds)}</div>`:''}
+    ${(b.history||[]).length>1||(b.history||[]).some(h=>h.message)?`<details><summary>History & messages (${(b.history||[]).length})</summary>
+      <div class="chat">${(b.history||[]).map(h=>`<div class="msg ${h.role==='house'?'house':''}">
+        <span class="who">${h.role==='house'?'🏠 House ('+esc(team(h.by)?.owner||'?')+')':esc(team(h.by)?.name||'?')} · ${fmtDT(h.at)} · ${h.action}${h.stake!=null?` — ${GBP(h.stake)} @ ${fmtOdds(h.odds)}`:''}</span>
+        ${h.message?`<div>${esc(h.message)}</div>`:''}</div>`).join('')}</div></details>`:''}
+    <div class="actions">${actions}</div>
+    <div class="counterbox" id="counter_${b.id}">
+      <div class="formrow">
+        <div><label>Stake £</label><input type="number" id="cs_${b.id}" value="${offer?offer.stake:b.stake}" style="width:100px" oninput="updCounterRet('${b.id}')"></div>
+        <div><label>Odds</label><input type="number" step="0.01" id="co_${b.id}" value="${fmtOdds(offer?offer.effOdds:b.effOdds)}" style="width:100px" oninput="updCounterRet('${b.id}')"></div>
+        <div class="small muted" style="padding-bottom:8px">Return on this offer<br><b class="mono" id="cret_${b.id}" style="font-size:16px;color:var(--teal)">${GBP((offer?offer.stake:b.stake)*(offer?offer.effOdds:b.effOdds))}</b></div>
+      </div>
+      <textarea id="cm_${b.id}" placeholder="Message with your offer…" style="min-height:44px;margin-bottom:8px"></textarea>
+      <button class="btn small" onclick="sendCounter('${b.id}')">Send counter-offer</button>
+    </div>
+    <div class="counterbox" id="msg_${b.id}">
+      <textarea id="mm_${b.id}" placeholder="Write a message…" style="min-height:44px;margin-bottom:8px"></textarea>
+      <button class="btn small" onclick="sendMsg('${b.id}')">Send</button>
+    </div>
+  </div>`;
+}
+
+function toggleBox(id){ document.getElementById(id).classList.toggle('open'); }
+
+function houseAccept(id){
+  const b=getBet(id);
+  if(b.status==='counter_user'&&b.offer){ b.stake=b.offer.stake; b.effOdds=b.offer.effOdds; b.offer=null; }
+  b.status='accepted'; pushHist(b,'accepted'); save(); render(); toast('Bet accepted ✓');
+  pushNotif(b.teamId,'bet_accepted',`Your bet was accepted by the house! ${b.legs.length===1?b.legs[0].label:b.legs.length+'-leg acca'} @ ${fmtOdds(b.effOdds)} · £${b.stake}`);
+}
+
+function houseReject(id){
+  const b=getBet(id); b.status='rejected'; b.offer=null; pushHist(b,'rejected'); save(); render(); toast('Bet rejected');
+  pushNotif(b.teamId,'bet_rejected',`Your bet was rejected by the house. ${b.legs.length===1?b.legs[0].label:b.legs.length+'-leg acca'}`);
+}
+
+function sendCounter(id){
+  const b=getBet(id);
+  const stake=parseFloat(document.getElementById('cs_'+id).value);
+  const odds=parseFloat(document.getElementById('co_'+id).value);
+  const msg=document.getElementById('cm_'+id).value.trim();
+  if(!stake||!odds){ toast('Need stake and odds',true); return; }
+  const fromHouse=me.admin&&b.teamId!==me.id;
+  b.offer={stake,effOdds:odds,by:fromHouse?'house':'player'};
+  b.status=fromHouse?'counter_house':'counter_user';
+  pushHist(b,'counter-offer',{stake,odds,message:msg});
+  save(); render(); toast('Counter-offer sent 📨');
+  if(fromHouse) pushNotif(b.teamId,'counter_offer',`The house sent a counter-offer: £${stake} @ ${fmtOdds(odds)}${msg?' — "'+msg+'"':''}`);
+}
+
+function acceptOffer(id){
+  const b=getBet(id);
+  b.stake=b.offer.stake; b.effOdds=b.offer.effOdds; b.offer=null;
+  b.status='accepted'; pushHist(b,'accepted house offer'); save(); render(); bosh();
+  setTimeout(()=>toast('Deal! Bet is ON'),1100);
+}
+
+function declineOffer(id){
+  const b=getBet(id); b.status='rejected'; b.offer=null;
+  pushHist(b,'declined house offer'); save(); render();
+}
+
+function cancelBet(id){
+  const b=getBet(id);
+  if(gwDeadlinePassed(gw(b.gwId))){ toast('Cutoff passed — locked in',true); return; }
+  b.status='cancelled'; b.offer=null; pushHist(b,'cancelled'); save(); render(); toast('Bet cancelled');
+}
+
+function sendMsg(id){
+  const b=getBet(id); const msg=document.getElementById('mm_'+id).value.trim();
+  if(!msg) return; pushHist(b,'message',{message:msg}); save(); render(); toast('Sent 💬');
+}
+
+/* ---- My Bets ---- */
+function needsActionCount(){ return S.bets.filter(b=>b.teamId===me.id&&b.status==='counter_house').length; }
+
+function vMyBets(){
+  const mine=S.bets.filter(b=>b.teamId===me.id).sort((a,b)=>b.placedAt-a.placedAt);
+  const groups={
+    action:{label:'🚨 Needs Action',items:mine.filter(b=>b.status==='counter_house')},
+    active:{label:'🟢 Active',items:mine.filter(b=>['pending','accepted','counter_user'].includes(b.status))},
+    won:{label:'🏆 Won',items:mine.filter(b=>b.status==='won')},
+    lost:{label:'💀 Lost',items:mine.filter(b=>b.status==='lost')},
+    other:{label:'🗑 Cancelled / Other',items:mine.filter(b=>['cancelled','rejected','void','expired'].includes(b.status))},
+  };
+  if(myBetsSec==='auto') myBetsSec=groups.action.items.length?'action':'active';
+  const cur=groups[myBetsSec]||groups.active;
+  return `<h2>My Bets</h2><div class="sub">Track everything you've fired at the house.</div>
+  <div class="sectabs">${Object.entries(groups).map(([k,v])=>
+    `<button class="${myBetsSec===k?'active':''}" onclick="myBetsSec='${k}';render()">${v.label}<span class="cnt">${v.items.length}</span>${k==='action'&&v.items.length?'<span class="dotflag"></span>':''}</button>`).join('')}</div>
+  ${cur.items.length?cur.items.map(b=>betCard(b,'player')).join(''):'<div class="card"><p class="muted">Nothing here yet.</p></div>'}`;
+}
+
+/* ---- Results ---- */
+function vResults(){
+  const tabs={standings:'💷 Standings',feed:'🎫 Bet Results',matches:'⚽ Match Results'};
+  return `<h2>Results</h2><div class="sub">The damage, the glory, the receipts.</div>
+  <div class="sectabs">${Object.entries(tabs).map(([k,v])=>`<button class="${resultsSec===k?'active':''}" onclick="resultsSec='${k}';render()">${v}</button>`).join('')}</div>
+  ${({standings:vStandings,feed:vBetFeed,matches:vMatchResults})[resultsSec]()}`;
+}
+
+function vStandings(){
+  const {pnl,house}=computePnl(S);
+  const rows=S.teams.map(t=>({t,p:pnl[t.id]||0})).sort((a,b)=>b.p-a.p);
+  const lt={}; S.teams.forEach(t=>lt[t.id]={p:0,w:0,d:0,l:0,pf:0,pts:0});
+  const addRes=(hid,aid,hp,ap)=>{
+    const h=lt[hid],a=lt[aid]; if(!h||!a) return;
+    h.p++;a.p++;h.pf+=hp;a.pf+=ap;
+    if(hp>ap){h.w++;h.pts+=3;a.l++;}
+    else if(hp<ap){a.w++;a.pts+=3;h.l++;}
+    else{h.d++;a.d++;h.pts++;a.pts++;}
+  };
+  const localEvents=new Set(S.gameweeks.filter(g=>g.event&&g.matches.some(m=>m.result)).map(g=>g.event));
+  (S.history||[]).forEach(h=>{ if(!localEvents.has(h.event)) addRes(h.a,h.b,h.ap,h.bp); });
+  S.gameweeks.forEach(g=>g.matches.forEach(m=>{
+    if(!m.result||!m.home||!m.away) return;
+    addRes(m.home,m.away,m.result.homePts,m.result.awayPts);
+  }));
+  const ltRows=S.teams.map(t=>({t,...lt[t.id]})).sort((a,b)=>b.pts-a.pts||b.pf-a.pf);
+  return `<div class="card">
+    <h3>💷 Money table</h3>
+    <p class="muted small">Settled bets only. Green = the house owes you. Pink = pay up.</p>
+    <table><tr><th>#</th><th>Team</th><th style="text-align:right">P&L</th></tr>
+    ${rows.map((r,i)=>`<tr><td>${i+1}</td><td><b>${esc(r.t.name)}</b> <span class="muted small">${esc(r.t.owner)}</span></td><td style="text-align:right" class="mono ${r.p>0?'pos':r.p<0?'neg':''}">${GBP(r.p)}</td></tr>`).join('')}
+    <tr><td></td><td><b>🏠 The House</b> <span class="muted small">Dan & Jack</span></td><td style="text-align:right" class="mono ${house>0?'pos':house<0?'neg':''}">${GBP(house)}</td></tr></table>
+  </div>
+  <div class="card"><h3>⚽ FPL League table</h3>
+    <table><tr><th>#</th><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>PF</th><th>Pts</th></tr>
+    ${ltRows.map((r,i)=>`<tr><td>${i+1}</td><td><b>${esc(r.t.name)}</b></td><td>${r.p}</td><td>${r.w}</td><td>${r.d}</td><td>${r.l}</td><td>${r.pf}</td><td><b>${r.pts}</b></td></tr>`).join('')}</table>
+  </div>`;
+}
+
+function vBetFeed(){
+  const graded=S.bets.filter(b=>['won','lost','void'].includes(b.status)).sort((a,b)=>(b.settledAt||0)-(a.settledAt||0));
+  if(!graded.length) return '<div class="card"><p class="muted">No settled bets yet. The book is still open…</p></div>';
+  return graded.map(b=>betCard(b,me.admin?'house':'player')).join('');
+}
+
+function vMatchResults(){
+  const done=S.gameweeks.filter(g=>g.matches.some(m=>m.result)).slice().reverse();
+  if(!done.length) return '<div class="card"><p class="muted">No results in yet.</p></div>';
+  return done.map(g=>`<div class="card"><h3>📅 ${esc(g.name)} ${g.status==='settled'?'<span class="pill st-void">SETTLED</span>':''}</h3>
+    <table><tr><th>Home</th><th style="text-align:center">Score</th><th style="text-align:right">Away</th></tr>
+    ${g.matches.filter(m=>m.home&&m.away).map(m=>{
+      const r=m.result;
+      const hw=r&&r.homePts>r.awayPts,aw=r&&r.awayPts>r.homePts;
+      return `<tr><td style="font-weight:${hw?900:400}">${esc(team(m.home).name)}</td>
+        <td style="text-align:center" class="mono"><b>${r?r.homePts+' – '+r.awayPts:'v'}</b></td>
+        <td style="text-align:right;font-weight:${aw?900:400}">${esc(team(m.away).name)}</td></tr>`;
+    }).join('')}</table></div>`).join('');
+}
+
+/* ---- Home / Dashboard ---- */
+function aiPerfSummary(tid){
+  const bets=S.bets.filter(b=>b.teamId===tid);
+  if(!bets.length) return "👻 Not a single bet placed yet. The Algo is RIGHT THERE. What are you scared of — winning?";
+  const settled=bets.filter(b=>['won','lost'].includes(b.status));
+  const wins=settled.filter(b=>b.status==='won');
+  const {pnl}=computePnl(S); const p=pnl[tid]||0;
+  const open=bets.filter(b=>['pending','accepted','counter_house','counter_user'].includes(b.status)).length;
+  const accas=bets.filter(b=>b.legs.length>1).length;
+  const bits=[];
+  bits.push(`You've fired ${bets.length} bet${bets.length>1?'s':''} at the house${open?` (${open} still live)`:''}.`);
+  if(settled.length) bits.push(`Record: ${wins.length}W–${settled.length-wins.length}L. ${p>0?`You're UP ${GBP(p)} — the house is quietly furious. 😤`:p<0?`You're down ${GBP(Math.abs(p))}. The house thanks you for your generous donations. 🙏`:`Dead level. Painfully sensible.`}`);
+  if(bets.length>2){
+    if(accas>bets.length/2) bits.push(`${Math.round(accas/bets.length*100)}% of your bets are accas. Bold. The maths called — it disagrees.`);
+    else bits.push(`Mostly singles. Sensible. Boring, but sensible.`);
+  }
+  const big=wins.slice().sort((a,b)=>(b.settledPayout-b.stake)-(a.settledPayout-a.stake))[0];
+  if(big) bits.push(`Best hit: ${GBP(big.settledPayout-big.stake)} profit. We remember. 🏆`);
+  return bits.join(' ');
+}
+
+function aiLeagueSummary(){
+  const {pnl,house}=computePnl(S);
+  const rows=S.teams.map(t=>({t,p:pnl[t.id]||0})).sort((a,b)=>b.p-a.p);
+  const counts={}; S.bets.forEach(b=>counts[b.teamId]=(counts[b.teamId]||0)+1);
+  const active=Object.entries(counts).sort((a,b)=>b[1]-a[1])[0];
+  const bits=[];
+  if(!S.bets.length) return "Twelve grown adults, one private bookmaker, zero bets placed. The bravery is overwhelming. Someone do something. 🦗";
+  bits.push(house>0?`🏠 The house is up ${GBP(house)} — Dan & Jack are already browsing helicopters.`:house<0?`🚨 The house is DOWN ${GBP(Math.abs(house))}. Punters 1, capitalism 0.`:`The house is dead level, which somehow feels like everyone losing.`);
+  if(rows[0]&&rows[0].p>0) bits.push(`${rows[0].t.name} (${rows[0].t.owner}) tops the money table at ${GBP(rows[0].p)} — insufferable in the group chat, presumably.`);
+  const bottom=rows[rows.length-1];
+  if(bottom&&bottom.p<0) bits.push(`Meanwhile ${bottom.t.name} is funding everyone's fun (${GBP(bottom.p)}). A true patron of the arts.`);
+  if(active) bits.push(`Most addicted: ${team(active[0])?.name}, ${active[1]} bets and counting. Someone check on ${team(active[0])?.owner}. 📞`);
+  return bits.join(' ');
+}
+
+function vHome(){
+  const {pnl,house}=computePnl(S);
+  const myP=pnl[me.id]||0;
+  const mine=S.bets.filter(b=>b.teamId===me.id);
+  const openB=mine.filter(b=>['pending','accepted','counter_house','counter_user'].includes(b.status)).length;
+  const settled=mine.filter(b=>['won','lost'].includes(b.status));
+  const w=settled.filter(b=>b.status==='won').length;
+  const feed=S.bets.slice().sort((a,b)=>b.placedAt-a.placedAt).slice(0,8);
+  const rows=S.teams.map(t=>({t,p:pnl[t.id]||0})).sort((a,b)=>b.p-a.p);
+  const totalStaked=S.bets.filter(b=>!['cancelled','rejected','expired'].includes(b.status)).reduce((s,b)=>s+b.stake,0);
+  const chat=S.chat.slice(-30);
+  const na=needsActionCount();
+  return `<h2>👋 Alright, ${esc(me.owner)}?</h2>
+  <div class="sub">${esc(me.name)} HQ — everything in one place.</div>
+  <div class="kpis">
+    <div class="kpi"><div class="l">My P&L</div><div class="v mono ${myP>0?'pos':myP<0?'neg':''}">${GBP(myP)}</div></div>
+    <div class="kpi"><div class="l">Open bets</div><div class="v">${openB}</div></div>
+    <div class="kpi"><div class="l">My record</div><div class="v">${w}W–${settled.length-w}L</div></div>
+    <div class="kpi"><div class="l">League staked</div><div class="v mono">${GBP(totalStaked)}</div></div>
+    <div class="kpi"><div class="l">House P&L</div><div class="v mono ${house>0?'pos':house<0?'neg':''}">${GBP(house)}</div></div>
+  </div>
+  <div class="quickrow">
+    <button class="btn" onclick="go('builder')">⚽ Bet Builder</button>
+    <button class="btn hot" onclick="go('builder');setTimeout(spinAlgo,80)">🎰 Spin The Algo</button>
+    <button class="btn ${na?'gold':'secondary'}" onclick="go('mybets')">🧾 My Bets${na?' · '+na+' need action 🚨':''}</button>
+    <button class="btn secondary" onclick="go('results')">🏆 Results</button>
+  </div>
+  <div class="homegrid">
+    <div class="card"><h3>🤖 Your form — AI verdict</h3><p style="font-size:13.5px;line-height:1.65">${aiPerfSummary(me.id)}</p></div>
+    <div class="card"><h3>📡 League pulse — AI verdict</h3><p style="font-size:13.5px;line-height:1.65">${aiLeagueSummary()}</p></div>
+    <div class="card"><h3>🎫 Latest action — all players</h3>
+      ${feed.length?`<table><tr><th>Who</th><th>Bet</th><th>£</th><th>Odds</th><th>Status</th></tr>${feed.map(b=>`<tr><td><b>${esc(team(b.teamId)?.owner||'?')}</b></td><td class="small">${b.legs.length===1?esc(b.legs[0].label.slice(0,32)):b.legs.length+'-leg acca'}${b.algo?' ⚡':''}${b.inplay?' 🔴':''}</td><td class="mono">${GBP(b.stake)}</td><td class="mono">${fmtOdds(b.effOdds)}</td><td><span class="pill st-${b.status}" style="font-size:9px">${b.status.replace('_',' ')}</span></td></tr>`).join('')}</table>`:'<p class="muted">No bets yet — be the first domino. 🁢</p>'}
+    </div>
+    <div class="card"><h3>💷 Standings</h3>
+      <table>${rows.slice(0,6).map((r,i)=>`<tr><td>${i+1}</td><td><b>${esc(r.t.name)}</b></td><td style="text-align:right" class="mono ${r.p>0?'pos':r.p<0?'neg':''}">${GBP(r.p)}</td></tr>`).join('')}</table>
+      <button class="btn ghost small" style="margin-top:10px" onclick="resultsSec='standings';go('results')">Full standings →</button>
+    </div>
+    <div class="card" style="grid-column:1/-1"><h3>💬 The Lounge chat</h3>
+      <div class="chatbox" id="chatBox">${chat.length?chat.map(c=>{
+        const t=team(c.by);
+        return `<div class="chatmsg ${t&&t.admin?'h':''}"><span class="cwho">${t?esc(t.owner):'?'}${t&&t.admin?' 🏠':''} <span class="muted" style="font-weight:400">· ${fmtDT(c.at)}</span></span><div>${esc(c.text)}</div></div>`;
+      }).join(''):'<p class="muted">Dead quiet in here. Start the trash talk.</p>'}</div>
+      <div class="chatrow"><input id="chatInp" placeholder="Say something regrettable…" maxlength="300" onkeydown="if(event.key==='Enter')sendChat()"><button class="btn" onclick="sendChat()">Send</button></div>
+    </div>
+  </div>`;
+}
+
+function sendChat(){
+  const inp=document.getElementById('chatInp'); const txt=inp.value.trim();
+  if(!txt) return;
+  if(!S.chat) S.chat=[];
+  S.chat.push({by:me.id,text:txt,at:Date.now()});
+  if(S.chat.length>200) S.chat=S.chat.slice(-200);
+  save(); render();
+  setTimeout(()=>{ const i=document.getElementById('chatInp'); if(i) i.focus(); },30);
+}
+
+/* ---- Settings ---- */
+function vUserSettings(){
+  const myPin=authPins[me.id]||'——';
+  return `<h2>Settings</h2><div class="sub">Your account, your rules.</div>
+  <div class="card">
+    <h3>👤 ${esc(me.name)}</h3>
+    <p class="muted small">Manager: ${esc(me.owner)} ${me.admin?'· 🏠 House admin':''}</p>
+    <hr class="hr">
+    <h3>🔑 Change your PIN</h3>
+    <p class="muted small" style="margin-bottom:12px">PINs are 6 digits. Use something memorable — the house can see all PINs in Back Office.</p>
+    <div class="formrow">
+      <div><label>Current PIN</label><input id="curPin" type="password" inputmode="numeric" maxlength="6" style="width:140px" placeholder="••••••"></div>
+      <div><label>New PIN (6 digits)</label><input id="newPin" type="password" inputmode="numeric" maxlength="6" style="width:140px" placeholder="••••••"></div>
+      <button class="btn" onclick="doChangePin()">Update PIN</button>
+    </div>
+    ${me.admin?`<div class="helpbox" style="margin-top:10px">Your current PIN: <b class="mono">${esc(myPin)}</b></div>`:''}
+  </div>
+  <div class="card"><h3>🚪 Session</h3>
+    <button class="btn secondary" onclick="logout()">Log out</button>
+  </div>`;
+}
+
+function doChangePin(){
+  const cur=document.getElementById('curPin').value.trim();
+  const nw=document.getElementById('newPin').value.trim();
+  if(cur!==authPins[me.id]){ toast('Current PIN is wrong',true); return; }
+  if(!/^\d{6}$/.test(nw)){ toast('New PIN must be exactly 6 digits',true); return; }
+  changePin(nw).then(()=>toast('PIN updated 🔑')).catch(()=>toast('Failed to update PIN',true));
+}
+
+/* ---- Test data seeder ---- */
+function seedTestData(){
+  const ids=S.teams.map(t=>t.id);
+  const shuffle=arr=>{const a=[...arr];for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;};
+  const pair=()=>{const a=shuffle(ids);const f=[];for(let i=0;i<12;i+=2)f.push({home:a[i],away:a[i+1]});return f;};
+  const mk=(name,deadline,kickoff,extra={})=>({id:nid('gw'),name,deadline,kickoff,status:'open',event:null,
+    matches:pair().map(f=>({id:nid('m'),home:f.home,away:f.away,odds:recOdds(S,f.home,f.away),result:null})),...extra});
+  const now=Date.now();
+  const g1=mk('GW Test 1 · settled',now-3*864e5,now-3*864e5+90*60000);
+  S.gameweeks.push(g1);
+  ['murov','fride','dunny','kapil','henry'].forEach((tid,i)=>{
+    const m=g1.matches[i%6]; const pick=['home','away','draw'][i%3];
+    const odds=m.odds[pick];
+    const label=pick==='draw'?`Draw — ${team(m.home).name} v ${team(m.away).name}`:`${team(pick==='home'?m.home:m.away).name} to WIN`;
+    const stake=[20,50,10,100,25][i];
+    S.bets.push({id:nid('bet'),teamId:tid,gwId:g1.id,legs:[{type:'match',gwId:g1.id,matchId:m.id,pick,odds,label}],
+      stake,effOdds:odds,status:'accepted',placedAt:now-3.2*864e5,inplay:false,afterCutoff:false,limitFlags:[],
+      history:[{by:tid,role:'player',action:'placed',stake,odds,at:now-3.2*864e5}]});
+  });
+  g1.matches.forEach(m=>m.result={homePts:35+Math.floor(Math.random()*50),awayPts:35+Math.floor(Math.random()*50)});
+  S.bets.filter(b=>b.gwId===g1.id).forEach(b=>{ const r=settleBet(b,S); if(r){b.status=r.outcome;b.settledPayout=r.payout;b.settledAt=now-2.8*864e5;} });
+  g1.status='settled';
+  const g2=mk('GW Test 2 · open',now+24*36e5,now+25.5*36e5);
+  S.gameweeks.push(g2); createPromoForGw(g2);
+  const m2=g2.matches[0];
+  S.bets.push({id:nid('bet'),teamId:'blank',gwId:g2.id,legs:[{type:'match',gwId:g2.id,matchId:m2.id,pick:'home',odds:m2.odds.home,label:`${team(m2.home).name} to WIN`}],
+    stake:30,effOdds:m2.odds.home,status:'pending',placedAt:now-36e5,inplay:false,afterCutoff:false,limitFlags:[],
+    history:[{by:'blank',role:'player',action:'placed',stake:30,odds:m2.odds.home,at:now-36e5}]});
+  save(); toast('Test data loaded 🧪'); render();
+}
+
+
+// ── PART 4: Admin Views + Render + Init ──────────────────────────────
+/* ================================================================
+   PART 4 — Admin Views, Render, Init
+   ================================================================ */
+
+/* ---- vAlgoZone ---- */
+function vAlgoZone(){
+  const live=publishedGws().some(g=>bettableNow(g)&&g.matches.some(m=>m.home&&m.away));
+  return `<div class="algozone">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <div><span class="display" style="font-size:20px;background:linear-gradient(135deg,var(--violet),var(--cyan));-webkit-background-clip:text;background-clip:text;color:transparent">⚡ THE ALGO</span>
+      <div class="muted small">Can't decide? Let the machine cook. Smash generate, keep what you like.</div></div>
+      <button class="btn hot" onclick="spinAlgo()" ${live?'':'disabled'}>🎰 ${algoCurrent?'Spin again':'Generate me a bet'}</button>
+    </div>
+    ${algoCurrent?`<div class="algocard" id="algoCard">
+      <div class="roll">
+        <div class="muted small" style="text-transform:uppercase;letter-spacing:1px;font-weight:800;margin-bottom:8px">${algoCurrent.n===1?'⚡ Algo single':'⚡ Algo '+algoCurrent.n+'-leg special'} · ${esc(gw(algoCurrent.gwId).name)}</div>
+        ${algoCurrent.legs.map(l=>`<div style="padding:4px 0;font-weight:700;font-size:14px">› ${esc(l.label)} <span class="muted mono">@ ${fmtOdds(l.odds)}</span></div>`).join('')}
+        <div style="margin-top:10px">Combined odds <span class="algoodds gradtxt mono">${fmtOdds(algoCurrent.odds)}</span></div>
+      </div>
+      <div class="formrow" style="justify-content:center;margin-top:12px;margin-bottom:0">
+        <div><label>Stake £</label><input id="algoStake" type="number" min="1" value="${algoStakeVal}" style="width:90px;font-weight:800" oninput="algoStakeVal=parseFloat(this.value)||0;var r=document.getElementById('algoRet');if(r)r.textContent='£'+(algoStakeVal*${algoCurrent.odds}).toFixed(2)"></div>
+        <span class="small muted">returns <b class="mono" id="algoRet" style="color:var(--teal)">${GBP(algoStakeVal*algoCurrent.odds)}</b></span>
+      </div>
+      <div class="algoactions">
+        <button class="btn secondary" onclick="spinAlgo()">❌ Nah, next</button>
+        <button class="btn ghost" onclick="acceptAlgo()">＋ Add to slip</button>
+        <button class="btn hot" onclick="placeAlgoBet()">🔥 BOSH — place bet</button>
+      </div>
+    </div>`:''}
+  </div>`;
+}
+function spinAlgo(){
+  const b=genAlgoBet(S);
+  if(!b){ toast('No live gameweek to generate from',true); return; }
+  algoCurrent=b; render();
+  const card=document.getElementById('algoCard');
+  if(card){ card.classList.add('spinning'); setTimeout(()=>{const c=document.getElementById('algoCard');c&&c.classList.remove('spinning');},650); }
+}
+function acceptAlgo(){
+  if(!algoCurrent) return;
+  slipBundles.push({gwId:algoCurrent.gwId,legs:algoCurrent.legs.map(l=>({...l})),odds:algoCurrent.odds,stake:algoStakeVal||10});
+  algoCurrent=null; render(); toast('Algo bet added to your slip as its own bet ⚡');
+}
+function placeAlgoBet(){
+  if(!algoCurrent) return;
+  const stake=parseFloat(document.getElementById('algoStake').value)||0;
+  if(stake<S.settings.minStake){ toast('Enter a stake',true); return; }
+  algoStakeVal=stake;
+  submitBet({gwId:algoCurrent.gwId,legs:algoCurrent.legs.map(l=>({...l})),effOdds:algoCurrent.odds,stake,viaAlgo:true});
+  algoCurrent=null;
+}
+
+/* ================================================================
+   USER SETTINGS
+   ================================================================ */
+function vUserSettings(){
+  return `<h2>Settings</h2><div class="sub">Your account, your rules.</div>
+  <div class="card">
+    <h3>👤 ${esc(me.name)}</h3>
+    <p class="muted small">Manager: ${esc(me.owner)} ${me.admin?'· 🏠 House admin':''}</p>
+  </div>
+  <div class="card">
+    <h3>🔑 Change PIN</h3>
+    <p class="muted">Enter a new 6-digit numeric PIN</p>
+    <div style="display:flex;gap:10px;align-items:flex-end;margin-top:12px;flex-wrap:wrap">
+      <div>
+        <label class="formrow label" style="display:block;font-size:10.5px;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.8px;font-weight:700">New PIN</label>
+        <input type="password" id="newPinInput" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="6 digits" style="width:140px;font-size:18px;letter-spacing:4px;text-align:center">
+      </div>
+      <button class="btn" onclick="submitPinChange()">Save PIN</button>
+    </div>
+  </div>
+  ${me.admin?`<div class="card">
+    <h3>🔗 FPL League ID</h3>
+    <p class="muted small">The numeric ID from your league URL at draft.premierleague.com/league/<b>ID</b>/standings</p>
+    <div class="formrow" style="margin-top:10px">
+      <div><input id="fplLeagueIdSet" value="${esc(S.fpl.leagueId||'')}" placeholder="e.g. 123456" style="width:160px"></div>
+      <button class="btn small" onclick="S.fpl.leagueId=document.getElementById('fplLeagueIdSet').value.trim();save();toast('League ID saved')">Save</button>
+    </div>
+  </div>`:''}
+  <div class="card">
+    <h3>🚪 Session</h3>
+    <button class="btn secondary" onclick="logout()">Log out</button>
+  </div>`;
+}
+function submitPinChange(){
+  const v=document.getElementById('newPinInput').value;
+  if(!/^\d{6}$/.test(v)){ toast('PIN must be 6 digits',true); return; }
+  changePin(v).then(()=>toast('PIN updated! 🔑')).catch(()=>toast('Failed to update PIN',true));
+}
+
+/* ================================================================
+   HOUSE · BET REVIEW
+   ================================================================ */
+function vReview(){
+  const needs=S.bets.filter(b=>['pending','counter_user'].includes(b.status)).sort((a,b)=>b.placedAt-a.placedAt);
+  const waiting=S.bets.filter(b=>b.status==='counter_house');
+  const live=S.bets.filter(b=>b.status==='accepted');
+  const closed=S.bets.filter(b=>['won','lost','void','rejected','cancelled','expired'].includes(b.status)).sort((a,b)=>b.placedAt-a.placedAt);
+  const exposure=live.reduce((s,b)=>s+b.stake*b.effOdds,0);
+  const staked=live.reduce((s,b)=>s+b.stake,0);
+  return `<h2>Bet Review</h2><div class="sub">Run the book. Accept the mugs, sweat the sharps.</div>
+  <div class="kpis">
+    <div class="kpi"><div class="l">Needs review</div><div class="v" style="color:var(--gold)">${needs.length}</div></div>
+    <div class="kpi"><div class="l">Awaiting player</div><div class="v" style="color:var(--cyan)">${waiting.length}</div></div>
+    <div class="kpi"><div class="l">Live bets</div><div class="v">${live.length}</div></div>
+    <div class="kpi"><div class="l">Staked (live)</div><div class="v mono">${GBP(staked)}</div></div>
+    <div class="kpi"><div class="l">Max exposure</div><div class="v mono" style="color:var(--pink)">${GBP(exposure)}</div></div>
+  </div>
+  ${needs.length?`<h3>🚨 Needs your call</h3>`+needs.map(b=>betCard(b,'house')).join(''):'<div class="card"><p class="muted">Inbox zero. No bets waiting. 🎉</p></div>'}
+  ${waiting.length?`<h3 style="margin-top:18px">📨 Counter-offers with players</h3>`+waiting.map(b=>betCard(b,'house')).join(''):''}
+  ${live.length?`<h3 style="margin-top:18px">🟢 Live book</h3>`+live.map(b=>betCard(b,'house')).join(''):''}
+  ${closed.length?`<div class="card"><details><summary>Closed bets (${closed.length})</summary>${closed.map(b=>betCard(b,'house')).join('')}</details></div>`:''}`;
+}
+function houseAccept(id){
+  const b=S.bets.find(x=>x.id===id);
+  if(!b) return;
+  if(b.status==='counter_user'&&b.offer){ b.stake=b.offer.stake; b.effOdds=b.offer.effOdds; b.offer=null; }
+  b.status='accepted'; b.acceptedAt=Date.now();
+  b.history.push({by:me.id,role:'house',action:'accepted',stake:b.stake,odds:b.effOdds,at:Date.now()});
+  audit('accept',b.id);
+  pushNotif(b.teamId,'bet_accepted',`✅ Your bet accepted! ${b.legs.length} leg(s) @ ${fmtOdds(b.effOdds)} · £${b.stake}`);
+  save(); render(); toast('Bet accepted ✓');
+}
+function houseReject(id){
+  const b=S.bets.find(x=>x.id===id);
+  if(!b) return;
+  b.status='rejected'; b.offer=null;
+  b.history.push({by:me.id,role:'house',action:'rejected',at:Date.now()});
+  audit('reject',b.id);
+  pushNotif(b.teamId,'bet_rejected',`❌ Your bet was rejected · ${b.legs.length} leg(s) @ ${fmtOdds(b.effOdds)}`);
+  save(); render(); toast('Bet rejected');
+}
+
+/* ================================================================
+   HOUSE · GAMEWEEK LOADER
+   ================================================================ */
+let loaderDraft=null;
+function blankLoader(){
+  return {name:'GW '+(S.gameweeks.length+1),fixtures:Array.from({length:6},()=>({home:'',away:''})),koDay:null,koTime:null,shot:null,event:null,fplDeadline:null};
+}
+function importFplEvent(ev){
+  const fx=S.fplFixtures[ev]||[];
+  const isSim=!!S.sim.events[ev];
+  loaderDraft=blankLoader();
+  loaderDraft.name='GW '+ev+(isSim?' · replay test':'');
+  loaderDraft.event=ev;
+  loaderDraft.fixtures=Array.from({length:6},(_,i)=>fx[i]?{...fx[i]}:{home:'',away:''});
+  const info=S.fpl.events[ev];
+  if(!isSim&&info&&info.deadline&&info.deadline>Date.now()) loaderDraft.fplDeadline=info.deadline;
+  render();
+  toast('GW '+ev+' fixtures imported'+(isSim?' — 🧪 replay test: pick any cutoff':''));
+}
+function vLoader(){
+  if(!loaderDraft) loaderDraft=blankLoader();
+  const d=loaderDraft;
+  const used=new Set(d.fixtures.flatMap(f=>[f.home,f.away]).filter(Boolean));
+  const opts=(cur)=>['<option value="">— pick team —</option>',...S.teams.filter(t=>t.id===cur||!used.has(t.id)).map(t=>`<option value="${t.id}" ${t.id===cur?'selected':''}>${esc(t.name)}</option>`)].join('');
+  let ko=null;
+  if(d.koDay&&d.koTime){ const [hh,mm]=d.koTime.split(':').map(Number); ko=ukWallToTs(d.koDay.y,d.koDay.m,d.koDay.d,hh,mm); }
+  const cutoff=ko?ko-90*60000:(d.fplDeadline||null);
+  const now=Date.now();
+  const fplEvents=Object.keys(S.fplFixtures).map(Number).sort((a,b)=>a-b).slice(0,4);
+  return `<h2>Gameweek Loader</h2><div class="sub">Get fixtures in, in under a minute. All times UK.</div>
+  <div class="card glow">
+    <h3>🔗 One-click import from FPL</h3>
+    <p class="muted small">Synced ${S.fpl.lastSync?fmtDT(S.fpl.lastSync):'never'} · fixtures, cutoffs and form straight from the draft API.</p>
+    ${fplEvents.length?fplEvents.map(ev=>`<button class="btn small" style="margin:0 8px 8px 0" onclick="importFplEvent(${ev})">⬇ Import GW ${ev}${S.fpl.events[ev]&&S.fpl.events[ev].deadline?' · cutoff '+fmtDT(S.fpl.events[ev].deadline):''}</button>`).join(''):'<p class="muted small">No upcoming FPL fixtures — run a sync first in Back Office.</p>'}
+  </div>
+  <div class="card">
+    <h3>📛 Name & fixtures</h3>
+    <div class="formrow"><div><label>Gameweek name</label><input value="${esc(d.name)}" onchange="loaderDraft.name=this.value" style="width:180px"></div></div>
+    ${d.fixtures.map((f,i)=>`<div class="fixrow">
+      <span class="num">${i+1}</span>
+      <select onchange="loaderDraft.fixtures[${i}].home=this.value;render()">${opts(f.home)}</select>
+      <span class="vsmid">v</span>
+      <select onchange="loaderDraft.fixtures[${i}].away=this.value;render()">${opts(f.away)}</select>
+    </div>`).join('')}
+    <div class="muted small">Teams disappear from lists once picked — no duplicates.</div>
+  </div>
+  <div class="card">
+    <h3>⚡ Bulk load</h3>
+    <p class="muted small">Paste fixtures one per line, e.g. <i>Selig's Shakers v The Murovers</i></p>
+    <textarea id="bulkFix" placeholder="Selig's Shakers v The Murovers&#10;Fride FC v HUXLEY&#10;…"></textarea>
+    <div class="actions" style="margin-top:8px">
+      <button class="btn small" onclick="parseBulkFixtures()">Parse & fill fixtures</button>
+      <button class="btn secondary small" onclick="copyFixturePrompt()">📋 Copy Claude prompt</button>
+    </div>
+  </div>
+  <div class="card">
+    <h3>⏱ First kick-off → automatic cutoff <span class="muted small">(UK time)</span></h3>
+    ${d.fplDeadline?`<p class="muted small">Cutoff pulled from FPL — or override below.</p>`:'<p class="muted small">Tap the day, tap the time. Cutoff = 90 min before kick-off.</p>'}
+    ${calGrid(d.koDay)}
+    <div class="timechips">${['11:00','12:30','14:00','15:00','17:30','19:45','20:00'].map(t=>`<span class="timechip ${d.koTime===t?'sel':''}" onclick="loaderDraft.koTime='${t}';render()">${t}</span>`).join('')}
+      <input type="time" value="${d.koTime||''}" onchange="loaderDraft.koTime=this.value;render()" style="padding:6px 8px;margin-left:8px">
+    </div>
+    ${cutoff?`<div class="deadline" style="display:inline-block;margin-top:8px">⏱ Betting cutoff: ${fmtDT(cutoff)} UK</div>`:'<div class="muted small" style="margin-top:8px">Pick a day and time…</div>'}
+    ${cutoff&&cutoff<=now?`<div class="warnbox red" style="margin-top:8px">⚠ Cutoff has already passed.</div>`:''}
+  </div>
+  <div class="actions" style="margin:16px 0">
+    <button class="btn big" onclick="saveLoader()">💾 Load gameweek → Odd Setter</button>
+    <button class="btn secondary" onclick="loaderDraft=blankLoader();render()">Reset</button>
+  </div>`;
+}
+function calGrid(sel){
+  const t=ukToday();
+  const todayUTC=Date.UTC(t.y,t.m-1,t.d);
+  const dow=(new Date(todayUTC).getUTCDay()+6)%7;
+  let html='<div class="calgrid">'+['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d=>`<span class="dayhead">${d}</span>`).join('');
+  for(let i=0;i<21;i++){
+    const ts=todayUTC+(i-dow)*864e5;
+    const dt=new Date(ts);
+    const y=dt.getUTCFullYear(),mo=dt.getUTCMonth()+1,da=dt.getUTCDate();
+    const off=ts<todayUTC?'off':'';
+    const s=sel&&sel.y===y&&sel.m===mo&&sel.d===da?'sel':'';
+    html+=`<span class="daychip ${off} ${s}" onclick="loaderDraft.koDay={y:${y},m:${mo},d:${da}};render()">${da}<div class="small muted" style="font-size:9px">${dt.toLocaleString('en-GB',{month:'short',timeZone:'UTC'})}</div></span>`;
+  }
+  return html+'</div>';
+}
+function matchTeamName(str){
+  const s=str.toLowerCase().trim(); if(!s) return null;
+  let t=S.teams.find(t=>t.name.toLowerCase()===s); if(t) return t.id;
+  t=S.teams.find(t=>t.name.toLowerCase().includes(s)||s.includes(t.name.toLowerCase())); if(t) return t.id;
+  t=S.teams.find(t=>t.owner.toLowerCase()===s); if(t) return t.id;
+  const words=s.split(/\s+/).filter(w=>w.length>3);
+  t=S.teams.find(t=>words.some(w=>t.name.toLowerCase().includes(w)));
+  return t?t.id:null;
+}
+function parseBulkFixtures(){
+  const lines=document.getElementById('bulkFix').value.split('\n').map(l=>l.trim()).filter(Boolean);
+  let filled=0,failed=[];
+  const fixtures=Array.from({length:6},()=>({home:'',away:''}));
+  lines.slice(0,6).forEach((line,i)=>{
+    const parts=line.split(/\s+vs?\.?\s+|\s+-\s+|,/i);
+    if(parts.length<2){ failed.push(line); return; }
+    const h=matchTeamName(parts[0]),a=matchTeamName(parts[1]);
+    if(h&&a&&h!==a){ fixtures[i]={home:h,away:a}; filled++; } else failed.push(line);
+  });
+  if(filled){ loaderDraft.fixtures=fixtures; render(); }
+  toast(filled+' fixture(s) parsed'+(failed.length?' · couldn\'t read: '+failed.join(' | '):''),failed.length>0&&filled===0);
+}
+function copyFixturePrompt(){
+  const names=S.teams.map(t=>t.name).join(', ');
+  const p=`Here is a screenshot of this week's draft fantasy league fixtures. The 12 teams are: ${names}.\n\nRead the fixtures from the image and output ONLY 6 lines in exactly this format (home team v away team), using the exact team names above:\nTeam A v Team B`;
+  navigator.clipboard.writeText(p).then(()=>toast('Prompt copied 📋'));
+}
+function attachShot(input,which){
+  const f=input.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=e=>{ if(which==='loader') loaderDraft.shot=e.target.result; else settlerShots[which]=e.target.result; render(); };
+  r.readAsDataURL(f);
+}
+function saveLoader(){
+  const d=loaderDraft;
+  const fixtures=d.fixtures.filter(f=>f.home&&f.away);
+  if(!fixtures.length){ toast('Pick at least one fixture',true); return; }
+  let ko=null;
+  if(d.koDay&&d.koTime){ const [hh,mm]=d.koTime.split(':').map(Number); ko=ukWallToTs(d.koDay.y,d.koDay.m,d.koDay.d,hh,mm); }
+  let deadline,kickoff;
+  if(ko){ deadline=ko-90*60000; kickoff=ko; }
+  else if(d.fplDeadline){ deadline=d.fplDeadline; kickoff=d.fplDeadline+90*60000; }
+  else { toast('Set the first kick-off time',true); return; }
+  const g={id:nid('gw'),name:d.name||('GW '+(S.gameweeks.length+1)),deadline,kickoff,event:d.event||null,status:'draft',
+    matches:fixtures.map(f=>({id:nid('m'),home:f.home,away:f.away,odds:recOdds(S,f.home,f.away),result:null}))};
+  S.gameweeks.push(g);
+  audit('gameweek loaded',g.name+' · cutoff '+fmtDT(deadline));
+  save(); loaderDraft=null;
+  toast(g.name+' loaded — review in Odd Setter 🎯');
+  go('odds');
+}
+
+/* ================================================================
+   HOUSE · ODD SETTER
+   ================================================================ */
+function vOddSetter(){
+  const drafts=S.gameweeks.filter(g=>g.status==='draft');
+  const open=S.gameweeks.filter(g=>g.status==='open');
+  return `<h2>Odd Setter</h2><div class="sub">Recommended prices come from team form. Tweak, then publish.</div>
+  ${drafts.length===0&&open.length===0?'<div class="card"><p class="muted">Nothing loaded. Use the Gameweek Loader first.</p></div>':''}
+  ${drafts.map(g=>oddsCard(g,true)).join('')}
+  ${open.map(g=>oddsCard(g,false)).join('')}
+  <div class="card"><details><summary>📊 Team form data</summary>
+    <div class="statgrid">${S.teams.map(t=>`<div class="codecard"><b>${esc(t.name)}</b><br>
+      <span class="muted small">Baseline</span> <input type="number" value="${S.stats[t.id]?S.stats[t.id].base:50}" style="width:64px;padding:4px 7px" onchange="if(!S.stats['${t.id}'])S.stats['${t.id}']={};S.stats['${t.id}'].base=parseFloat(this.value)||50;save()">
+      <span class="muted small">→ avg <b class="mono">${teamAvg(S,t.id).toFixed(1)}</b></span></div>`).join('')}</div>
+  </details></div>`;
+}
+function oddsCard(g,isDraft){
+  return `<div class="card ${isDraft?'':'glow'}">
+    <div class="gwhead">
+      <h3 style="margin:0">📅 ${esc(g.name)} ${isDraft?'<span class="pill st-pending">DRAFT</span>':'<span class="pill st-accepted">LIVE</span>'}</h3>
+      <span class="deadline">⏱ Cutoff ${fmtDT(g.deadline)}</span>
+    </div>
+    <div style="overflow-x:auto"><table><tr><th>Fixture</th><th>Home</th><th>Draw</th><th>Away</th><th>Rec</th></tr>
+    ${g.matches.map(m=>{
+      const rec=recOdds(S,m.home,m.away);
+      return `<tr>
+      <td><b>${esc(team(m.home)?team(m.home).name:'?')}</b> <span class="muted">v</span> <b>${esc(team(m.away)?team(m.away).name:'?')}</b></td>
+      <td><input type="number" step="0.01" min="1.01" value="${m.odds.home}" style="width:68px" onchange="setOdds('${g.id}','${m.id}','home',this.value)"></td>
+      <td><input type="number" step="0.01" min="1.01" value="${m.odds.draw}" style="width:68px" onchange="setOdds('${g.id}','${m.id}','draw',this.value)"></td>
+      <td><input type="number" step="0.01" min="1.01" value="${m.odds.away}" style="width:68px" onchange="setOdds('${g.id}','${m.id}','away',this.value)"></td>
+      <td class="muted small">${fmtOdds(rec.home)} / ${fmtOdds(rec.draw)} / ${fmtOdds(rec.away)}</td></tr>`;
+    }).join('')}</table></div>
+    <div class="formrow" style="margin-top:12px">
+      <div><label>Edit cutoff (UK)</label><input type="datetime-local" onchange="setGwDeadline('${g.id}',this.value)"></div>
+      ${!isDraft?`<div><label>In-play closes (UK)</label><input type="datetime-local" onchange="setInplayCutoff('${g.id}',this.value)"></div>`:''}
+    </div>
+    <div class="actions" style="margin-top:10px">
+      ${isDraft?`<button class="btn big" onclick="publishGw('${g.id}')">🚀 Publish — open for betting</button>`:''}
+      <button class="btn secondary small" onclick="rerecommend('${g.id}')">↺ Reset to recommended</button>
+      ${isDraft?`<button class="btn danger small" onclick="delGw('${g.id}')">Delete</button>`:''}
+    </div>
+  </div>`;
+}
+function setOdds(gwId,mId,k,val){
+  const g=gw(gwId); const m=g.matches.find(m=>m.id===mId); if(!m) return;
+  m.odds[k]=Math.max(1.01,parseFloat(val)||1.01);
+  audit('odds edit',`${g.name}: ${k} → ${fmtOdds(m.odds[k])}`); save();
+}
+function setGwDeadline(gwId,val){
+  const ts=parseDTLocal(val); if(!ts){ toast('Bad date',true); return; }
+  const g=gw(gwId); g.deadline=ts; if(!g.kickoff||g.kickoff<ts) g.kickoff=ts+90*60000;
+  audit('cutoff edit',g.name+': '+fmtDT(ts)); save(); render(); toast('Cutoff updated '+fmtDT(ts));
+}
+function setInplayCutoff(gwId,val){
+  const ts=parseDTLocal(val); if(!ts){ toast('Bad date',true); return; }
+  const g=gw(gwId); g.inplayCutoff=ts;
+  audit('in-play cutoff',g.name+': '+fmtDT(ts)); save(); render(); toast('In-play window set');
+}
+function rerecommend(gwId){ const g=gw(gwId); g.matches.forEach(m=>m.odds=recOdds(S,m.home,m.away)); save(); render(); toast('Odds reset to model'); }
+function delGw(gwId){
+  if(!confirm('Delete this gameweek?')) return;
+  S.gameweeks=S.gameweeks.filter(g=>g.id!==gwId);
+  S.bets=S.bets.filter(b=>b.gwId!==gwId);
+  S.promos=S.promos.filter(p=>p.gwId!==gwId);
+  save(); render();
+}
+function publishGw(gwId){
+  const g=gw(gwId); g.status='open'; createPromoForGw(g);
+  audit('published',g.name); save(); render();
+  TEAMS.forEach(t=>{ if(!t.admin) pushNotif(t.id,'gw_published',`📅 ${g.name} is LIVE — place your bets before ${fmtDT(g.deadline)} 🔥`); });
+  toast(g.name+' is LIVE 🔥');
+}
+
+/* ================================================================
+   HOUSE · BET SETTLER
+   ================================================================ */
+let settlerShots={};
+function fillScoresFromFpl(gwId){
+  const g=gw(gwId);
+  if(!g.event){ toast('Not linked to FPL event',true); return; }
+  const hs=S.history.filter(h=>h.event===g.event).concat(S.sim.events[g.event]||[]);
+  let n=0;
+  g.matches.forEach(m=>{
+    const h=hs.find(h=>(h.a===m.home&&h.b===m.away)||(h.a===m.away&&h.b===m.home));
+    if(h){ m.result=h.a===m.home?{homePts:h.ap,awayPts:h.bp}:{homePts:h.bp,awayPts:h.ap}; n++; }
+  });
+  if(n) audit('scores from FPL',g.name+': '+n);
+  save(); render();
+  toast(n?n+' score(s) pulled ✅':'No finished FPL results yet — re-sync first',n===0);
+}
+function reopenGw(gwId){
+  const g=gw(gwId);
+  if(!confirm('Re-open '+g.name+'? Graded bets revert to accepted.')) return;
+  S.bets.filter(b=>b.gwId===gwId).forEach(b=>{
+    if(['won','lost','void'].includes(b.status)){ b.status='accepted'; delete b.settledPayout; delete b.settledAt; }
+    else if(b.status==='expired') b.status='pending';
+  });
+  g.status='open'; audit('re-opened',g.name); save(); render(); toast(g.name+' re-opened');
+}
+function vSettler(){
+  const open=S.gameweeks.filter(g=>g.status==='open');
+  const done=S.gameweeks.filter(g=>g.status==='settled');
+  const doneHtml=done.length?`<div class="card"><details><summary>Settled gameweeks — undo (${done.length})</summary>
+    ${done.map(g=>`<div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><b>📅 ${esc(g.name)}</b>
+      <button class="btn danger small" onclick="reopenGw('${g.id}')">♻ Re-open</button></div>`).join('')}</details></div>`:'';
+  if(!open.length) return `<h2>Bet Settler</h2><div class="sub">Scores in, bets graded, arguments settled.</div><div class="card"><p class="muted">No live gameweeks to settle.</p></div>${doneHtml}`;
+  return `<h2>Bet Settler</h2><div class="sub">Pull scores from FPL, enter manually, or paste — every bet grades itself.</div>
+  ${open.map(g=>{
+    const riding=S.bets.filter(b=>b.gwId===g.id&&b.status==='accepted').length;
+    const negotiating=S.bets.filter(b=>b.gwId===g.id&&['pending','counter_house','counter_user'].includes(b.status)).length;
+    return `<div class="card">
+    <div class="gwhead"><h3 style="margin:0">📅 ${esc(g.name)}</h3>
+      <span class="muted small">${riding} accepted · ${negotiating} in negotiation (will expire)</span></div>
+    <div style="overflow-x:auto"><table><tr><th>Home</th><th style="width:170px;text-align:center">Points</th><th style="text-align:right">Away</th></tr>
+    ${g.matches.map(m=>`<tr>
+      <td><b>${esc(team(m.home)?team(m.home).name:'?')}</b></td>
+      <td style="text-align:center"><input type="number" placeholder="H" value="${m.result?m.result.homePts:''}" style="width:62px" onchange="setScore('${g.id}','${m.id}','homePts',this.value)">
+      <span class="muted">–</span>
+      <input type="number" placeholder="A" value="${m.result?m.result.awayPts:''}" style="width:62px" onchange="setScore('${g.id}','${m.id}','awayPts',this.value)"></td>
+      <td style="text-align:right"><b>${esc(team(m.away)?team(m.away).name:'?')}</b></td></tr>`).join('')}</table></div>
+    <div class="actions" style="margin-top:10px">
+      ${g.event?`<button class="btn gold small" onclick="fillScoresFromFpl('${g.id}')">⬇ Pull scores from FPL GW ${g.event}</button>`:'<span class="muted small">Not FPL-linked — enter scores manually.</span>'}
+    </div>
+    <details style="margin-top:10px"><summary>⚡ Bulk paste scores</summary>
+      <textarea id="bulkScores_${g.id}" placeholder="62-55&#10;48-48&#10;…" style="min-height:60px;margin-top:8px"></textarea>
+      <button class="btn small" style="margin-top:6px" onclick="parseBulkScores('${g.id}')">Parse scores</button>
+    </details>
+    <div class="actions" style="margin-top:12px">
+      <button class="btn big" onclick="settleGw('${g.id}')">⚖️ SETTLE ${esc(g.name).toUpperCase()}</button>
+    </div></div>`;
+  }).join('')}
+  ${doneHtml}`;
+}
+function setScore(gwId,mId,k,val){
+  const g=gw(gwId); const m=g.matches.find(m=>m.id===mId); if(!m) return;
+  if(!m.result) m.result={homePts:null,awayPts:null};
+  m.result[k]=val===''?null:parseInt(val);
+  if(m.result.homePts===null&&m.result.awayPts===null) m.result=null;
+  audit('score edit',`${g.name}: ${k} → ${val}`); save();
+}
+function parseBulkScores(gwId){
+  const g=gw(gwId);
+  const lines=document.getElementById('bulkScores_'+gwId).value.split('\n').map(l=>l.trim()).filter(Boolean);
+  let n=0;
+  lines.forEach((line,i)=>{
+    const m=line.match(/(\d+)\s*[-–:]\s*(\d+)/);
+    if(m&&g.matches[i]){ g.matches[i].result={homePts:+m[1],awayPts:+m[2]}; n++; }
+  });
+  save(); render(); toast(n+' score(s) filled');
+}
+function settleGw(gwId){
+  const g=gw(gwId);
+  const incomplete=g.matches.filter(m=>m.home&&m.away&&(!m.result||m.result.homePts===null||m.result.awayPts===null));
+  if(incomplete.length){ toast(incomplete.length+' score(s) missing',true); return; }
+  if(!confirm('Settle '+g.name+'? Accepted bets grade now; unaccepted bets expire.')) return;
+  let won=0,lost=0;
+  S.bets.filter(b=>b.gwId===gwId).forEach(b=>{
+    if(b.status==='accepted'){
+      const r=settleBet(b,S);
+      if(r){
+        b.status=r.outcome; b.settledPayout=r.payout; b.settledAt=Date.now();
+        r.outcome==='won'?won++:lost++;
+        const msg=r.outcome==='won'
+          ?`🎉 BET WON! £${r.payout.toFixed(2)} incoming · ${b.legs.length} leg(s) @ ${fmtOdds(b.effOdds)}`
+          :r.outcome==='void'
+          ?`↩️ Bet voided — stake of £${b.stake} returned`
+          :`❌ Bet lost · £${b.stake} · ${b.legs.length} leg(s) @ ${fmtOdds(b.effOdds)}`;
+        pushNotif(b.teamId,'bet_settled',msg);
+      }
+    } else if(['pending','counter_house','counter_user'].includes(b.status)){
+      b.status='expired';
+    }
+  });
+  g.status='settled';
+  S.promos.forEach(p=>{ if(p.gwId===gwId) p.active=false; });
+  audit('settled',`${g.name}: ${won} won, ${lost} lost`);
+  save(); render();
+  toast(`${g.name} settled ⚖️ — ${won} winner(s), ${lost} loser(s)`);
+}
+
+/* ================================================================
+   HOUSE · BACK OFFICE
+   ================================================================ */
+function vOffice(){
+  const {pnl,house}=computePnl(S);
+  const live=S.bets.filter(b=>b.status==='accepted');
+  return `<h2>Back Office</h2><div class="sub">Limits, PINs, and data. House eyes only.</div>
+  <div class="kpis">
+    <div class="kpi"><div class="l">House P&L</div><div class="v mono ${house>0?'pos':house<0?'neg':''}">${GBP(house)}</div></div>
+    <div class="kpi"><div class="l">Live bets</div><div class="v">${live.length}</div></div>
+    <div class="kpi"><div class="l">All-time bets</div><div class="v">${S.bets.length}</div></div>
+  </div>
+  <div class="card">
+    <h3>🔑 All team PINs</h3>
+    <p class="muted small">Only you and Jack can see these.</p>
+    <div style="overflow-x:auto"><table><tr><th>Team</th><th>Manager</th><th>PIN</th><th></th></tr>
+    ${TEAMS.map(t=>`<tr><td><b>${esc(t.name)}</b></td><td>${esc(t.owner)}</td><td><code style="font-size:16px;letter-spacing:3px;color:var(--teal)">${authPins[t.id]||'—'}</code></td><td>${t.admin?'🏠 Admin':''}</td></tr>`).join('')}
+    </table></div>
+  </div>
+  <div class="card">
+    <h3>📏 Limits & edge <span class="muted small">(players never see these mechanics)</span></h3>
+    <div class="formrow">
+      <div><label>Max stake £</label><input type="number" id="setMaxStake" value="${S.settings.maxStake}" style="width:100px"></div>
+      <div><label>Max payout £</label><input type="number" id="setMaxPayout" value="${S.settings.maxPayout}" style="width:100px"></div>
+      <div><label>Acca edge %/leg</label><input type="number" id="setMargin" value="${S.settings.accaMarginPct}" style="width:100px"></div>
+      <div><label>Algo edge %</label><input type="number" id="setAlgoEdge" value="${S.settings.algoEdgePct}" style="width:100px"></div>
+      <button class="btn" onclick="saveSettings()">Save</button>
+    </div>
+    <p class="muted small">Acca edge: combined odds clipped by (edge × legs)%. Algo edge: specials priced at fair × (1 − edge).</p>
+  </div>
+  <div class="card glow">
+    <h3>🔗 FPL Sync</h3>
+    <p class="muted small">Pulls fixtures, results and form from draft.premierleague.com. <b>Finding your league ID:</b> log in, open your league — the number in the URL is the ID (draft.premierleague.com/league/<b>123456</b>/standings).</p>
+    <div class="formrow">
+      <div><label>Draft league ID</label><input id="fplLeagueId" value="${esc(S.fpl.leagueId||'')}" style="width:140px" placeholder="e.g. 12345"></div>
+      <div><label>Hold back last N GWs</label><input id="fplHoldback" type="number" min="0" max="10" value="${S.sim.holdback}" style="width:80px"></div>
+      <button class="btn" onclick="fplSync()">⟳ Sync now</button>
+      <span class="muted small" style="padding-bottom:8px">Last sync: ${S.fpl.lastSync?fmtDT(S.fpl.lastSync):'never'} · ${S.history.length} result(s) in form model</span>
+    </div>
+    <div id="fplFallback" style="display:none">
+      <hr class="hr">
+      <p class="muted small">Browser blocked the direct call (CORS — normal for a local file or GitHub Pages). The GitHub Action fetches server-side automatically. Manual fallback: open your <a style="color:var(--cyan)" href="https://draft.premierleague.com/api/league/${esc(S.fpl.leagueId||'YOUR_ID')}/details" target="_blank">league details JSON</a>, copy all, paste here:</p>
+      <textarea id="fplPasteBox" placeholder='{"league":{...},"league_entries":[...],"matches":[...]}'></textarea>
+      <button class="btn small" style="margin-top:8px" onclick="fplPaste()">Ingest pasted JSON</button>
+    </div>
+  </div>
+  <div class="card">
+    <h3>💳 P&L breakdown</h3>
+    <div style="overflow-x:auto"><table><tr><th>#</th><th>Team</th><th style="text-align:right">P&L</th></tr>
+    ${S.teams.map(t=>({t,p:pnl[t.id]||0})).sort((a,b)=>b.p-a.p).map((r,i)=>`<tr><td>${i+1}</td><td><b>${esc(r.t.name)}</b> <span class="muted small">${esc(r.t.owner)}</span></td><td style="text-align:right" class="mono ${r.p>0?'pos':r.p<0?'neg':''}">${GBP(r.p)}</td></tr>`).join('')}
+    <tr><td></td><td><b>🏠 The House</b></td><td style="text-align:right" class="mono ${house>0?'pos':house<0?'neg':''}">${GBP(house)}</td></tr></table></div>
+  </div>
+  <div class="card">
+    <h3>🧪 Test tools</h3>
+    <button class="btn gold" onclick="seedTestData()">Load test gameweeks & odds</button>
+    <span class="muted small"> Adds a settled GW, live pre-match GW and in-play GW.</span>
+  </div>
+  <div class="card"><details><summary>📜 Audit log (${S.audit.length})</summary>
+    <div style="overflow-x:auto"><table style="margin-top:10px"><tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th></tr>
+    ${S.audit.slice(-60).reverse().map(a=>`<tr><td class="small mono">${fmtDT(a.at)}</td><td class="small">${team(a.by)?esc(team(a.by).owner):esc(a.by)}</td><td class="small"><b>${esc(a.action)}</b></td><td class="small muted">${esc(a.detail)}</td></tr>`).join('')||'<tr><td colspan="4" class="muted small">No edits yet.</td></tr>'}</table></div>
+  </details></div>
+  <div class="card">
+    <h3>💾 Data</h3>
+    <div class="actions">
+      <button class="btn secondary" onclick="exportData()">⬇ Export JSON</button>
+      <button class="btn danger" onclick="resetAll()">Reset everything</button>
+    </div>
+  </div>`;
+}
+function saveSettings(){
+  S.settings.maxStake=parseFloat(document.getElementById('setMaxStake').value)||300;
+  S.settings.maxPayout=parseFloat(document.getElementById('setMaxPayout').value)||10000;
+  S.settings.accaMarginPct=parseFloat(document.getElementById('setMargin').value)||10;
+  S.settings.algoEdgePct=parseFloat(document.getElementById('setAlgoEdge').value)||20;
+  audit('settings',`stake £${S.settings.maxStake} · payout £${S.settings.maxPayout} · acca ${S.settings.accaMarginPct}% · algo ${S.settings.algoEdgePct}%`);
+  save(); render(); toast('Settings saved');
+}
+
+/* ================================================================
+   FPL SYNC
+   ================================================================ */
+async function fplFetch(url){ const r=await fetch(url); if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
+async function fplSync(){
+  const inp=document.getElementById('fplLeagueId');
+  const id=((inp?inp.value:'')||S.fpl.leagueId||'').trim();
+  if(!id){ toast('Enter your draft league ID',true); return; }
+  S.fpl.leagueId=id; save(); toast('Syncing from FPL…');
+  try{
+    const det=await fplFetch('https://draft.premierleague.com/api/league/'+id+'/details');
+    let boot=null;
+    try{ boot=await fplFetch('https://draft.premierleague.com/api/bootstrap-static'); }catch(e){}
+    ingestFpl(det,boot);
+  }catch(e){
+    const fb=document.getElementById('fplFallback'); if(fb) fb.style.display='block';
+    toast('Direct fetch blocked (CORS) — GitHub Action handles this automatically. Use paste fallback below.',true);
+  }
+}
+function fplPaste(){
+  try{ ingestFpl(JSON.parse(document.getElementById('fplPasteBox').value),null); }
+  catch(e){ toast('Could not parse JSON',true); }
+}
+function ingestFpl(det,boot){
+  if(!det||!det.league_entries||!det.matches){ toast('Does not look like league details JSON',true); return; }
+  const hbInp=document.getElementById('fplHoldback');
+  if(hbInp) S.sim.holdback=Math.max(0,parseInt(hbInp.value)||0);
+  const unmatched=[];
+  det.league_entries.forEach(en=>{
+    const tid=matchTeamName(en.entry_name||'')||matchTeamName(((en.player_first_name||'')+' '+(en.player_last_name||'')).trim());
+    if(tid) S.fpl.entryMap[en.id]=tid; else if(en.entry_name) unmatched.push(en.entry_name);
+  });
+  const em=S.fpl.entryMap;
+  S.history=[]; S.fplFixtures={}; S.sim.events={};
+  const finished=det.matches.filter(m=>m.finished);
+  const maxEv=finished.length?Math.max(...finished.map(m=>m.event)):0;
+  const simFrom=maxEv-S.sim.holdback+1;
+  det.matches.forEach(m=>{
+    const a=em[m.league_entry_1],b=em[m.league_entry_2];
+    if(!a||!b) return;
+    if(m.finished){
+      if(S.sim.holdback>0&&m.event>=simFrom){
+        (S.sim.events[m.event]=S.sim.events[m.event]||[]).push({a,b,ap:m.league_entry_1_points,bp:m.league_entry_2_points});
+        (S.fplFixtures[m.event]=S.fplFixtures[m.event]||[]).push({home:a,away:b});
+      } else {
+        S.history.push({event:m.event,a,b,ap:m.league_entry_1_points,bp:m.league_entry_2_points});
+      }
+    } else {
+      (S.fplFixtures[m.event]=S.fplFixtures[m.event]||[]).push({home:a,away:b});
+    }
+  });
+  const evList=boot?(Array.isArray(boot.events)?boot.events:(boot.events&&boot.events.data)||[]):[];
+  evList.forEach(ev=>{ S.fpl.events[ev.id]={deadline:ev.deadline_time?new Date(ev.deadline_time).getTime():null,name:ev.name}; });
+  S.fpl.lastSync=Date.now();
+  audit('FPL sync','league '+S.fpl.leagueId+': '+S.history.length+' results'+(unmatched.length?' · UNMATCHED: '+unmatched.join(', '):''));
+  save(); render();
+  toast('✅ FPL synced — '+S.history.length+' results powering the odds'+(unmatched.length?' · unmatched: '+unmatched.join(', '):''));
+}
+function exportData(){
+  const blob=new Blob([JSON.stringify(S,null,2)],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='lennon-lounge-'+new Date().toISOString().slice(0,10)+'.json';
+  a.click();
+}
+function resetAll(){
+  if(!confirm('Wipe ALL gameweeks, bets, promos and settings?')) return;
+  db.ref(ROOT).remove().then(()=>{ S=freshState(); save(); render(); toast('Fresh start'); });
+}
+
+/* ================================================================
+   TEST DATA
+   ================================================================ */
+function seedTestData(){
+  const ids=S.teams.map(t=>t.id);
+  const shuffle=arr=>{const a=[...arr];for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;};
+  const pair=()=>{const a=shuffle(ids);const f=[];for(let i=0;i<12;i+=2)f.push({home:a[i],away:a[i+1]});return f;};
+  const mk=(name,deadline,kickoff,extra)=>({id:nid('gw'),name,deadline,kickoff,status:'open',event:null,
+    matches:pair().map(f=>({id:nid('m'),home:f.home,away:f.away,odds:recOdds(S,f.home,f.away),result:null})),...extra});
+  const now=Date.now();
+  const g1=mk('GW T1 · settled',now-3*864e5,now-3*864e5+90*60000);
+  S.gameweeks.push(g1);
+  ['murov','fride','dunny','kapil','henry'].forEach((tid,i)=>{
+    const m=g1.matches[i%6]; const pick=['home','away','draw'][i%3];
+    const odds=m.odds[pick];
+    const label=pick==='draw'?`Draw — ${team(m.home).name} v ${team(m.away).name}`:`${team(pick==='home'?m.home:m.away).name} to WIN`;
+    S.bets.push({id:nid('bet'),teamId:tid,gwId:g1.id,legs:[{type:'match',gwId:g1.id,matchId:m.id,pick,odds,label}],
+      stake:[20,50,10,100,25][i],effOdds:odds,status:'accepted',placedAt:now-3.2*864e5,inplay:false,afterCutoff:false,limitFlags:[],
+      history:[{by:tid,role:'player',action:'placed',stake:[20,50,10,100,25][i],odds,at:now-3.2*864e5}]});
+  });
+  g1.matches.forEach(m=>m.result={homePts:35+Math.floor(Math.random()*50),awayPts:35+Math.floor(Math.random()*50)});
+  S.bets.filter(b=>b.gwId===g1.id).forEach(b=>{const r=settleBet(b,S);if(r){b.status=r.outcome;b.settledPayout=r.payout;b.settledAt=now-2.8*864e5;}});
+  g1.status='settled';
+  const g2=mk('GW T2 · open',now+24*36e5,now+25.5*36e5);
+  S.gameweeks.push(g2); createPromoForGw(g2);
+  const m2=g2.matches[0];
+  S.bets.push({id:nid('bet'),teamId:'blank',gwId:g2.id,legs:[{type:'match',gwId:g2.id,matchId:m2.id,pick:'home',odds:m2.odds.home,label:`${team(m2.home).name} to WIN`}],
+    stake:30,effOdds:m2.odds.home,status:'pending',placedAt:now-36e5,inplay:false,afterCutoff:false,limitFlags:[],
+    history:[{by:'blank',role:'player',action:'placed',stake:30,odds:m2.odds.home,at:now-36e5}]});
+  const g3=mk('GW T3 · in-play',now-3*36e5,now-90*60000,{inplayCutoff:now+30*36e5});
+  g3.matches.slice(0,3).forEach(m=>m.result={homePts:10+Math.floor(Math.random()*40),awayPts:10+Math.floor(Math.random()*40)});
+  S.gameweeks.push(g3);
+  audit('test data','loaded GW T1 (settled), GW T2 (open), GW T3 (in-play)');
+  save(); render();
+  toast('🧪 Test gameweeks loaded — pre-match, live in-play, settled with graded bets');
+}
+
+/* ================================================================
+   RENDER & NAVIGATION
+   ================================================================ */
+function needsActionCount(){ if(!me||!S) return 0; return (S.bets||[]).filter(b=>b.teamId===me.id&&b.status==='counter_house').length; }
+function reviewCount(){ if(!S) return 0; return (S.bets||[]).filter(b=>['pending','counter_user'].includes(b.status)).length; }
+
+function render(){
+  if(!me||!S) return;
+  const {pnl}=computePnl(S);
+  const p=pnl[me.id]||0;
+  const pnlEl=document.getElementById('myPnl');
+  if(pnlEl) pnlEl.innerHTML=`P&L <span class="${p>0?'pos':p<0?'neg':''} mono">${GBP(p)}</span>`;
+  const tabs=[
+    {id:'home',label:'🏟️ Home'},
+    {id:'builder',label:'⚽ Bet Builder'},
+    {id:'mybets',label:'🧾 My Bets',badge:needsActionCount()},
+    {id:'results',label:'🏆 Results'},
+    {id:'usettings',label:'⚙️ Settings'},
+  ];
+  if(me.admin) tabs.push(
+    {id:'review',label:'🏠 Bet Review',house:true,badge:reviewCount()},
+    {id:'loader',label:'📥 GW Loader',house:true},
+    {id:'odds',label:'🎯 Odds Setter',house:true},
+    {id:'settler',label:'⚖️ Settler',house:true},
+    {id:'office',label:'🗄️ Back Office',house:true},
+  );
+  const navEl=document.getElementById('nav');
+  if(navEl) navEl.innerHTML=tabs.map(t=>`<button class="${t.house?'houseTab':''} ${activeTab===t.id?'active':''}" onclick="go('${t.id}')">${t.label}${t.badge?`<span class="badge">${t.badge}</span>`:''}</button>`).join('');
+  const views={home:vHome,builder:vBuilder,mybets:vMyBets,results:vResults,usettings:vUserSettings,
+    review:vReview,loader:vLoader,odds:vOddSetter,settler:vSettler,office:vOffice};
+  const viewEl=document.getElementById('view');
+  if(viewEl) viewEl.innerHTML=(views[activeTab]||vHome)();
+  const cb=document.getElementById('chatBox'); if(cb) cb.scrollTop=cb.scrollHeight;
+  // Mobile bottom nav active states
+  ['home','builder','mybets','results'].forEach(id=>{
+    const btn=document.getElementById('bn-'+id);
+    if(btn) btn.classList.toggle('active',activeTab===id);
+  });
+  const moreBtn=document.getElementById('bn-more');
+  if(moreBtn) moreBtn.classList.toggle('active',['usettings','review','loader','odds','settler','office'].includes(activeTab));
+  // Notification dot
+  renderNotifications();
+  // Auto-refresh reminder on time-sensitive tabs
+  clearTimeout(render._rt);
+  if(['builder','review','settler'].includes(activeTab)){
+    render._rt=setTimeout(render,60000);
+  }
+}
+function go(tab){ activeTab=tab; render(); window.scrollTo(0,0); }
+
+/* ================================================================
+   INIT
+   ================================================================ */
+async function initApp(){
+  const loadingEl=document.getElementById('loginLoading');
+  if(loadingEl) loadingEl.style.display='block';
+  try{
+    await loadAuth();
+    renderTeamGrid();
+    setupPinInputs();
+    const savedUser=sessionStorage.getItem('wlgyl_user');
+    if(savedUser&&TEAMS.find(t=>t.id===savedUser)){
+      S=freshState();
+      me=TEAMS.find(t=>t.id===savedUser);
+      document.getElementById('login').style.display='none';
+      document.getElementById('app').style.display='block';
+      const bn=document.getElementById('bottomNav'); if(bn) bn.style.display='';
+      startListener();
+    } else {
+      if(loadingEl) loadingEl.style.display='none';
+    }
+  }catch(e){
+    if(loadingEl) loadingEl.style.display='none';
+    toast('Failed to connect — check your internet connection',true);
+    console.error('Init error:',e);
+  }
+}
+
+if(document.readyState==='loading'){
+  document.addEventListener('DOMContentLoaded',initApp);
+} else {
+  initApp();
+}
+
+</script>
+</body>
+</html>
