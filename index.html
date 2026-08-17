@@ -416,8 +416,18 @@ function freshState() {
 }
 
 function migrate(s) {
-  ['chat','audit','history'].forEach(k => { if (!Array.isArray(s[k])) s[k] = []; });
-  if (!s.promos) s.promos = [];
+  // Firebase stores arrays as {0:{}, 1:{}} — convert all back to real arrays
+  const toArr = v => v == null ? [] : Array.isArray(v) ? v : Object.values(v);
+  ['teams','gameweeks','bets','promos','chat','audit','history'].forEach(k => { s[k] = toArr(s[k]); });
+  // Also fix nested matches arrays inside each gameweek
+  s.gameweeks.forEach(g => { if (g && g.matches) g.matches = toArr(g.matches); });
+  // Fix nested bet legs and history arrays
+  s.bets.forEach(b => {
+    if (b && b.legs) b.legs = toArr(b.legs);
+    if (b && b.history) b.history = toArr(b.history);
+    if (b && b.chat) b.chat = toArr(b.chat);
+    if (b && b.flags) b.flags = toArr(b.flags);
+  });
   if (!s.boosters) s.boosters = {};
   if (!s.fpl) s.fpl = {leagueId:'', entryMap:{}, events:{}, lastSync:null};
   if (!s.fplFixtures) s.fplFixtures = {};
@@ -1501,8 +1511,8 @@ function vHome(){
     <button class="btn secondary" onclick="go('results')">🏆 Results</button>
   </div>
   <div class="homegrid">
-    <div class="card"><h3>🤖 Your form — AI verdict</h3><p style="font-size:13.5px;line-height:1.65">${aiPerfSummary(me.id)}</p></div>
-    <div class="card"><h3>📡 League pulse — AI verdict</h3><p style="font-size:13.5px;line-height:1.65">${aiLeagueSummary()}</p></div>
+    <div class="card"><h3>📊 Your form</h3><p style="font-size:13.5px;line-height:1.65">${settled.length===0?'No settled bets yet — get involved!':w+' wins from '+settled.length+' settled bets. Current P&L: '+GBP(myP)+'.'}</p></div>
+    <div class="card"><h3>📡 League pulse</h3><p style="font-size:13.5px;line-height:1.65">${S.bets.length===0?'No bets placed yet — quiet lounge!':''+S.bets.length+' bets placed across the league. House is '+GBP(house)+' on the season.'}</p></div>
     <div class="card"><h3>🎫 Latest action — all players</h3>
       ${feed.length?`<table><tr><th>Who</th><th>Bet</th><th>£</th><th>Odds</th><th>Status</th></tr>${feed.map(b=>`<tr><td><b>${esc(team(b.teamId)?.owner||'?')}</b></td><td class="small">${b.legs.length===1?esc(b.legs[0].label.slice(0,32)):b.legs.length+'-leg acca'}${b.algo?' ⚡':''}${b.inplay?' 🔴':''}</td><td class="mono">${GBP(b.stake)}</td><td class="mono">${fmtOdds(b.effOdds)}</td><td><span class="pill st-${b.status}" style="font-size:9px">${b.status.replace('_',' ')}</span></td></tr>`).join('')}</table>`:'<p class="muted">No bets yet — be the first domino. 🁢</p>'}
     </div>
