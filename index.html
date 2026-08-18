@@ -33,6 +33,11 @@
   *{box-sizing:border-box;margin:0;padding:0}
   html{scroll-behavior:smooth}
   body{
+    /* Batch 25: safety net for the class of bug found in the Back Office FPL Sync card — a long
+       unbroken string (a bare URL with no spaces, e.g. "draft.premierleague.com/league/...")
+       doesn't wrap at all by default and silently pushes the whole page sideways. Only kicks in
+       for a single token too wide for its box; normal text keeps wrapping at spaces as before. */
+    overflow-wrap:break-word;
     font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;color:var(--text);min-height:100vh;
     background:
       radial-gradient(1200px 600px at 80% -10%, rgba(155,92,255,.22), transparent 60%),
@@ -189,6 +194,15 @@
   .counterbox{background:rgba(0,0,0,.3);border-radius:12px;padding:14px;margin-top:10px;display:none}
   .counterbox.open{display:block}
   .formrow{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px}
+  /* Batch 25: a flex row's items default to min-width:auto, so a <div><label>+<select></div>
+     wrapper won't shrink below the select's rendered width — and a <select> with no explicit
+     CSS width renders as wide as its longest <option> text (e.g. "🏆 Top Scorer of the GW" in
+     the Loader's special-market builder), forcing the whole row to overflow sideways on a phone
+     regardless of flex-wrap. Same root cause batch 25's predecessor fixed for .grid2/.match/
+     .fixrow — let every formrow child shrink, and let its select fill whatever width it's given
+     instead of falling back to intrinsic content width. */
+  .formrow>div{min-width:0}
+  .formrow select{width:100%;min-width:0}
   .formrow label{display:block;font-size:10.5px;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.8px;font-weight:700}
   textarea{width:100%;min-height:80px}
   /* ---------- section tabs (My Bets / Results) ---------- */
@@ -231,6 +245,10 @@
   .toast.err{background:var(--gradHot);color:#fff}
   /* ---------- loader / calendar ---------- */
   .calgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin:10px 0}
+  /* Batch 25: same grid min-width:auto trap — a day cell showing a 4-letter month abbreviation
+     ("Sept") can be intrinsically wider than 1/7 of a narrow popover, which otherwise refuses to
+     shrink and pushes the whole picker sideways. */
+  .calgrid>*{min-width:0}
   .calgrid .dayhead{text-align:center;font-size:10px;color:var(--muted);font-weight:800;text-transform:uppercase}
   .daychip{padding:9px 0;min-height:38px;display:flex;align-items:center;justify-content:center;text-align:center;border-radius:10px;background:rgba(0,0,0,.3);border:1px solid var(--line);font-size:12.5px;font-weight:700;cursor:pointer}
   .daychip:hover{border-color:var(--teal)}
@@ -242,7 +260,7 @@
   .timechip.sel{background:var(--grad);color:#00210f;border-color:transparent}
   /* ---------- shared date+time picker widget ---------- */
   .dtpick{display:inline-block}
-  .dtpick-panel{background:rgba(0,0,0,.25);border:1px solid var(--line);border-radius:14px;padding:12px;margin-top:8px;max-width:320px}
+  .dtpick-panel{background:rgba(0,0,0,.25);border:1px solid var(--line);border-radius:14px;padding:12px;margin-top:8px;max-width:min(320px,100%)}
   .fixrow{display:grid;grid-template-columns:24px 1fr 30px 1fr;gap:8px;align-items:center;margin-bottom:8px}
   .fixrow .num{color:var(--muted);font-weight:800;font-size:12px}
   .fixrow .vsmid{text-align:center;color:var(--muted);font-weight:800;font-size:11px}
@@ -351,7 +369,11 @@
   .chatmsg .cwho{font-weight:800;font-size:11px;color:var(--cyan)}
   .chatmsg.h .cwho{color:var(--gold)}
   .chatrow{display:flex;gap:8px}
-  .chatrow input{flex:1}
+  /* Batch 25: the message #chatInp has no explicit width, and the pre-existing flex:1 alone
+     still defers to the flex-item min-width:auto default (browser default text-input intrinsic
+     size), refusing to shrink below ~room for the Send button too on a narrow phone and pushing
+     the row sideways. min-width:0 lets it actually shrink to fill the remaining space. */
+  .chatrow input{flex:1;min-width:0}
   .warnbox{border-radius:12px;padding:10px 14px;font-size:13px;font-weight:700;margin:10px 0}
   .warnbox.red{background:rgba(255,45,120,.12);color:var(--pink);border:1px solid rgba(255,45,120,.35)}
   .warnbox.amber{background:rgba(255,201,49,.1);color:var(--gold);border:1px solid rgba(255,201,49,.3)}
@@ -391,6 +413,17 @@
   .pin-input{display:flex;gap:10px;justify-content:center;margin:18px 0}
   .pin-digit{width:48px;height:58px;font-size:24px;font-weight:900;text-align:center;border:2px solid var(--line);border-radius:14px;background:rgba(0,0,0,.4);color:var(--text);caret-color:var(--teal)}
   .pin-digit:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(0,255,135,.15);outline:none}
+  /* Batch 25: 6 fixed 48px boxes + 5×10px gaps = 338px, wider than the available content width
+     inside #login's own padding + .login-card's padding on a genuinely narrow phone (~320-360px
+     viewport) — confirmed via headless real-browser measurement (17-20px real page-level
+     horizontal overflow, not just a static-CSS guess). Shrink the boxes/gaps and card padding
+     below that width so the row always fits. */
+  @media(max-width:400px){
+    .pin-digit{width:38px;height:50px;font-size:19px}
+    .pin-input{gap:6px}
+    #login{padding:12px}
+    .login-card{padding:28px 14px}
+  }
   .team-select-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin:14px 0;max-height:280px;overflow-y:auto}
   .team-chip{background:var(--card2);border:1px solid var(--line);border-radius:14px;padding:12px;cursor:pointer;transition:all .15s;text-align:center}
   .team-chip:hover,.team-chip.sel{border-color:var(--teal);background:rgba(0,255,135,.08)}

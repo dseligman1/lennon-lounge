@@ -1,9 +1,0 @@
-[40696:24308:0818/123737.565:WARNING:chrome\browser\extensions\activity_log\activity_log_policy.cc:71] Scheduling init
-[40696:24308:0818/123737.567:WARNING:chrome\browser\extensions\activity_log\activity_log_policy.cc:71] Scheduling init
-[40696:24308:0818/123738.157:INFO:CONSOLE:4956] "[ProtocolLaunch] handler constructed; wiring port events.", source: chrome-extension://ndcpkimcihhghdcddljkfmmjccdmcmof/background.rollup.js (4956)
-[40696:24308:0818/123738.538:ERROR:chrome\browser\task_manager\providers\fallback_task_provider.cc:126] Every renderer should have at least one task provided by a primary task provider. If a "Renderer" fallback task is shown, it is a bug. If you have repro steps, please file a new bug and tag it as a dependency of crbug.com/40528867.
-[40696:24308:0818/123740.141:WARNING:components\signin\internal\identity_manager\account_fetcher_service.cc:250] Edge does not support fetching account capabilities
-[40696:24308:0818/123740.141:WARNING:components\signin\internal\identity_manager\account_fetcher_service.cc:211] Should not execute: Tests depending on this function may fail
-[40696:24308:0818/123740.923:ERROR:chrome\browser\task_manager\providers\fallback_task_provider.cc:126] Every renderer should have at least one task provided by a primary task provider. If a "Renderer" fallback task is shown, it is a bug. If you have repro steps, please file a new bug and tag it as a dependency of crbug.com/40528867.
-[40696:24308:0818/123740.942:WARNING:chrome\browser\ui\edge_window_tab_manager\api\wtm_image_web_contents_helper.cc:890] Favicon request has been preempted. Skipping.  old request_start_time=2026-08-18 11:37:39.063996 UTC, pending_favicon_request_start_time_=2026-08-18 11:37:40.907907 UTC
-[40696:24308:0818/123740.987:ERROR:components\device_event_log\device_event_log_impl.cc:246] [12:37:40.973] USB: usb_service_win.cc:448 Failed to parse device interface GUID:
