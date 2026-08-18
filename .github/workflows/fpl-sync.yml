@@ -79,8 +79,9 @@ jobs:
           }
 
           async function getAccessToken(serviceKey) {
-            // Generate a JWT for Firebase service account
-            const { privateKey, clientEmail } = serviceKey;
+            // Generate a JWT for Firebase service account. The downloaded JSON uses snake_case
+            // field names (private_key, client_email) — mapped to camelCase locals here.
+            const { private_key: privateKey, client_email: clientEmail } = serviceKey;
             const now = Math.floor(Date.now() / 1000);
             const payload = {
               iss: clientEmail, sub: clientEmail,
