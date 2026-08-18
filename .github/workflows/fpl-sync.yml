@@ -106,25 +106,26 @@ jobs:
 
             console.log(`Fetching FPL league ${LEAGUE_ID}...`);
 
-            const [details, bootstrap] = await Promise.all([
-              fetchJson(`https://draft.premierleague.com/api/league/${LEAGUE_ID}/details`),
-              fetchJson('https://draft.premierleague.com/api/bootstrap-static'),
-            ]);
+            const bootstrap = await fetchJson('https://draft.premierleague.com/api/bootstrap-static');
 
-            // Build entry map: FPL entry_id → our team name/owner
-            const league = details.league_entries || [];
-            const entryMap = {};
-            league.forEach(e => {
-              entryMap[e.entry_id] = { name: e.entry_name, owner: e.player_first_name + ' ' + e.player_last_name };
-            });
-
-            // Get current GW scores
+            // Get current GW scores only. NOTE: this used to also write `entryMap` and `events` —
+            // removed both. `entryMap` here (entry_id -> {name,owner}) was a different, incompatible
+            // shape from the in-app fplSync()/ingestFpl()'s entryMap (entry_id -> our internal team
+            // id, built via proper name-matching against TEAMS) — nothing downstream actually reads
+            // the persisted entryMap (ingestFpl always rebuilds it fresh before use), so it was
+            // harmless but pointless. `events` was worse: this job wrote {[currentEventId]:{live,
+            // scores}} to lennon-lounge/fpl/events, but the in-app sync uses that SAME field for
+            // {[eventId]:{deadline,name}} per gameweek (read by the Loader's "Import GW N" buttons
+            // for cutoff times) — since a Firebase PATCH replaces each top-level key wholesale, this
+            // scheduled job running every 30min on matchdays would periodically wipe every
+            // gameweek's deadline data down to just the current event. Live scores now go to their
+            // own `liveScores` field instead so the two sync paths can't collide.
             const currentEvent = bootstrap.events?.find(e => e.is_current);
-            const events = {};
+            const liveScores = {};
             if (currentEvent) {
               try {
                 const picks = await fetchJson(`https://draft.premierleague.com/api/event/${currentEvent.id}/live`);
-                events[currentEvent.id] = { live: true, scores: picks };
+                liveScores[currentEvent.id] = { live: true, scores: picks };
               } catch(e) {
                 console.log('Could not fetch live scores:', e.message);
               }
@@ -133,8 +134,7 @@ jobs:
             const token = await getAccessToken(SERVICE_KEY);
             await writeToFirebase('lennon-lounge/fpl', {
               leagueId: LEAGUE_ID,
-              entryMap,
-              events,
+              liveScores,
               lastSync: Date.now(),
             }, token);
 
