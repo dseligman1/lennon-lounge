@@ -3838,15 +3838,30 @@ function vOffice(){
   <div class="card glow">
     <h3>🔗 FPL Sync</h3>
     <p class="muted small">Pulls fixtures, results and form from draft.premierleague.com. <b>Finding your league ID:</b> log in, open your league — the number in the URL is the ID (draft.premierleague.com/league/<b>123456</b>/standings).</p>
+    <div class="helpbox" style="margin-bottom:10px">
+      <b>Run the real sync here:</b> the browser can't reach the FPL API directly (CORS), so
+      clicking "Sync now" below will always show a CORS message — that's expected, not a bug.
+      The actual sync runs on GitHub, server-side. Click through and hit
+      <b>Run workflow</b> on GitHub's page, then <b>Run workflow</b> again to confirm:
+      <div style="margin-top:8px"><a class="btn small" style="text-decoration:none;display:inline-block" href="https://github.com/dseligman1/lennon-lounge/actions/workflows/fpl-sync.yml" target="_blank">↗ Open FPL Data Sync on GitHub</a></div>
+      It only runs when you trigger it — no automatic 30-min refresh — so settle bets whenever
+      you like, safe in the knowledge nothing changes underneath you until you next click it.
+    </div>
     <div class="formrow">
       <div><label>Draft league ID</label><input id="fplLeagueId" value="${esc(S.fpl.leagueId||'')}" style="width:140px" placeholder="e.g. 12345"></div>
-      <div><label>Hold back last N GWs</label><input id="fplHoldback" type="number" min="0" max="10" value="${S.sim.holdback}" style="width:80px"></div>
-      <button class="btn" onclick="fplSync()">⟳ Sync now</button>
+      <div>
+        <label>Hold back last N GWs</label>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input id="fplHoldback" type="number" min="0" max="10" value="${S.sim.holdback}" style="width:80px">
+          <button class="btn secondary small" onclick="saveHoldback()">Save</button>
+        </div>
+      </div>
+      <button class="btn" onclick="fplSync()">⟳ Sync now (browser — will show CORS)</button>
       <span class="muted small" style="padding-bottom:8px">Last sync: ${S.fpl.lastSync?fmtDT(S.fpl.lastSync):'never'} · ${S.history.length} result(s) in form model</span>
     </div>
     <div id="fplFallback" style="display:none">
       <hr class="hr">
-      <p class="muted small">Browser blocked the direct call (CORS — normal for a local file or GitHub Pages). The GitHub Action fetches server-side automatically. Manual fallback: open your <a style="color:var(--cyan)" href="https://draft.premierleague.com/api/league/${esc(S.fpl.leagueId||'YOUR_ID')}/details" target="_blank">league details JSON</a>, copy all, paste here:</p>
+      <p class="muted small">Browser blocked the direct call (CORS — normal for a local file or GitHub Pages). Use the GitHub link above instead — it fetches server-side and isn't affected by this. Last-resort manual fallback: open your <a style="color:var(--cyan)" href="https://draft.premierleague.com/api/league/${esc(S.fpl.leagueId||'YOUR_ID')}/details" target="_blank">league details JSON</a>, copy all, paste here:</p>
       <textarea id="fplPasteBox" placeholder='{"league":{...},"league_entries":[...],"matches":[...]}'></textarea>
       <button class="btn small" style="margin-top:8px" onclick="fplPaste()">Ingest pasted JSON</button>
     </div>
@@ -3905,6 +3920,15 @@ async function fplSync(){
 function fplPaste(){
   try{ ingestFpl(JSON.parse(document.getElementById('fplPasteBox').value),null); }
   catch(e){ toast('Could not parse JSON',true); }
+}
+function saveHoldback(){
+  // Standalone save so this setting doesn't require a successful FPL sync to persist — on
+  // GitHub Pages the in-app sync button always CORS-fails, so gating this on ingestFpl()
+  // running meant it could never actually be changed from here in practice.
+  const inp=document.getElementById('fplHoldback');
+  S.sim.holdback=Math.max(0,parseInt(inp.value)||0);
+  audit('settings','Hold back last N GWs → '+S.sim.holdback);
+  save(); toast('Holdback saved: '+S.sim.holdback);
 }
 function ingestFpl(det,boot){
   if(!det||!det.league_entries||!det.matches){ toast('Does not look like league details JSON',true); return; }

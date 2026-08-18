@@ -1,12 +1,11 @@
 name: FPL Data Sync
 
 on:
-  schedule:
-    # During active gameweeks: every 30 min Sat 12:00-23:00 and Sun 12:00-23:00 (UK time = UTC+1 BST)
-    - cron: '*/30 11-22 * * 6,0'
-    # Daily refresh at 6am UTC every day
-    - cron: '0 6 * * *'
-  workflow_dispatch: # "Run workflow" button in the Actions tab — for an on-demand sync
+  # Manual only, by design — the house wants to control exactly when a sync happens (e.g.
+  # only once a gameweek's FPL standings are officially final), not have it silently refresh
+  # on a schedule. Trigger via the "Run workflow" button on this workflow's Actions page, or
+  # the shortcut link in the app's Back Office → FPL Sync card.
+  workflow_dispatch:
 
 jobs:
   sync-fpl:
