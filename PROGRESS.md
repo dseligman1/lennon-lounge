@@ -59,7 +59,28 @@ the equivalent research trail.
   (`--dump-dom`, no console errors beyond expected file:// CORS/Tracking-Prevention
   noise; confirmed `#navDrawer`/`#navDrawerList` present in the rendered DOM and the
   login screen's team grid rendered, i.e. no fatal JS error). Commit ca53188.
-- [ ] 25. Deeper horizontal-scroll / clean single-column mobile audit
+- [x] 25. Deeper horizontal-scroll / clean single-column mobile audit — continued from the
+  interrupted prior run (3535dd8) using real headless-Edge verification (an iframe-based harness,
+  since --window-size doesn't reliably map to true CSS px in this environment) across every
+  tab/sub-tab at 320/375/390/414px, comparing document scrollWidth vs clientWidth to catch actual
+  page-level sideways scroll rather than guessing from CSS alone. Found and fixed 4 real bugs, all
+  the same "content wider than its box, ancestor won't shrink it" family 3535dd8 fixed for
+  .grid2/.match/.fixrow: the login screen's 6 fixed-width PIN-digit boxes not fitting a ~320-360px
+  phone (new `@media(max-width:400px)` shrinks them), the home chat row's `#chatInp` still
+  deferring to flex-item min-width:auto despite its pre-existing `flex:1` (added `min-width:0`),
+  the Gameweek Loader's special-market "Template" `<select>` (and any bare `.formrow` select)
+  rendering as wide as its longest option text (`.formrow>div`/`.formrow select` now get
+  min-width:0/width:100%, `.calgrid` day-picker tracks get the same fix, `.dtpick-panel`'s fixed
+  max-width can now shrink below 320px), and the Back Office FPL Sync card's long unbroken URL
+  string not wrapping at all (added a global `overflow-wrap:break-word` on body as a safety net
+  for this class of bug generally). Verified via brace/paren/bracket/backtick balance check (all
+  balanced), a clean console-error-free load, zero scrollWidth>clientWidth across all 19 tab/
+  sub-tab states at 4 widths both logged-out and logged-in as admin (seeded via `seedTestData()`
+  plus extra counter-offer/reward/special-market data in a throwaway harness — never touched the
+  live Firebase DB, save()/saveNow()/startListener() were stubbed out first), and visual
+  screenshot confirmation of the fixed areas at 320px. Internal per-element scroll (live bet
+  table, PIN table) is intentional and unchanged — only page-level sideways scroll was in scope.
+  This was the last outstanding item in the build. Commit c0f496a.
 
 - [ ] 0. Codebase structure map (research only, feeds all other batches)
 - [x] 1. Odds decimal formatting + remove number-input spinners everywhere — `fmtOdds` now `.toFixed(1)`; global CSS hides number-input spinners; odds input `step`/`min` bumped to 0.1/1.1 (Odds Setter fields, counter-offer field, `setOdds` clamp). Commit b6734bc.
