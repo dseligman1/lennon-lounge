@@ -6,7 +6,7 @@ on:
     - cron: '*/30 11-22 * * 6,0'
     # Daily refresh at 6am UTC every day
     - cron: '0 6 * * *'
-  workflow_dispatch: # allow manual trigger from GitHub Actions UI
+  workflow_dispatch: # "Run workflow" button in the Actions tab — for an on-demand sync
 
 jobs:
   sync-fpl:
@@ -24,6 +24,40 @@ jobs:
           const LEAGUE_ID = process.env.FPL_LEAGUE_ID;
           const DB_URL = process.env.FIREBASE_DB_URL;
           const SERVICE_KEY = JSON.parse(process.env.FIREBASE_SERVICE_KEY);
+
+          // Mirrors the TEAMS array in index.html (id/name/owner/fplName only — that's all
+          // matching needs). If you rename a team, an owner, or add/replace a manager there,
+          // copy the same change here so server-side matching stays in sync with the app.
+          const TEAMS = [
+            {id:'selig', name:"Selig's Shakers",     owner:'Daniel',   fplName:'Daniel Seligman'},
+            {id:'rowez', name:'Inter Rowe-Z',         owner:'Jack',     fplName:'Jack Rowe'},
+            {id:'murov', name:'The Murovers',         owner:'Alex',     fplName:'Alex Murawa'},
+            {id:'fride', name:'Fride FC',             owner:'Benjamin', fplName:'Benjamin Finestein'},
+            {id:'round', name:'Roundabout Rangers',   owner:'Adam',     fplName:'Adam Bowers'},
+            {id:'dunny', name:'DUNNEY MONSTERS',      owner:'James',    fplName:'James Hodari'},
+            {id:'adder', name:'The Adders FC',        owner:'Jacob',    fplName:'Jacob Adshead'},
+            {id:'kapil', name:'KapilaMockingbirds',   owner:'Sam',      fplName:'Sam Kapila'},
+            {id:'blank', name:'Blanks Bruisers',      owner:'Simon',    fplName:'Simon Blank'},
+            {id:'henry', name:"Henry's Heroes",       owner:'Ben',      fplName:'Ben Annis'},
+            {id:'disco', name:"Disco Dave's Dodgers", owner:'Jason',    fplName:'Jason Stein'},
+            {id:'huxle', name:'HUXLEY',               owner:'Ryan',     fplName:'Ryan Silvester'},
+          ];
+
+          // Same precedence as matchTeamName() in index.html: the manager's real name first
+          // (fixed — protects against an in-season FPL team rename breaking the mapping),
+          // then the FPL team name as a fallback.
+          function matchTeamName(str) {
+            const s = (str || '').toLowerCase().trim();
+            if (!s) return null;
+            let t = TEAMS.find(t => t.fplName.toLowerCase() === s); if (t) return t.id;
+            t = TEAMS.find(t => t.owner.toLowerCase() === s); if (t) return t.id;
+            t = TEAMS.find(t => t.name.toLowerCase() === s); if (t) return t.id;
+            t = TEAMS.find(t => t.name.toLowerCase().includes(s) || s.includes(t.name.toLowerCase())); if (t) return t.id;
+            const words = s.split(/\s+/).filter(w => w.length > 3);
+            t = TEAMS.find(t => words.some(w => t.fplName.toLowerCase().includes(w))); if (t) return t.id;
+            t = TEAMS.find(t => words.some(w => t.name.toLowerCase().includes(w)));
+            return t ? t.id : null;
+          }
 
           function fetchJson(url) {
             return new Promise((resolve, reject) => {
@@ -78,7 +112,21 @@ jobs:
             });
           }
 
-          async function writeToFirebase(path, data, token) {
+          function readFirebase(path, token) {
+            const dbHost = DB_URL.replace('https://','').replace(/\/$/, '');
+            return new Promise((resolve, reject) => {
+              https.get({
+                hostname: dbHost, path: `/${path}.json`,
+                headers: { 'Authorization': `Bearer ${token}` }
+              }, res => {
+                let d = '';
+                res.on('data', c => d += c);
+                res.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { resolve(null); } });
+              }).on('error', () => resolve(null));
+            });
+          }
+
+          function writeToFirebase(path, data, token) {
             const dbHost = DB_URL.replace('https://','').replace(/\/$/, '');
             return new Promise((resolve, reject) => {
               const body = JSON.stringify(data);
@@ -105,21 +153,11 @@ jobs:
             if (!LEAGUE_ID) { console.log('No FPL_LEAGUE_ID set — skipping'); return; }
 
             console.log(`Fetching FPL league ${LEAGUE_ID}...`);
+            const token = await getAccessToken(SERVICE_KEY);
 
             const bootstrap = await fetchJson('https://draft.premierleague.com/api/bootstrap-static');
 
-            // Get current GW scores only. NOTE: this used to also write `entryMap` and `events` —
-            // removed both. `entryMap` here (entry_id -> {name,owner}) was a different, incompatible
-            // shape from the in-app fplSync()/ingestFpl()'s entryMap (entry_id -> our internal team
-            // id, built via proper name-matching against TEAMS) — nothing downstream actually reads
-            // the persisted entryMap (ingestFpl always rebuilds it fresh before use), so it was
-            // harmless but pointless. `events` was worse: this job wrote {[currentEventId]:{live,
-            // scores}} to lennon-lounge/fpl/events, but the in-app sync uses that SAME field for
-            // {[eventId]:{deadline,name}} per gameweek (read by the Loader's "Import GW N" buttons
-            // for cutoff times) — since a Firebase PATCH replaces each top-level key wholesale, this
-            // scheduled job running every 30min on matchdays would periodically wipe every
-            // gameweek's deadline data down to just the current event. Live scores now go to their
-            // own `liveScores` field instead so the two sync paths can't collide.
+            // Live in-play points for the current gameweek, for the "in-play" odds/results view.
             const currentEvent = bootstrap.events?.find(e => e.is_current);
             const liveScores = {};
             if (currentEvent) {
@@ -131,13 +169,74 @@ jobs:
               }
             }
 
-            const token = await getAccessToken(SERVICE_KEY);
-            await writeToFirebase('lennon-lounge/fpl', {
-              leagueId: LEAGUE_ID,
-              liveScores,
-              lastSync: Date.now(),
-            }, token);
+            const fplPatch = { leagueId: LEAGUE_ID, liveScores, lastSync: Date.now() };
 
+            // Full sync — the same computation the in-app "Sync FPL" button runs (ingestFpl in
+            // index.html), just running server-side so it isn't blocked by the FPL API's CORS
+            // policy the way a direct browser fetch is. Pulls the season's full fixture list,
+            // finished results (→ history, powers the odds engine), and the team/manager
+            // mapping. Safe to (and expected to) run on every trigger — it's a full rebuild
+            // from the latest FPL data each time, same as clicking "Sync FPL" repeatedly.
+            let details = null;
+            try { details = await fetchJson(`https://draft.premierleague.com/api/league/${LEAGUE_ID}/details`); }
+            catch(e) { console.log('Could not fetch league details:', e.message); }
+
+            if (details && details.league_entries && details.matches) {
+              const existingFpl = (await readFirebase('lennon-lounge/fpl', token)) || {};
+              // "Hold back last N GWs" (Back Office → FPL Settings) — a testing toggle that
+              // treats the most recent N already-finished real gameweeks as if still upcoming,
+              // for trying out the live betting flow against real historical data. Should be 0
+              // for a genuinely live season; honoured here so an automated run can't change the
+              // behaviour the admin configured in-app.
+              const holdbackRaw = await readFirebase('lennon-lounge/sim/holdback', token);
+              const hb = Math.max(0, Number(holdbackRaw) || 0);
+
+              const entryMap = { ...(existingFpl.entryMap || {}) };
+              const unmatched = [];
+              details.league_entries.forEach(en => {
+                const playerName = ((en.player_first_name || '') + ' ' + (en.player_last_name || '')).trim();
+                const tid = matchTeamName(playerName) || matchTeamName(en.entry_name || '');
+                if (tid) entryMap[en.id] = tid;
+                else if (en.entry_name) unmatched.push(`${en.entry_name} (${playerName || 'no manager name'})`);
+              });
+
+              const history = [], fplFixtures = {}, simEvents = {};
+              const finished = details.matches.filter(m => m.finished);
+              const maxEv = finished.length ? Math.max(...finished.map(m => m.event)) : 0;
+              const simFrom = maxEv - hb + 1;
+              details.matches.forEach(m => {
+                const a = entryMap[m.league_entry_1], b = entryMap[m.league_entry_2];
+                if (!a || !b) return;
+                if (m.finished) {
+                  if (hb > 0 && m.event >= simFrom) {
+                    (simEvents[m.event] = simEvents[m.event] || []).push({a, b, ap: m.league_entry_1_points, bp: m.league_entry_2_points});
+                    (fplFixtures[m.event] = fplFixtures[m.event] || []).push({home: a, away: b});
+                  } else {
+                    history.push({event: m.event, a, b, ap: m.league_entry_1_points, bp: m.league_entry_2_points});
+                  }
+                } else {
+                  (fplFixtures[m.event] = fplFixtures[m.event] || []).push({home: a, away: b});
+                }
+              });
+
+              const events = { ...(existingFpl.events || {}) };
+              const evList = Array.isArray(bootstrap.events) ? bootstrap.events : ((bootstrap.events && bootstrap.events.data) || []);
+              evList.forEach(ev => { events[ev.id] = { deadline: ev.deadline_time ? new Date(ev.deadline_time).getTime() : null, name: ev.name }; });
+
+              Object.assign(fplPatch, { entryMap, events });
+              await writeToFirebase('lennon-lounge', { history, fplFixtures }, token);
+              // sim.events isn't touched here deliberately — it's only ever populated when
+              // holdback > 0 (a deliberate testing setup) and the admin's own in-app sync
+              // already owns rebuilding it in that mode.
+              if (hb > 0) await writeToFirebase('lennon-lounge/sim', { events: simEvents }, token);
+
+              if (unmatched.length) console.log('Unmatched FPL entries:', unmatched.join(', '));
+              console.log(`Full sync: ${history.length} history result(s), ${Object.keys(fplFixtures).length} gameweek(s) with fixtures, ${unmatched.length} unmatched entr(y/ies)`);
+            } else {
+              console.log('League details unavailable this run — synced live scores only.');
+            }
+
+            await writeToFirebase('lennon-lounge/fpl', fplPatch, token);
             console.log('FPL sync complete');
           }
 
