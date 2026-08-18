@@ -157,9 +157,11 @@ jobs:
             const token = await getAccessToken(SERVICE_KEY);
 
             const bootstrap = await fetchJson('https://draft.premierleague.com/api/bootstrap-static');
+            // bootstrap.events is {current, data:[...]} on the draft API, not a bare array.
+            const evList = Array.isArray(bootstrap.events) ? bootstrap.events : ((bootstrap.events && bootstrap.events.data) || []);
 
             // Live in-play points for the current gameweek, for the "in-play" odds/results view.
-            const currentEvent = bootstrap.events?.find(e => e.is_current);
+            const currentEvent = evList.find(e => e.is_current);
             const liveScores = {};
             if (currentEvent) {
               try {
@@ -221,7 +223,6 @@ jobs:
               });
 
               const events = { ...(existingFpl.events || {}) };
-              const evList = Array.isArray(bootstrap.events) ? bootstrap.events : ((bootstrap.events && bootstrap.events.data) || []);
               evList.forEach(ev => { events[ev.id] = { deadline: ev.deadline_time ? new Date(ev.deadline_time).getTime() : null, name: ev.name }; });
 
               Object.assign(fplPatch, { entryMap, events });
