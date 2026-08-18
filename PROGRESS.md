@@ -43,7 +43,22 @@ the equivalent research trail.
 **ROUND 2 — post-deploy feedback, 2026-08-18.** 5 of 7 items fixed directly (see the
 "Round 2" section below for commit hashes). Two new batches added:
 
-- [ ] 24. Mobile nav restructure — hamburger/side-drawer for fast access to every tab
+- [x] 24. Mobile nav restructure — hamburger/side-drawer for fast access to every tab —
+  added a hamburger button (`#navDrawerBtn`, header, hidden ≥700px) opening a full-height
+  slide-in-from-left drawer (`#navDrawer`/`#navDrawerOverlay`, same dark-glass overlay
+  pattern as `#notifPanel`/`#notifOverlay`) listing every nav destination as a flat
+  tappable list (badges + house-tab styling preserved), closing itself and calling
+  `go(tab)` on tap. Extracted the tab-list-building code `render()` had inline into a new
+  shared `navTabs()` function — now the single source for the desktop `#topbar nav`, the
+  new drawer (`renderNavDrawer()`, refreshed every `render()` alongside notifications),
+  and batch 23's "More pages" card in `vUserSettings()` (now derives its list via
+  `navTabs().filter(...)` instead of maintaining a separate hardcoded array). 5-icon
+  bottom dock left as-is (additive, not replaced); `logout()` now also closes the drawer
+  alongside the existing `closeNotifPanel()` call. Verified via brace/paren/bracket
+  balance check on the extracted script (all balanced) plus a headless Edge smoke-load
+  (`--dump-dom`, no console errors beyond expected file:// CORS/Tracking-Prevention
+  noise; confirmed `#navDrawer`/`#navDrawerList` present in the rendered DOM and the
+  login screen's team grid rendered, i.e. no fatal JS error). Commit ca53188.
 - [ ] 25. Deeper horizontal-scroll / clean single-column mobile audit
 
 - [ ] 0. Codebase structure map (research only, feeds all other batches)
