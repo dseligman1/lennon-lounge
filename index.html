@@ -498,7 +498,7 @@ const TEAMS = [
   {id:'disco',  name:"Disco Dave's Dodgers",  owner:'Jason',   admin:false, base:46},
   {id:'huxle',  name:'HUXLEY',                owner:'Ryan',    admin:false, base:45},
 ];
-const DEFAULT_SETTINGS = { maxStake:300, maxPayout:10000, accaMarginPct:10, algoEdgePct:20, minStake:1 };
+const DEFAULT_SETTINGS = { maxStake:300, maxPayout:2000, accaMarginPct:10, algoEdgePct:20, minStake:1 };
 const SD = 15;
 
 /* ================================================================
@@ -575,6 +575,23 @@ function migrate(s) {
     if (b && b.chat) b.chat = toArr(b.chat);
     if (b && b.flags) b.flags = toArr(b.flags);
   });
+  // De-dupe bets sharing an id. These are leftovers from a since-removed redundant Firebase
+  // write in submitBet() that could create a second copy of a just-placed bet under a
+  // different Firebase key; only one copy ever got mutated by houseAccept/houseReject, so the
+  // other stuck around forever at status:'pending' and never cleared from Bet Review. Keep
+  // whichever copy has moved past 'pending' (i.e. actually had an action taken on it); if
+  // several have, or none have, keep the one with the most history entries as the best guess
+  // at "the one that was actually interacted with".
+  if (s.bets.length) {
+    const byId = {};
+    s.bets.forEach(b => { if (!b || !b.id) return; (byId[b.id] = byId[b.id] || []).push(b); });
+    s.bets = Object.values(byId).map(group => {
+      if (group.length === 1) return group[0];
+      const acted = group.filter(b => b.status !== 'pending');
+      const pool = acted.length ? acted : group;
+      return pool.reduce((best, b) => (b.history || []).length > (best.history || []).length ? b : best, pool[0]);
+    });
+  }
   // Batch 17: migrate the old `boosters[tid]` ({id,pct,used}) ledger — from the now-removed
   // auto-grant-every-2nd-bet mechanic — into the new unified `rewards[tid]` ledger as kind:'boost'
   // tokens, so nobody's already-earned unused boosts vanish. One-time; `s.boosters` is dropped
@@ -597,6 +614,7 @@ function migrate(s) {
   if (!s.sim) s.sim = {holdback:5, events:{}};
   if (s.settings && s.settings.algoEdgePct == null) s.settings.algoEdgePct = 20;
   if (s.settings && s.settings.maxPayout === 1000) s.settings.maxPayout = 10000;
+  if (s.settings && s.settings.maxPayout === 10000) s.settings.maxPayout = 2000;
   if (!s.seq) s.seq = 1;
   return s;
 }
@@ -1658,8 +1676,15 @@ function submitBet({gwId, legs, effOdds, stake, viaAlgo, boostPct, freeBetAmount
     history:[{by:me.id, role:'player', action:'placed'+(viaAlgo?' via The Algo':'')+(mode==='inplay'?' (in-play)':''), stake, odds:effOdds, message:message||'', at:now}],
   };
   S.bets.push(bet);
-  // Also push to Firebase for concurrent safety
-  db.ref(ROOT+'/bets').push(bet).catch(e=>console.error('Bet push error:',e));
+  // NOTE: previously there was also a separate db.ref(ROOT+'/bets').push(bet) write here
+  // "for concurrent safety". That was the actual root cause of the Bet Review "accept/reject
+  // doesn't remove the bet" bug: save()/saveNow() below already does a full db.ref(ROOT).set(S)
+  // that persists this bet as part of the whole state tree, so the extra push() created a
+  // second, differently-keyed copy of the same bet (same id, separate object identity) once a
+  // client's local S got refreshed from a listener snapshot taken between the two writes and
+  // then saved again. houseAccept/houseReject only mutated whichever copy .find() happened to
+  // return, leaving the other stuck at status:'pending' forever. Removed — save() is the single
+  // source of truth for persisting a newly placed bet.
   // Batch 17: rule-based promotion grants replace the old maybeGrantBooster() every-2nd-bet
   // mechanic. Only the placing team's rules are checked here (fold_size/odds_threshold read
   // straight off this new bet; stake_rolling re-sums their recent activity including it).
@@ -2769,32 +2794,45 @@ function vReview(){
   </details></div>`:''}`;
 }
 function houseAccept(id){
-  const b=S.bets.find(x=>x.id===id);
-  if(!b) return;
-  if(b.status==='counter_user'&&b.offer){ b.stake=b.offer.stake; b.effOdds=b.offer.effOdds; b.offer=null; }
-  b.status='accepted'; b.acceptedAt=Date.now();
-  b.history.push({by:me.id,role:'house',action:'accepted',stake:b.stake,odds:b.effOdds,at:Date.now()});
+  // Defensive: act on every bet sharing this id, not just the first .find() hit — belt-and-braces
+  // against any leftover duplicate from the now-fixed dual-write bug (see migrate()'s dedupe pass,
+  // which should mean this is normally a group of exactly one by the time this runs).
+  const matches=S.bets.filter(x=>x.id===id);
+  if(!matches.length) return;
+  matches.forEach(b=>{
+    if(b.status==='counter_user'&&b.offer){ b.stake=b.offer.stake; b.effOdds=b.offer.effOdds; b.offer=null; }
+    b.status='accepted'; b.acceptedAt=Date.now();
+    b.history.push({by:me.id,role:'house',action:'accepted',stake:b.stake,odds:b.effOdds,at:Date.now()});
+  });
+  const b=matches[0];
   audit('accept',b.id);
   pushNotif(b.teamId,'bet_accepted',`✅ Your bet accepted! ${b.legs.length} leg(s) @ ${fmtOdds(b.effOdds)} · £${b.stake}`);
   saveNow(); render(); toast('Bet accepted ✓');
 }
 function houseReject(id){
-  const b=S.bets.find(x=>x.id===id);
-  if(!b) return;
-  b.status='rejected'; b.offer=null;
-  b.history.push({by:me.id,role:'house',action:'rejected',at:Date.now()});
+  const matches=S.bets.filter(x=>x.id===id);
+  if(!matches.length) return;
+  matches.forEach(b=>{
+    b.status='rejected'; b.offer=null;
+    b.history.push({by:me.id,role:'house',action:'rejected',at:Date.now()});
+  });
+  const b=matches[0];
   audit('reject',b.id);
   pushNotif(b.teamId,'bet_rejected',`❌ Your bet was rejected · ${b.legs.length} leg(s) @ ${fmtOdds(b.effOdds)}`);
   saveNow(); render(); toast('Bet rejected');
 }
 function houseCancel(id){
-  const b=S.bets.find(x=>x.id===id);
-  if(!b) return;
-  const g=gw(b.gwId);
+  const matches=S.bets.filter(x=>x.id===id);
+  if(!matches.length) return;
+  const b0=matches[0];
+  const g=gw(b0.gwId);
   if(g&&gwDeadlinePassed(g)){ toast('Cutoff passed — bet is locked in, cannot cancel',true); return; }
   if(!confirm('Cancel this bet? The player will be notified.')) return;
-  b.status='cancelled'; b.offer=null;
-  b.history.push({by:me.id,role:'house',action:'cancelled',at:Date.now()});
+  matches.forEach(b=>{
+    b.status='cancelled'; b.offer=null;
+    b.history.push({by:me.id,role:'house',action:'cancelled',at:Date.now()});
+  });
+  const b=b0;
   audit('cancel',b.id);
   pushNotif(b.teamId,'bet_cancelled',`🚫 The house cancelled your bet · ${b.legs.length} leg(s) @ ${fmtOdds(b.effOdds)} · £${b.stake}`);
   saveNow(); render(); toast('Bet cancelled');
