@@ -578,18 +578,18 @@ const AUTH_ROOT = 'lennon-lounge-auth';
    SEED DATA
    ================================================================ */
 const TEAMS = [
-  {id:'selig',  name:"Selig's Shakers",      owner:'Daniel',  admin:true,  base:56},
-  {id:'rowez',  name:'Inter Rowe-Z',          owner:'Jack',    admin:true,  base:48},
-  {id:'murov',  name:'The Murovers',          owner:'Alex',    admin:false, base:55},
-  {id:'fride',  name:'Fride FC',              owner:'Benjamin',admin:false, base:53},
-  {id:'round',  name:'Roundabout Rangers',    owner:'Adam',    admin:false, base:52},
-  {id:'dunny',  name:'DUNNEY MONSTERS',       owner:'James',   admin:false, base:51},
-  {id:'adder',  name:'The Adders FC',         owner:'Jacob',   admin:false, base:50},
-  {id:'kapil',  name:'KapilaMockingbirds',    owner:'Sam',     admin:false, base:49},
-  {id:'blank',  name:'Blanks Bruisers',       owner:'Simon',   admin:false, base:49},
-  {id:'henry',  name:"Henry's Heroes",        owner:'Ben',     admin:false, base:47},
-  {id:'disco',  name:"Disco Dave's Dodgers",  owner:'Jason',   admin:false, base:46},
-  {id:'huxle',  name:'HUXLEY',                owner:'Ryan',    admin:false, base:45},
+  {id:'selig',  name:"Selig's Shakers",      owner:'Daniel',  fplName:'Daniel Seligman',   admin:true,  base:56},
+  {id:'rowez',  name:'Inter Rowe-Z',          owner:'Jack',    fplName:'Jack Rowe',          admin:true,  base:48},
+  {id:'murov',  name:'The Murovers',          owner:'Alex',    fplName:'Alex Murawa',        admin:false, base:55},
+  {id:'fride',  name:'Fride FC',              owner:'Benjamin',fplName:'Benjamin Finestein', admin:false, base:53},
+  {id:'round',  name:'Roundabout Rangers',    owner:'Adam',    fplName:'Adam Bowers',        admin:false, base:52},
+  {id:'dunny',  name:'DUNNEY MONSTERS',       owner:'James',   fplName:'James Hodari',       admin:false, base:51},
+  {id:'adder',  name:'The Adders FC',         owner:'Jacob',   fplName:'Jacob Adshead',      admin:false, base:50},
+  {id:'kapil',  name:'KapilaMockingbirds',    owner:'Sam',     fplName:'Sam Kapila',         admin:false, base:49},
+  {id:'blank',  name:'Blanks Bruisers',       owner:'Simon',   fplName:'Simon Blank',        admin:false, base:49},
+  {id:'henry',  name:"Henry's Heroes",        owner:'Ben',     fplName:'Ben Annis',          admin:false, base:47},
+  {id:'disco',  name:"Disco Dave's Dodgers",  owner:'Jason',   fplName:'Jason Stein',        admin:false, base:46},
+  {id:'huxle',  name:'HUXLEY',                owner:'Ryan',    fplName:'Ryan Silvester',     admin:false, base:45},
 ];
 const DEFAULT_SETTINGS = { maxStake:300, maxPayout:2000, accaMarginPct:10, algoEdgePct:20, minStake:1 };
 const SD = 15;
@@ -635,7 +635,7 @@ function freshState() {
   return {
     v: 3,
     settings: {...DEFAULT_SETTINGS},
-    teams: TEAMS.map(t => ({id:t.id, name:t.name, owner:t.owner, admin:t.admin})),
+    teams: TEAMS.map(t => ({id:t.id, name:t.name, owner:t.owner, fplName:t.fplName, admin:t.admin})),
     stats: Object.fromEntries(TEAMS.map(t => [t.id, {base:t.base}])),
     gameweeks: [], bets: [], promos: [], chat: [], audit: [],
     fpl: {leagueId:'', entryMap:{}, events:{}, lastSync:null},
@@ -709,6 +709,10 @@ function migrate(s) {
   if (s.settings && s.settings.maxPayout === 1000) s.settings.maxPayout = 10000;
   if (s.settings && s.settings.maxPayout === 10000) s.settings.maxPayout = 2000;
   if (!s.seq) s.seq = 1;
+  // Backfill fplName (the owner's real full name) onto teams synced before this field
+  // existed. Auto-sync matching anchors on this instead of the FPL team name, which owners
+  // can rename mid-season and silently break name-based matching.
+  s.teams.forEach(t => { const src = TEAMS.find(x => x.id === t.id); if (src && !t.fplName) t.fplName = src.fplName; });
   return s;
 }
 
@@ -3297,10 +3301,15 @@ function vLoader(){
 }
 function matchTeamName(str){
   const s=str.toLowerCase().trim(); if(!s) return null;
-  let t=S.teams.find(t=>t.name.toLowerCase()===s); if(t) return t.id;
-  t=S.teams.find(t=>t.name.toLowerCase().includes(s)||s.includes(t.name.toLowerCase())); if(t) return t.id;
+  // Anchor on the player's real name first — FPL team names can be renamed mid-season by
+  // their owner, which would otherwise silently break auto-sync matching. Name/owner are
+  // fixed, so they're tried before anything derived from the (mutable) FPL team name.
+  let t=S.teams.find(t=>t.fplName&&t.fplName.toLowerCase()===s); if(t) return t.id;
   t=S.teams.find(t=>t.owner.toLowerCase()===s); if(t) return t.id;
+  t=S.teams.find(t=>t.name.toLowerCase()===s); if(t) return t.id;
+  t=S.teams.find(t=>t.name.toLowerCase().includes(s)||s.includes(t.name.toLowerCase())); if(t) return t.id;
   const words=s.split(/\s+/).filter(w=>w.length>3);
+  t=S.teams.find(t=>t.fplName&&words.some(w=>t.fplName.toLowerCase().includes(w))); if(t) return t.id;
   t=S.teams.find(t=>words.some(w=>t.name.toLowerCase().includes(w)));
   return t?t.id:null;
 }
@@ -3903,8 +3912,12 @@ function ingestFpl(det,boot){
   if(hbInp) S.sim.holdback=Math.max(0,parseInt(hbInp.value)||0);
   const unmatched=[];
   det.league_entries.forEach(en=>{
-    const tid=matchTeamName(en.entry_name||'')||matchTeamName(((en.player_first_name||'')+' '+(en.player_last_name||'')).trim());
-    if(tid) S.fpl.entryMap[en.id]=tid; else if(en.entry_name) unmatched.push(en.entry_name);
+    // Match on the manager's real name first (fixed, anchors login/mapping), falling back
+    // to the FPL team name only if that fails — protects against an owner renaming their
+    // FPL team mid-season and silently breaking the sync.
+    const playerName=((en.player_first_name||'')+' '+(en.player_last_name||'')).trim();
+    const tid=matchTeamName(playerName)||matchTeamName(en.entry_name||'');
+    if(tid) S.fpl.entryMap[en.id]=tid; else if(en.entry_name) unmatched.push(en.entry_name+' ('+(playerName||'no manager name')+')');
   });
   const em=S.fpl.entryMap;
   S.history=[]; S.fplFixtures={}; S.sim.events={};
