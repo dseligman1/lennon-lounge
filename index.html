@@ -345,6 +345,14 @@
      padding-right widened to match so the tap zone doesn't overlap the text. */
   .notif-del{position:absolute;top:4px;right:4px;width:32px;height:32px;border-radius:50%;background:rgba(255,45,120,.12);border:1px solid transparent;color:var(--pink);font-size:13px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:background .15s,border-color .15s}
   .notif-del:hover{background:rgba(255,45,120,.3);border-color:var(--pink)}
+  /* ---------- Batch 24: Mobile Nav Drawer ---------- */
+  @media(min-width:700px){#navDrawerBtn{display:none!important}}
+  #navDrawer{position:fixed;top:0;left:0;bottom:0;width:300px;max-width:88vw;z-index:65;background:rgba(15,0,28,.97);backdrop-filter:blur(20px);border-right:1px solid var(--line);transform:translateX(-100%);transition:transform .3s;padding:20px;overflow-y:auto}
+  #navDrawer.open{transform:translateX(0)}
+  #navDrawerOverlay{position:fixed;inset:0;z-index:64;background:rgba(0,0,0,.5);display:none}
+  #navDrawerOverlay.open{display:block}
+  #navDrawer nav.navdrawer-list{display:flex;flex-direction:column;gap:8px;margin-bottom:0}
+  #navDrawer nav.navdrawer-list button{width:100%;text-align:left}
   /* ---------- PIN Login ---------- */
   .pin-input{display:flex;gap:10px;justify-content:center;margin:18px 0}
   .pin-digit{width:48px;height:58px;font-size:24px;font-weight:900;text-align:center;border:2px solid var(--line);border-radius:14px;background:rgba(0,0,0,.4);color:var(--text);caret-color:var(--teal)}
@@ -399,6 +407,9 @@
       <div style="display:flex;align-items:center;gap:10px">
         <span class="syncdot" id="syncDot" title="Live — connected"></span>
         <span class="balancechip" id="myPnl"></span>
+        <!-- Batch 24: mobile hamburger — fast path to every tab via a slide-out drawer, hidden
+             on desktop (≥700px) where #topbar nav already lists every tab as a row of buttons. -->
+        <button class="notif-bell" id="navDrawerBtn" onclick="toggleNavDrawer()" aria-label="Menu">☰</button>
         <button class="notif-bell" id="notifBell" onclick="toggleNotifPanel()">🔔<span class="dot" id="notifDot" style="display:none">!</span></button>
         <button class="btn small secondary" onclick="logout()">Out</button>
       </div>
@@ -436,6 +447,18 @@
      open, and directly on open/close) keeps its content in sync with the underlying bet. -->
 <div id="betModalOverlay" onclick="closeBetModal()"></div>
 <div id="betModal"><div id="betModalBody"></div></div>
+
+<!-- Batch 24: mobile nav drawer — flat list of every tab (same source as #topbar nav and
+     #bottomNav's "More" detour), slides in from the left, dark-glass style matching
+     #notifPanel/#notifOverlay's existing pattern. Content filled by renderNavDrawer(). -->
+<div id="navDrawerOverlay" onclick="closeNavDrawer()"></div>
+<div id="navDrawer">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+    <h3 style="margin:0">☰ Navigate</h3>
+    <button class="betmodal-close" onclick="closeNavDrawer()">✕</button>
+  </div>
+  <div id="navDrawerList"></div>
+</div>
 
 <!-- BOSH! overlay (Batch 15: reused for the "It's a cufflink!" duplicate-bet celebration too —
      bosh(isDuplicate) swaps #boshText/#boshBall content and toggles the .cufflink class) -->
@@ -784,6 +807,7 @@ function logout() {
   const bn = document.getElementById('bottomNav');
   if (bn) bn.style.display = 'none';
   closeNotifPanel();
+  closeNavDrawer();
 }
 
 /* ================================================================
@@ -1534,6 +1558,54 @@ async function clearAllNotifs() {
   if (!me) return;
   await db.ref('lennon-lounge-notifs/' + me.id).remove();
   renderNotifications();
+}
+
+/* Batch 24: single shared source for every nav destination — used by the desktop #topbar
+   nav, the mobile hamburger drawer, and vUserSettings' "More pages" card, so the tab list
+   never has to be maintained in more than one place. */
+function navTabs(){
+  if(!me) return [];
+  const tabs=[
+    {id:'home',label:'🏟️ Home'},
+    {id:'builder',label:'⚽ Bet Builder'},
+    {id:'mybets',label:'🧾 My Bets',badge:needsActionCount()},
+    {id:'results',label:'🏆 Results'},
+    {id:'insights',label:'📊 Insights'},
+    {id:'usettings',label:'⚙️ Settings'},
+  ];
+  if(me.admin) tabs.push(
+    {id:'review',label:'🏠 Bet Review',house:true,badge:reviewCount()},
+    {id:'loader',label:'📥 GW Loader',house:true},
+    {id:'odds',label:'🎯 Odds Setter',house:true},
+    {id:'settler',label:'⚖️ Settler',house:true},
+    {id:'promos',label:'🎁 Promotions',house:true},
+    {id:'office',label:'🗄️ Back Office',house:true},
+  );
+  return tabs;
+}
+function toggleNavDrawer() {
+  const panel = document.getElementById('navDrawer');
+  const overlay = document.getElementById('navDrawerOverlay');
+  const isOpen = panel.classList.contains('open');
+  if (isOpen) {
+    closeNavDrawer();
+  } else {
+    panel.classList.add('open');
+    overlay.classList.add('open');
+    renderNavDrawer();
+  }
+}
+function closeNavDrawer() {
+  const panel = document.getElementById('navDrawer');
+  const overlay = document.getElementById('navDrawerOverlay');
+  if (panel) panel.classList.remove('open');
+  if (overlay) overlay.classList.remove('open');
+}
+function renderNavDrawer() {
+  const list = document.getElementById('navDrawerList');
+  if (!list || !me) return;
+  const tabs = navTabs();
+  list.innerHTML = `<nav class="navdrawer-list">${tabs.map(t=>`<button class="${t.house?'houseTab':''} ${activeTab===t.id?'active':''}" onclick="closeNavDrawer();go('${t.id}')">${t.label}${t.badge?`<span class="badge">${t.badge}</span>`:''}</button>`).join('')}</nav>`;
 }
 
 function toggleNotifPanel() {
@@ -2750,12 +2822,11 @@ function vUserSettings(){
   // lands here. Insights (batch 19) and every admin house-office tab (Review/Loader/Odds
   // Setter/Settler/Promotions batch 17/Back Office) had no mobile route at all until now,
   // so surface them as plain nav buttons up top. Harmless/redundant on desktop where the
-  // top nav already shows them.
-  const morePages=[{id:'insights',label:'📊 Insights'}];
-  if(me.admin) morePages.push(
-    {id:'review',label:'🏠 Bet Review'},{id:'loader',label:'📥 GW Loader'},{id:'odds',label:'🎯 Odds Setter'},
-    {id:'settler',label:'⚖️ Settler'},{id:'promos',label:'🎁 Promotions'},{id:'office',label:'🗄️ Back Office'}
-  );
+  // top nav already shows them. Batch 24: the hamburger drawer is now the primary fast
+  // path to these, but this card is kept as a secondary route — sourced from the same
+  // navTabs() list (minus what's already on the bottom dock) so it's never maintained
+  // separately from the drawer/desktop nav.
+  const morePages=navTabs().filter(t=>!['home','builder','mybets','results','usettings'].includes(t.id));
   return `<h2>Settings</h2><div class="sub">Your account, your rules.</div>
   <div class="card">
     <h3>📱 More pages</h3>
@@ -3855,22 +3926,7 @@ function render(){
   const p=pnl[me.id]||0;
   const pnlEl=document.getElementById('myPnl');
   if(pnlEl) pnlEl.innerHTML=`P&L <span class="${p>0?'pos':p<0?'neg':''} mono">${GBP(p)}</span>`;
-  const tabs=[
-    {id:'home',label:'🏟️ Home'},
-    {id:'builder',label:'⚽ Bet Builder'},
-    {id:'mybets',label:'🧾 My Bets',badge:needsActionCount()},
-    {id:'results',label:'🏆 Results'},
-    {id:'insights',label:'📊 Insights'},
-    {id:'usettings',label:'⚙️ Settings'},
-  ];
-  if(me.admin) tabs.push(
-    {id:'review',label:'🏠 Bet Review',house:true,badge:reviewCount()},
-    {id:'loader',label:'📥 GW Loader',house:true},
-    {id:'odds',label:'🎯 Odds Setter',house:true},
-    {id:'settler',label:'⚖️ Settler',house:true},
-    {id:'promos',label:'🎁 Promotions',house:true},
-    {id:'office',label:'🗄️ Back Office',house:true},
-  );
+  const tabs=navTabs();
   const navEl=document.getElementById('nav');
   if(navEl) navEl.innerHTML=tabs.map(t=>`<button class="${t.house?'houseTab':''} ${activeTab===t.id?'active':''}" onclick="go('${t.id}')">${t.label}${t.badge?`<span class="badge">${t.badge}</span>`:''}</button>`).join('');
   const views={home:vHome,builder:vBuilder,mybets:vMyBets,results:vResults,insights:vInsights,usettings:vUserSettings,
@@ -3907,6 +3963,8 @@ function render(){
   if(moreBtn) moreBtn.classList.toggle('active',['usettings','review','loader','odds','settler','promos','office'].includes(activeTab));
   // Notification dot
   renderNotifications();
+  // Batch 24: keep the mobile nav drawer's list (badges, active state) in sync too.
+  renderNavDrawer();
   // Batch 14: keep the bet detail modal's content in sync with S.bets across any render()
   // (e.g. an accept/reject/counter/cancel done from inside the modal itself).
   if(openBetModalId) renderBetModal();
