@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Lennon Lounge">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1f0533"/>
+      <stop offset="70%" stop-color="#160026"/>
+      <stop offset="100%" stop-color="#0b0014"/>
+    </linearGradient>
+    <linearGradient id="mono" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00ff87"/>
+      <stop offset="100%" stop-color="#00d9ff"/>
+    </linearGradient>
+    <linearGradient id="bar" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ffc931"/>
+      <stop offset="100%" stop-color="#ff9d00"/>
+    </linearGradient>
+    <radialGradient id="glowV" cx="80%" cy="10%" r="60%">
+      <stop offset="0%" stop-color="#9b5cff" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#9b5cff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowP" cx="10%" cy="95%" r="55%">
+      <stop offset="0%" stop-color="#ff2d78" stop-opacity="0.28"/>
+      <stop offset="100%" stop-color="#ff2d78" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <rect width="512" height="512" rx="112" fill="url(#glowV)"/>
+  <rect width="512" height="512" rx="112" fill="url(#glowP)"/>
+  <rect x="6" y="6" width="500" height="500" rx="106" fill="none" stroke="rgba(255,255,255,0.10)" stroke-width="4"/>
+
+  <text x="256" y="322" text-anchor="middle"
+        font-family="'Archivo Black','Arial Black',sans-serif"
+        font-weight="900" font-size="248" letter-spacing="-8"
+        fill="url(#mono)">LL</text>
+
+  <rect x="146" y="360" width="220" height="16" rx="8" fill="url(#bar)"/>
+</svg>
