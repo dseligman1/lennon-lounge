@@ -3896,6 +3896,10 @@ async function initApp(){
       const bn=document.getElementById('bottomNav'); if(bn) bn.style.display='';
       startListener();
     } else {
+      // On mobile widths #bottomNav's CSS media query defaults it to visible; logout()/switchUser()
+      // toggle it explicitly once a session exists, but nothing did on this "not logged in yet" path,
+      // so it was showing (non-functionally) underneath the login screen. Hide it explicitly here too.
+      const bn=document.getElementById('bottomNav'); if(bn) bn.style.display='none';
       if(loadingEl) loadingEl.style.display='none';
     }
   }catch(e){
