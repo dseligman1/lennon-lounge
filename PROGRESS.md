@@ -12,6 +12,18 @@ Working file: `C:\Users\DanSeligman\Downloads\lennon-lounge-v2\index.html`
 After EVERY batch, also copy the file to `C:\Users\DanSeligman\Downloads\lennon-lounge-v2.html` to keep the synced copy current.
 Commit after every batch with a descriptive message. Never squash/force-push. Never use `--no-verify`.
 
+**Branch note (2026-08-18, important):** the live/deployed history on GitHub
+(`dseligman1/lennon-lounge`, branch `main`) is tracked locally by branch `main-push`,
+NOT `master`. `master` is the original 49-commit batch-build history (kept for
+reference) but it and `origin/main` had unrelated git histories — the user manually
+uploaded the finished build via GitHub's web UI before a remote was ever connected.
+`main-push` was created from `origin/main` and had the handful of files `master` had
+that the web upload was missing (public/, .github/workflows/, this file, SETUP.md)
+added on top as new commits — no force-push, no history rewrite. **Do all future work
+on `main-push`** (check out onto it, or verify `git log --oneline -1` matches before
+committing) and push via `git push origin main-push:main`. Don't merge/rebase against
+`master` — treat it as a frozen historical branch only.
+
 Design system (do not change): CSS vars --bg0 #0b0014 --bg1 #160026 --bg2 #1f0533
 --teal #00ff87 --cyan #00d9ff --pink #ff2d78 --orange #ff9d00 --gold #ffc931
 --violet #9b5cff --text #f6f2fa --muted #a995ba. Archivo Black (headings) + Inter (body).
@@ -27,6 +39,12 @@ committed. Item 0 below was never a numbered deliverable — it was the informal
 `index.html` — so it's left unchecked deliberately rather than checked without a
 backing commit; see the Notes/decisions log and each batch's per-batch findings for
 the equivalent research trail.
+
+**ROUND 2 — post-deploy feedback, 2026-08-18.** 5 of 7 items fixed directly (see the
+"Round 2" section below for commit hashes). Two new batches added:
+
+- [ ] 24. Mobile nav restructure — hamburger/side-drawer for fast access to every tab
+- [ ] 25. Deeper horizontal-scroll / clean single-column mobile audit
 
 - [ ] 0. Codebase structure map (research only, feeds all other batches)
 - [x] 1. Odds decimal formatting + remove number-input spinners everywhere — `fmtOdds` now `.toFixed(1)`; global CSS hides number-input spinners; odds input `step`/`min` bumped to 0.1/1.1 (Odds Setter fields, counter-offer field, `setOdds` clamp). Commit b6734bc.
@@ -367,3 +385,113 @@ touched by batches 1-22.
 - 2026-08-17: Batches are sequential (not parallel) because they all touch the same
   single index.html file — parallel agents editing the same monolith would conflict.
   Each batch = one agent, one commit, then next batch dispatched.
+- 2026-08-18: User manually uploaded the finished build to their real GitHub repo via
+  the web UI before any remote was connected — unrelated git histories. Reconciled by
+  branching `main-push` off `origin/main` and adding only the files it was missing
+  (see Branch note above). All work from here on happens on `main-push`.
+
+---
+
+## Round 2 — post-deploy feedback (2026-08-18)
+
+User walked through the live deployed app and reported 7 items. Two were investigated
+and fixed directly (not delegated — needed careful root-cause tracing across several
+functions rather than a scoped batch brief), three more were small enough to fix
+directly once located, and two remain as new batches below (24-25).
+
+**Fixed directly, commits on `main-push`:**
+1. **Bet Review accept/reject not clearing the bet** (recurring — batch 6's fix
+   addressed a real but different race condition; this was still happening).
+   Root cause: `submitBet()` had a second, redundant Firebase write
+   (`db.ref(ROOT+'/bets').push(bet)`) alongside the normal full-state `save()`. Under
+   concurrent use this could bake a duplicate copy of a just-placed bet (same `id`,
+   separate object identity) into `S.bets`; `houseAccept`/`houseReject` only mutated
+   whichever copy `.find()` returned first, so the other stayed `status:'pending'`
+   forever and never cleared from Review. Fixed: removed the redundant write;
+   `migrate()` now de-dupes any bets sharing an id on every load (self-heals whatever
+   duplicates are already sitting in the live Firebase data); `houseAccept`/
+   `houseReject`/`houseCancel` now defensively act on every matching bet by id as a
+   second line of defense. Commit `2664602`.
+2. **Max bet payout → £2000.** `DEFAULT_SETTINGS.maxPayout` was 10000; changed to
+   2000 with a migration bump for existing installs. Verified exposure figures
+   (`computeMaxExposure`, batch 9) already only ever counted `status==='accepted'`
+   bets — unchanged. Verified `betLimitFlags()` only flags an over-limit bet, never
+   blocks submission — a breaching bet still goes through as a pending request,
+   unchanged. Commit `2664602` (same commit as #1).
+3. **Login screen showing the mobile bottom nav.** `#bottomNav`'s CSS media query
+   defaults it to visible under 700px; `logout()`/`switchUser()` toggle it explicitly
+   once a session exists, but `initApp()`'s "no saved session, show login" path never
+   did, so it fell through to the CSS default. Added the same explicit hide there.
+   Commit `f62a118`.
+4. **Odds unrealistically wide (too high on one side of most matches).**
+   `recOdds()`'s win-probability curve used a divisor of 20 against TEAMS' base-
+   strength spread (~45-56, an 11pt range before real history accumulates), which
+   swung a typical matchup's odds much wider than intended (e.g. ~1.3 vs ~4.6 on an
+   11pt gap). Widened the divisor to 34 — typical week-to-week gaps (3-6pts) now
+   land ~1.5-2.5 on both sides per the user's ask, only widening for a genuinely
+   large mismatch. Draw odds (~11.6, from `pD=0.08`) were already within the
+   requested 10-20 range, untouched. **Caveat flagged to user**: this doesn't
+   retroactively fix odds already baked into existing test gameweeks/bets in the
+   live Firebase data — those were generated under the old curve. Commit `7c55909`.
+5. **Sync/refresh reliability.** No code bug here, but added a real connection-status
+   indicator: a small dot in the header driven by Firebase's own `.info/connected`
+   ref (reflects actual websocket state, unlike `navigator.onLine`), with a forced
+   fresh read on reconnect and on the tab/PWA becoming visible again as a
+   belt-and-braces nudge alongside the SDK's own auto-resync. Commit `cbdb76f`. See
+   chat for the full explanation given to the user of how save/sync/offline-queueing
+   actually works.
+
+**Remaining, written up as new batches below:**
+- Batch 24 — Mobile nav restructure (hamburger/side-drawer nav)
+- Batch 25 — Deeper horizontal-scroll / single-column-fit audit (batch 23 was a
+  first static-only pass with no browser available to verify against; user still hit
+  real issues, so this one should use the claude-in-chrome browser tool if available
+  in the executing session to actually verify at phone widths, not just read CSS)
+
+---
+
+### Batch 24 — Mobile nav restructure: hamburger / side-drawer
+Currently on mobile (<700px) navigation is: a 5-icon bottom dock (`#bottomNav`:
+Home/Bets/My Bets/Results/More) plus, since batch 23, a "More pages" card inside
+User Settings linking every tab the dock doesn't cover (Insights, and for admins:
+Review/Loader/Odds Setter/Settler/Promotions/Back Office). User feedback: burying
+things like Insights two taps deep behind "More → scroll → find the link" is too
+slow for a "significant" page. Replace with a proper slide-out nav drawer: a
+hamburger icon in the header (`<header>`, alongside the existing notif bell / logout
+button — grep `id="notifBell"` to find it) that opens a full-height side panel
+(slide in from left or right, dark glass style matching `#notifPanel`'s existing
+overlay pattern — grep `notifPanel`/`toggleNotifPanel` for the pattern to follow)
+listing every nav destination as a single flat tappable list (reuse the same `tabs`
+array `render()` already builds, admin-gated entries included), each closing the
+drawer and calling `go(tab)` on tap. Keep the existing 5-icon bottom dock as-is for
+the most-used destinations (don't remove it — this is additive, not a replacement) —
+just make the hamburger drawer the fast path to everything else instead of the
+current "More" detour. Desktop nav (`#topbar nav`, ≥700px) is unaffected, already
+shows every tab as a normal row of buttons. Remove or keep the batch-23 "More pages"
+card in User Settings — your call, but if you keep it, deduplicate rather than
+maintaining the tab list in two places (e.g. have both read from the same `tabs`
+source).
+
+### Batch 25 — Deeper horizontal-scroll / clean single-column mobile audit
+Batch 23 already did a pass but was static-only (grepping CSS/class names, no
+browser available in that session to actually verify). The user still hit pages that
+don't render cleanly on their phone — real horizontal scrolling and cramped
+overlapping text. **If the claude-in-chrome browser tool is available in your
+session, use it**: resize/open at common phone widths (375px, 390px, 414px) and
+actually click through every tab (Home, Builder incl. In-Play tab, My Bets, Results
+incl. all its sub-tabs, User Settings incl. the More-pages links, and every admin
+tab if you can log in as one) taking screenshots, looking for: any element causing
+the page to scroll sideways, text/numbers overlapping or getting clipped, anything
+not obviously grouped with the bet/match it belongs to. Apply the user's stated
+layout principle directly: **it's fine and expected for related info to stack onto
+multiple lines as long as the grouping is visually obvious** — e.g. fixture name and
+live score on one line, bet status/result directly underneath it, clearly still
+inside the same card/row — the goal is no *sideways* scrolling ever, not fewer
+lines. If no browser tool is available, fall back to a rigorous static audit like
+batch 23's but go further: check every `<table>`, every flex row with multiple
+inline stats, every card built by batches 11-22 specifically (these are the newest,
+least battle-tested UI) for fixed widths without `max-width`, missing `flex-wrap`,
+padding/gap totals that don't account for narrow viewports, and long unbreakable
+strings (team names, odds+currency combos) without `overflow-wrap`/`text-overflow`
+handling. Fix what you find; where you're not sure a fix actually rendered clean visually
+(no browser available), say so plainly in your report rather than claiming success.
