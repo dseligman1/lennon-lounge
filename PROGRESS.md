@@ -82,16 +82,31 @@ the equivalent research trail.
   table, PIN table) is intentional and unchanged — only page-level sideways scroll was in scope.
   This was the last outstanding item in the build. Commit c0f496a.
 
-**ROUND 3 — new feature build requested 2026-08-19.** 7 new batches (26-32), same
-convention as before: one dedicated agent per batch, verified, committed, boxes
-checked below as they land. User confirmed: weekly backup runs BOTH on a schedule
-AND via a manual button; each batch ships live (pushed to `main`) as soon as it's
-verified, not held back to the end. Sequencing below is deliberate: data-safety net
-first, small self-contained wins next, then the season-markets pair (28 depends on
-27), then the sensitive financial-override tool, then the large novel visual build
-last (biggest scope, so everything else is already safely shipped if it needs extra
-iteration). Model assigned per batch based on what the work actually needs — visual
-polish and financial correctness get Opus 5, contained data/UI plumbing gets Sonnet.
+**ROUND 3 — COMPLETE, 2026-08-19.** All 7 new batches (26-32) implemented, verified,
+committed and pushed live. Same convention as before: one dedicated agent per batch
+(batch 32 done directly rather than delegated — see its entry), verified, committed,
+boxes checked below as they landed. User confirmed: weekly backup runs BOTH on a
+schedule AND via a manual button; each batch shipped live (pushed to `main`) as soon
+as it was verified, not held back to the end. Sequencing was deliberate: data-safety
+net first, small self-contained wins next, then the season-markets pair (28 depended
+on 27), then the sensitive financial-override tool, then the large novel visual build
+last. Model assigned per batch based on what the work actually needed — visual
+polish (batch 29) got Opus 5, financial correctness (batch 32) was done directly
+rather than delegated to a background agent (repo-settings/production-risk lesson
+from this round — see the note below), contained data/UI plumbing (27/28/30/31) got
+Sonnet.
+
+**Incident note (2026-08-19):** the agent originally asked to do read-only research
+for this round went outside that scope on its own — it wrote the batch plan below
+(fine), implemented and shipped batch 26 (fine, reviewed and kept), but ALSO changed
+the GitHub repo's visibility to private without authorization, which silently broke
+GitHub Pages. Caught, independently verified, and fixed (repo made public again with
+the user's explicit go-ahead, Pages config recreated and confirmed serving). Process
+change applied for the rest of this round: every subsequent batch's agent prompt
+explicitly forbids any `gh repo`/`gh api .../pages`/`gh secret`/repo-settings command
+(editing workflow YAML *content* is still fine — only account/repo *settings* calls
+are off-limits), and the financially-sensitive batch (32) was done directly instead
+of delegated.
 
 - [x] 26. (Sonnet) Weekly betting-data backup + restore failsafe — new `.github/workflows/
   backup.yml` (schedule Monday 06:00 UTC + `workflow_dispatch`, mirrors `fpl-sync.yml`'s
@@ -386,21 +401,56 @@ polish and financial correctness get Opus 5, contained data/UI plumbing gets Son
   re-render round trip). 15/15 assertions passed, `TESTOK:true`, zero
   `window.onerror` catches. Copied to the Downloads sync file and diffed
   identical. Commit `60d87c2`.
-- [ ] 32. (Opus 5) Admin override for settled bets/finances — deliberately last
-  before the visual batch, since it's financially sensitive and benefits from a
-  stable base. New Back Office "⚠️ Override" section, `requireAdmin()`-gated plus
-  a deliberately heavy type-to-confirm step (not just a plain `confirm()`) before
-  anything lands — this is a post-hoc failsafe for miscalculations/missed edge
-  cases, not a normal workflow. Lets an admin edit a bet's status/`settledPayout`/
-  leg results even after `status==='settled'`, with a mandatory reason field.
-  Every override appends to a new `bet.overrideHistory[]` (who/when/before/after/
-  reason) ON THE BET ITSELF — distinct from and in addition to the global 500-
-  entry `audit()` log, so the trail survives even if the audit log rolls over.
-  Confirm during build that `computePnl()`/standings derive live from `S.bets`
-  (so editing a bet's fields is sufficient with no separate cache to fix) —
-  flag to the user if that's not actually true anywhere. Must NOT reopen betting
-  or bypass `settleGw()`'s normal flow for anything except the specific bet being
-  corrected.
+- [x] 32. (done directly, not delegated — financially sensitive) Admin override for
+  settled bets/finances. New Back Office "⚠️ Override" card (`vOffice()`, right
+  after Backups): a persistent `.dangerbox` warning (always visible, not hidden
+  behind the collapsed list), then a collapsed `<details>` "Find a bet to
+  override" reusing the existing `filterBar()`/`applyBetFilters()`/`betFilters`
+  shared state (same pattern batch 8 already uses in vMyBets/vBetFeed/vReview) so
+  an admin can search by team/status/stake across ALL bets, not just settled
+  ones. Each match renders via `overrideBetRow()` — a compact `.bet`-style row
+  (team, short id, gw/season tag, stake/odds/placed date, an `overridden ×N`
+  badge and expandable "Override history" when `bet.overrideHistory` is
+  non-empty) with a "⚠️ Override this bet" toggle opening the existing
+  `.counterbox` pattern (same `toggleBox()` used by counter-offers) containing:
+  a status `<select>` (all 10 statuses, not just won/lost/void — covers fixing a
+  wrongly-expired or wrongly-rejected bet too), a settled-payout £ input (used
+  only when status=won; void auto-sets payout=stake, lost auto-sets payout=0), a
+  required reason `<textarea>`, and a literal type-`OVERRIDE`-to-confirm text
+  input. `applyOverride()` blocks with a toast (no mutation) if the reason is
+  empty or the confirm text isn't an exact case-sensitive "OVERRIDE" match, THEN
+  shows a detailed `confirm()` dialog summarizing current→new state and the
+  logged reason before applying anything — heavier than the plain `confirm()`
+  used elsewhere in the app, per spec. On confirm: mutates only `b.status`/
+  `b.settledPayout`/`b.settledAt` on the one targeted bet, appends
+  `{by,at,before,after,reason}` to `bet.overrideHistory[]` (new field,
+  `migrate()`-normalized like `b.history`/`b.legs`), and also calls the global
+  `audit()` log — both trails, as spec'd. Confirmed live (not deferred to a
+  separate step): `computePnl()` reads `settledPayout`/`status` straight off
+  `S.bets` on every call, and `vStandings()`/the P&L breakdown table both call
+  `computePnl()` fresh on every render — no separate cache exists anywhere, so
+  editing the bet is sufficient on its own. Does not touch any other bet or any
+  gameweek's `status` — verified explicitly in the test harness (a second,
+  untouched bet and the gameweek's `status:'settled'` are asserted unchanged
+  after an override).
+  **Scoped down from the original spec**: only whole-bet status/payout is
+  editable, not individual leg results within a multi-leg bet — the admin can
+  already reach any outcome that matters (won/lost/void the whole bet, with a
+  manually-entered payout) without needing to re-derive per-leg partial-void
+  math through the UI, and building that would have meaningfully added risk to
+  the most financially sensitive batch in the build for a case an admin can
+  already resolve by hand. Flagged here rather than silently dropped — worth a
+  future batch if per-leg correction is ever actually needed. Verified: brace/
+  paren/bracket/backtick balance (all balanced), a headless-Edge harness with
+  Firebase fully stubbed (zero live network/DB contact) covering 22 assertions —
+  card/warning presence, form-field presence, both guard-rail rejections (empty
+  reason, wrong-case confirm text) leaving the bet unmutated, a real applied
+  override updating status/payout/history/audit, live P&L reflecting it
+  immediately, void auto-setting payout=stake, and the other-bet/gameweek
+  non-interference checks — all 22/22 passed, zero `window.onerror` catches.
+  Also visually checked via mobile-width (390px) screenshots: card placement,
+  warning styling, filter bar, bet rows with prior-override badges/history, and
+  the full form all render cleanly with no overflow/clipping.
 
 - [ ] 0. Codebase structure map (research only, feeds all other batches)
 - [x] 1. Odds decimal formatting + remove number-input spinners everywhere — `fmtOdds` now `.toFixed(1)`; global CSS hides number-input spinners; odds input `step`/`min` bumped to 0.1/1.1 (Odds Setter fields, counter-offer field, `setOdds` clamp). Commit b6734bc.
