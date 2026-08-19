@@ -528,13 +528,25 @@ real money. Batch-by-batch: implement, verify, commit, push, move to next.
   already toast "No live gameweek to generate from" on `null`, verified). Verified via
   brace/paren/bracket balance (`{`2574/2574 `(`5438/5438 `[`534/534, all clean) and grepping
   every `genAlgoBet(` call site to confirm both callers already handle a `null` return.
-- [ ] 36. Boosted-odds admin tool — two independent, admin-toggled, rule-capped boosts,
-  reusing the existing fire-icon/strikethrough display pattern (`promoPrice`/`.fire`/`.was`):
-  (a) per-match "boost the draw +2.0" toggle in Odds Setter, hard-capped app-wide to at
-  most 2 gameweeks carrying an active draw boost at once; (b) per-gameweek "boost this
-  team's win +0.1 🔥" toggle, restricted to only the team currently top of the league table
-  (`seasonStandingsTally()`), one team per gameweek. Confirmed with user: the boost amount
-  is +0.1 (not +0.5, an earlier verbal slip).
+- [x] 36. Boosted-odds admin tool — new `weekBoostPrice(g,m,pick)` (distinct from the older
+  random `S.promos`/`promoPrice()` flash-boost mechanic, which is untouched): (a) per-match
+  `m.drawBoost` toggle in Odds Setter (`toggleDrawBoost`) adds a flat +2.0 to that match's
+  draw price, hard-capped app-wide to `MAX_DRAW_BOOST_GWS=2` gameweeks carrying an active
+  draw boost at once (blocked with a toast past the cap); (b) per-gameweek `g.favBoostTeamId`
+  toggle (`setFavBoost`) adds a flat +0.1 to one team's win price, restricted to only
+  `leagueLeaderTeamId()` (top of `seasonStandingsTally()` by points) — one team per gameweek,
+  and the toggle stays visible/removable even if a later standings change moves the leader
+  elsewhere (so a stale boost is never stuck on). Confirmed with user: +0.1, not +0.5 (an
+  earlier verbal slip in the request). Both compose through `promoPrice(...) ?? weekBoostPrice(...)`
+  at all three places a match price is ever read for display or leg-building — `vGwBoard`'s
+  `btn()`, `addMatchLeg()`, and batch 35's `genAlgoBet()` match maker — so a boosted price
+  reuses the exact same fire-icon/strikethrough UI a promo boost already renders, and Algo
+  never bypasses it. Odds Setter's `oddsCard()` gets a small 🔥 toggle button next to Home/
+  Draw/Away odds (only rendered where eligible), plus a status line showing draw-boost usage
+  (N/2 gameweeks) and who the current league leader is. Verified via brace/paren/bracket/
+  backtick balance (`{`2612/2612 `(`5522/5522 `[`537/537, 846 backticks — even/clean) and a
+  manual trace of all three `weekBoostPrice` call sites plus the cap/eligibility guards in
+  `toggleDrawBoost`/`setFavBoost`.
 - [ ] 37. Bet-slip stake-input typing bug — `#stakeInput`/`#seasonStakeInput` use
   `oninput="render()"`, which replaces the whole `#view` DOM on every keystroke and drops
   input focus. Fix: partial DOM update on stake input instead of a full re-render.
