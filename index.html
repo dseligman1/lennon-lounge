@@ -1495,72 +1495,56 @@ function computeMaxExposure(bets){
 /* ================================================================
    THE ALGO — random bet generator (copied verbatim from prototype)
    ================================================================ */
+// Batch 35: every leg the Algo generates must trace back to odds the house has actually
+// published (m.odds, admin-set; or gw.specialMarkets[], admin-published via the Loader) —
+// never a fresh line/price invented on the fly from teamAvg()/edgedOdds()/phi(). The Algo's
+// own "edge" (algoEdgePct) is still applied as a fixed discount formula on top of the
+// published board price, same as it always did for match-winner legs — that's not
+// hallucination, it's a house-cut formula on a real price. What changed: the special-market
+// makers below now pick an already-offered gw.specialMarkets[] entry instead of rolling
+// their own team_pts/haul/match_total/top_score line and probability model.
 function genAlgoBet(state, myTeamId){
   // In-play betting is coming soon (batch 4) — Algo only generates pre-match bets for now.
   const gws=state.gameweeks.filter(g=>bettableNow(g)==='pre');
   if(gws.length===0) return null;
   const g=gws[gws.length-1];
   const fixtures=g.matches.filter(m=>m.home&&m.away);
-  if(fixtures.length===0) return null;
+  const offeredSpecials=g.specialMarkets||[];
+  if(fixtures.length===0 && offeredSpecials.length===0) return null;
   const edge=state.settings.algoEdgePct;
   const rnd=a=>a[Math.floor(Math.random()*a.length)];
-  const makers=[
-    ()=>{
+  const priceFromBoard=board=>Math.max(1.05, Math.round(board*(1-edge/100)*100)/100);
+  const makers=[];
+  if(fixtures.length){
+    makers.push(()=>{
       const m=rnd(fixtures);
       const picks=['home','home','away','away','draw'];
       const pick=rnd(picks);
       const label= pick==='draw' ? `Draw — ${team(m.home).name} v ${team(m.away).name}` : `${team(pick==='home'?m.home:m.away).name} to WIN v ${team(pick==='home'?m.away:m.home).name}`;
       const board=promoPrice(g.id,m.id,pick) ?? m.odds[pick];
-      return {type:'match', gwId:g.id, matchId:m.id, pick, odds:Math.max(1.05, Math.round(board*(1-edge/100)*100)/100), label};
-    },
-    ()=>{
-      const m=rnd(fixtures); const tid=rnd([m.home,m.away]);
-      const avg=teamAvg(state,tid);
-      const off=rnd([-10,-5,0,5,10,15]);
-      const line=Math.round(avg+off)+0.5;
-      const dir=rnd(['over','over','under']);
-      const p=dir==='over'?pOver(line,avg):1-pOver(line,avg);
-      return {type:'special', gwId:g.id, kind:'team_pts', teamId:tid, line, dir,
-        odds:edgedOdds(p,edge), label:`${team(tid).name} ${dir.toUpperCase()} ${line} pts`};
-    },
-    ()=>{
-      const m=rnd(fixtures); const tid=rnd([m.home,m.away]);
-      const avg=teamAvg(state,tid);
-      const line=Math.round(avg*rnd([1.2,1.3,1.45]));
-      const p=pOver(line-0.5,avg);
-      return {type:'special', gwId:g.id, kind:'haul', teamId:tid, line,
-        odds:edgedOdds(p,edge), label:`${team(tid).name} BIG HAUL — ${line}+ pts`};
-    },
-    ()=>{
-      const m=rnd(fixtures);
-      const tot=teamAvg(state,m.home)+teamAvg(state,m.away);
-      const off=rnd([-12,-6,6,12,20]);
-      const line=Math.round(tot+off)+0.5;
-      const dir=rnd(['over','under']);
-      const p=dir==='over'?1-phi((line-tot)/(SD*1.414)):phi((line-tot)/(SD*1.414));
-      return {type:'special', gwId:g.id, kind:'match_total', matchId:m.id, line, dir,
-        odds:edgedOdds(p,edge), label:`${team(m.home).name} v ${team(m.away).name} — combined ${dir.toUpperCase()} ${line}`};
-    },
-    ()=>{
-      const tids=[...new Set(fixtures.flatMap(m=>[m.home,m.away]))];
-      const ws=tids.map(tid=>({tid,w:Math.exp(0.12*teamAvg(state,tid))}));
-      const tot=ws.reduce((s,x)=>s+x.w,0);
-      const x=rnd(ws);
-      return {type:'special', gwId:g.id, kind:'top_score', teamId:x.tid,
-        odds:edgedOdds(x.w/tot,edge), label:`${team(x.tid).name} — TOP SCORE of the week`};
-    },
-  ];
+      return {type:'match', gwId:g.id, matchId:m.id, pick, odds:priceFromBoard(board), label};
+    });
+  }
+  if(offeredSpecials.length){
+    makers.push(()=>{
+      const m=rnd(offeredSpecials);
+      const leg={type:'special', gwId:g.id, marketId:m.id, kind:m.kind, teamId:m.teamId||undefined, matchId:m.matchId||undefined, line:m.line, dir:m.dir, odds:priceFromBoard(m.odds), label:m.label};
+      return leg;
+    });
+  }
   const n=rnd([1,1,1,2,2,2,2,3,3,4]);
   const legs=[]; const seen=new Set(); let guard=0;
   while(legs.length<n && guard++<40){
     const leg=rnd(makers)();
-    const key=leg.label;
+    const key=leg.type==='special'?leg.marketId:leg.label;
     if(seen.has(key)) continue;
     if(leg.type==='match' && legs.some(l=>l.type==='match'&&l.matchId===leg.matchId)) continue;
+    if(leg.type==='special' && legs.some(l=>l.type==='special'&&l.marketId===leg.marketId)) continue;
     // Anti-match-fixing: never generate a leg against the integrity rule for the acting player's own team
     if(myTeamId && slipViolatesIntegrity([leg], myTeamId)) continue;
     seen.add(key); legs.push(leg);
   }
+  if(legs.length===0) return null;
   const odds=legs.length===1? legs[0].odds : Math.max(1.05, Math.round(legs.reduce((a,l)=>a*l.odds,1)*100)/100);
   return {gwId:g.id, legs, odds, n:legs.length};
 }

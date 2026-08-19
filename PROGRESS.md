@@ -507,6 +507,53 @@ same-day turnaround), not delegated:
   actual GitHub Action against the fixed code and confirmed real squad data landed in Firebase.
   Commit `8af2f65`.
 
+---
+
+## ROUND 5 — pre-launch final changes, 2026-08-19
+
+User request (final punch list before pushing live for real). Do NOT touch any odds/bets
+already live in production data. Done directly (not delegated) — every item here touches
+real money. Batch-by-batch: implement, verify, commit, push, move to next.
+
+- [x] 35. Odds-integrity guard on Algo/Spin — `genAlgoBet()`'s `special`-type leg makers
+  used to invent their own line+odds via `teamAvg()`/`edgedOdds()`/`phi()` (a fresh random
+  team_pts/haul/match_total/top_score prop with its own probability model on every spin) —
+  never anything an admin had actually set eyes on. Replaced with a maker that samples
+  from `g.specialMarkets[]`, the exact same admin-published array `specialMarketsBoard()`
+  already renders on the board (Loader → Odds Setter → publish, batch 20/21) — same `m.odds`
+  field, same object, house-cut `algoEdgePct` still applied on top as a formula (unchanged
+  from how match-winner legs already worked), never a new number invented. Match-winner legs
+  unchanged (`m.odds[pick]`, already admin-set). If a gameweek has no fixtures AND no
+  published specials, `genAlgoBet` now returns `null` cleanly (both `spinAlgo()` call sites
+  already toast "No live gameweek to generate from" on `null`, verified). Verified via
+  brace/paren/bracket balance (`{`2574/2574 `(`5438/5438 `[`534/534, all clean) and grepping
+  every `genAlgoBet(` call site to confirm both callers already handle a `null` return.
+- [ ] 36. Boosted-odds admin tool — two independent, admin-toggled, rule-capped boosts,
+  reusing the existing fire-icon/strikethrough display pattern (`promoPrice`/`.fire`/`.was`):
+  (a) per-match "boost the draw +2.0" toggle in Odds Setter, hard-capped app-wide to at
+  most 2 gameweeks carrying an active draw boost at once; (b) per-gameweek "boost this
+  team's win +0.1 🔥" toggle, restricted to only the team currently top of the league table
+  (`seasonStandingsTally()`), one team per gameweek. Confirmed with user: the boost amount
+  is +0.1 (not +0.5, an earlier verbal slip).
+- [ ] 37. Bet-slip stake-input typing bug — `#stakeInput`/`#seasonStakeInput` use
+  `oninput="render()"`, which replaces the whole `#view` DOM on every keystroke and drops
+  input focus. Fix: partial DOM update on stake input instead of a full re-render.
+- [ ] 38. Mobile bet-slip placement — on mobile, the slip currently renders at the very
+  bottom of the page below every gameweek board, forcing a long scroll after adding a leg.
+  Move it to render directly under the current/open gameweek's board on mobile.
+- [ ] 39. Player-requested bespoke bets + Settler support — new player-facing "request a
+  bespoke bet" flow (free-text description + their proposed odds), landing with the house
+  for review/recalculation (reuse the existing counter-offer negotiation pattern) before
+  it's accepted and live; Settler tab needs a way to manually settle (won/lost/void) a
+  bespoke bet, since it can't be auto-graded from FPL data.
+- [ ] 40. Settler tab: one-click "settle everything" with admin approval gate — pulls FPL
+  scores for every gameweek that's ready and shows a computed win/loss/void result per bet
+  for the admin to eyeball/adjust, with a final explicit approve step before anything is
+  actually committed (no silent auto-settle — admin approval stays the gate, same principle
+  as batch 22/32).
+
+---
+
 - [ ] 0. Codebase structure map (research only, feeds all other batches)
 - [x] 1. Odds decimal formatting + remove number-input spinners everywhere — `fmtOdds` now `.toFixed(1)`; global CSS hides number-input spinners; odds input `step`/`min` bumped to 0.1/1.1 (Odds Setter fields, counter-offer field, `setOdds` clamp). Commit b6734bc.
 - [x] 2. Cutoff / in-play-close time fields → calendar+clock picker widget — extracted `calGrid`+time-chip UI from the Loader into a shared, key-based `dtPicker`/`dtPickerPanelInner` widget (state in `dtPickState`, backed by `parseDTLocal`/`ukWallToTs`); Loader kickoff picker refactored to use it inline, GW deadline and in-play cutoff fields in Odds Setter now use it as a popover (raw `datetime-local` inputs removed). Commit 615a020.
