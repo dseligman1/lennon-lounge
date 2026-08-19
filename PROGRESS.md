@@ -223,12 +223,45 @@ polish and financial correctness get Opus 5, contained data/UI plumbing gets Son
   stubbed, and a visual check (screenshot) of the pitch view and comparison popup
   at mobile width — this batch is explicitly quality-bar-sensitive, don't skip the
   visual check.
-- [ ] 30. (Sonnet) Insights: team form guide — purely computed from data that
-  already exists (`S.history` + `gw.matches[].result`), no new FPL pull needed.
-  New pure fn (recent-N-gameweek W/D/L record + points trend per team) rendered
-  as a new "📈 Form guide" card in `vInsights()`, plus a small in-form/out-of-form
-  marker next to each team in `vGwBoard`'s match rows so it's visible where bets
-  actually get placed, not just buried in Insights.
+- [x] 30. (Sonnet) Insights: team form guide — new pure `teamForm(state,teamId,n=5)`
+  mirrors `vStandings()`'s pattern of merging `S.history` (for events not covered
+  by a local gameweek's own results) with `S.gameweeks` matches, scoped to one team
+  and sorted by event: returns the last-N W/D/L record (scored 3/1/0 like the FPL
+  League table so "hottest" reads as "who'd top the table on just their last N"),
+  season-average vs recent-N-average scoring, and a trend figure. New shared
+  `formIndicator(f)` (3+ of the last 5 results the same way, needs 3+ games played
+  to call it either way) classifies hot/cold once so the two new surfaces below can
+  never disagree: `formGuideCard()` — new "📈 Form guide" card in `vInsights()`
+  (inserted between the KPI row and the `.homegrid`), ranked hottest-to-coldest,
+  a W/D/L strip per team reusing the existing `.pill`/`.st-won`/`.st-lost`/`.st-void`
+  classes (no new chip language) plus the trend figure colored via `.pos`/`.neg`;
+  and `formDot(teamId)` — a small colored-dot marker (new minimal CSS `.formdot`,
+  `var(--teal)`/`var(--pink)`, box-shadow glow, no text/pill — deliberately just a
+  dot per the "small and unobtrusive" ask) added next to each team name in
+  `vGwBoard`'s match-row `.names` div, title tooltip shows the last-5 W/D/L strip.
+  Purely computed from data that already exists (`S.history` + `gw.matches[].
+  result`), no new FPL pull, no new `S` field. Verified via a brace/paren/bracket/
+  backtick balance check on the full script (all balanced via `grep -o | wc -l`,
+  since no node/python is available in this environment: `{` 1878/1878, `(`
+  4252/4252, `[` 459/459, 724 backticks — base commit checked the same way first
+  to confirm the method itself gives a clean balanced result here, `{` 1844/1844
+  etc., before comparing deltas) and a headless Edge (`--dump-dom`) run against a
+  harness that stripped the two Firebase CDN `<script src>` tags entirely and
+  replaced them with a stub `window.firebase` (zero live network/DB contact),
+  overrode `save()`/`saveNow()`/`startListener()` (the override seeds `S`, calls
+  `render()`, then exercises Insights and the Bet Builder board), and seeded 6
+  gameweeks of `S.history` results across 6 fixed team pairings with a deliberate
+  mix — `selig`/`round`/`huxle` on 3+ win streaks (hot), `rowez`/`dunny`/`disco` on
+  3+ loss streaks (cold), the other 6 teams kept mixed/drawn (neutral, no marker)
+  — plus one open gameweek board and one pending bet (so `vInsights()` takes its
+  main, not its empty-state, branch). Result: `testOk:true`, zero `window.onerror`
+  catches, Form guide heading present, exactly 3 hot + 3 cold `.formdot`s in both
+  the Insights card and the gameweek board (matching the seed exactly), rendered
+  pill counts sanity-checked (23 won + 23 lost + 14 void = 60 = 12 teams × 5 games
+  exactly), and spot-checked `teamForm()` output directly for 3 teams (selig: 5W,
+  formPts 15; rowez: 5L, formPts 0; murov: 1W-2D-2L, formPts 5, correctly
+  unmarked) plus the actual rendered board match-row HTML for all 3 hot/cold pairs
+  showing the correct dot class + last-5 W/D/L tooltip string. Commit `f2faf2c`.
 - [ ] 31. (Sonnet) Limits & Edge: ACCA edge-by-legs table — replaces the current
   `accaFactor(n,marginPct)` linear formula (`1-(marginPct/100)*n`, i.e. margin
   scales WITH leg count) with an admin-edited lookup table, legs 1 through 10,
