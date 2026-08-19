@@ -596,7 +596,13 @@ const TEAMS = [
   {id:'disco',  name:"Disco Dave's Dodgers",  owner:'Jason',   fplName:'Jason Stein',        admin:false, base:46},
   {id:'huxle',  name:'HUXLEY',                owner:'Ryan',    fplName:'Ryan Silvester',     admin:false, base:45},
 ];
-const DEFAULT_SETTINGS = { maxStake:300, maxPayout:2000, accaMarginPct:10, algoEdgePct:20, minStake:1 };
+// Batch 31: accaEdgeByLegs replaces the old flat-linear accaMarginPct-based formula (accaMarginPct
+// kept in settings, harmlessly unused, rather than deleted — avoids any migration churn on live
+// data). Keyed 1-10 (a flat % edge applied to that exact leg count); leg counts above 10 clamp to
+// the 10-leg rate in accaFactor(). Defaults are a sane increasing curve, fully admin-editable via
+// the Back Office "Limits & edge" card.
+const DEFAULT_SETTINGS = { maxStake:300, maxPayout:2000, accaMarginPct:10, algoEdgePct:20, minStake:1,
+  accaEdgeByLegs: {1:0, 2:4, 3:7, 4:9, 5:11, 6:13, 7:15, 8:17, 9:19, 10:20} };
 const SD = 15;
 
 /* ================================================================
@@ -726,6 +732,11 @@ function migrate(s) {
   if (!s.fplFixtures) s.fplFixtures = {};
   if (!s.sim) s.sim = {holdback:5, events:{}};
   if (s.settings && s.settings.algoEdgePct == null) s.settings.algoEdgePct = 20;
+  // Batch 31: backfill accaEdgeByLegs for settings saved before this batch, and normalise
+  // Firebase's object-key stringification (accaEdgeByLegs[3] still works fine against string
+  // keys via JS property coercion, this is just a defensive fill for any missing leg-count key).
+  if (s.settings && !s.settings.accaEdgeByLegs) s.settings.accaEdgeByLegs = {...DEFAULT_SETTINGS.accaEdgeByLegs};
+  else if (s.settings) { for (let i=1;i<=10;i++){ if (s.settings.accaEdgeByLegs[i]==null) s.settings.accaEdgeByLegs[i]=DEFAULT_SETTINGS.accaEdgeByLegs[i]; } }
   if (s.settings && s.settings.maxPayout === 1000) s.settings.maxPayout = 10000;
   if (s.settings && s.settings.maxPayout === 10000) s.settings.maxPayout = 2000;
   if (!s.seq) s.seq = 1;
@@ -1112,10 +1123,23 @@ function edgedOdds(fairP, edgePct){
   return Math.max(1.05, Math.round(fair*(1-edgePct/100)*100)/100);
 }
 function pOver(line, avg){ return 1-phi((line-avg)/SD); }
-function accaFactor(n, marginPct){ return n<=1 ? 1 : Math.max(.05, 1-(marginPct/100)*n); }
-function combinedOdds(legOdds, marginPct){
+// Batch 31: replaces the old linear "margin scales with leg count" formula
+// (1-(marginPct/100)*n) with a flat per-leg-count edge looked up from settings.accaEdgeByLegs —
+// e.g. raw combined odds 11 on a 3-fold with a 10% edge set for 3-fold specifically → 11*(1-0.10)
+// = 9.9, no multiplication by leg count baked in (the table already varies by leg count).
+// Single-leg bets (n<=1) are untouched, matching the old behavior — combinedOdds() was never
+// applied to a lone leg anyway (see slipOdds()'s length===1 shortcut), single-leg odds are priced
+// at the point level elsewhere.
+function accaFactor(n, settings){
+  if(n<=1) return 1;
+  const table=(settings&&settings.accaEdgeByLegs)||DEFAULT_SETTINGS.accaEdgeByLegs;
+  const idx=Math.min(Math.max(Math.round(n),1),10);
+  const pct=table[idx]!=null ? table[idx] : 0;
+  return Math.max(.05, 1-pct/100);
+}
+function combinedOdds(legOdds, settings){
   const base=legOdds.reduce((a,b)=>a*b,1);
-  return Math.max(1.01, base*accaFactor(legOdds.length, marginPct));
+  return Math.max(1.01, base*accaFactor(legOdds.length, settings));
 }
 function betLimitFlags(stake, potential, settings){
   const f=[];
@@ -1180,8 +1204,8 @@ function settleBet(bet, state){
   if(evals.some(e=>e.out==='lost')) return {outcome:'lost', payout:0};
   const active=evals.filter(e=>e.out==='won');
   if(active.length===0) return {outcome:'void', payout:bet.stake};
-  const orig=combinedOdds(bet.legs.map(l=>l.odds), state.settings.accaMarginPct);
-  const recomputed=combinedOdds(active.map(e=>e.odds), state.settings.accaMarginPct);
+  const orig=combinedOdds(bet.legs.map(l=>l.odds), state.settings);
+  const recomputed=combinedOdds(active.map(e=>e.odds), state.settings);
   const ratio=bet.effOdds/orig;
   const payout=bet.stake*Math.max(1, recomputed*ratio);
   return {outcome:'won', payout};
@@ -2087,7 +2111,7 @@ function removeFromSlip(i){ slipDuplicateOf=null; slip.splice(i,1); render(); }
 function slipOdds(){
   if(slip.length===0) return 0;
   if(slip.length===1) return slip[0].odds;
-  return combinedOdds(slip.map(l=>l.odds),S.settings.accaMarginPct);
+  return combinedOdds(slip.map(l=>l.odds),S.settings);
 }
 
 function slipOddsFinal(){ const t=autoBoostToken(me.id); const o=slipOdds(); return t?Math.round(o*(1+t.pct/100)*100)/100:o; }
@@ -3521,7 +3545,7 @@ function evalSeasonLeg(leg){
   if(!m||m.status!=='settled') return null;
   return m.result==='void' ? 'void' : m.result;
 }
-// Mirrors settleBet()'s payout math (combinedOdds/accaMarginPct ratio-of-effOdds) but for a
+// Mirrors settleBet()'s payout math (combinedOdds/accaEdgeByLegs ratio-of-effOdds) but for a
 // bet whose legs are ALL season-market legs — a season leg isn't tied to any gw.matches, so
 // it can't reuse settleBet() directly (that one keys off a single bet.gwId). Batch 28's
 // addSeasonLeg() is expected to keep season legs and gw legs on separate bets, matching how
@@ -3536,8 +3560,8 @@ function settleSeasonBet(bet){
     const active=evals.filter(e=>e.out==='won');
     if(!active.length){ outcome='void'; payout=bet.stake; }
     else{
-      const orig=combinedOdds(bet.legs.map(l=>l.odds), S.settings.accaMarginPct);
-      const recomputed=combinedOdds(active.map(e=>e.odds), S.settings.accaMarginPct);
+      const orig=combinedOdds(bet.legs.map(l=>l.odds), S.settings);
+      const recomputed=combinedOdds(active.map(e=>e.odds), S.settings);
       const ratio=bet.effOdds/orig;
       outcome='won'; payout=bet.stake*Math.max(1, recomputed*ratio);
     }
@@ -3713,7 +3737,7 @@ function clearSeasonSlip(){ seasonSlip=[]; render(); }
 function seasonSlipOdds(){
   if(seasonSlip.length===0) return 0;
   if(seasonSlip.length===1) return seasonSlip[0].odds;
-  return combinedOdds(seasonSlip.map(l=>l.odds), S.settings.accaMarginPct);
+  return combinedOdds(seasonSlip.map(l=>l.odds), S.settings);
 }
 // Mirrors slipOddsFinal() — same auto-applied-boost preview as the main gameweek slip, since
 // submitBet() (which both funnel through) doesn't distinguish where the boost token came from.
@@ -4421,11 +4445,15 @@ function vOffice(){
     <div class="formrow">
       <div><label>Max stake £</label><input type="number" id="setMaxStake" value="${S.settings.maxStake}" style="width:100px"></div>
       <div><label>Max payout £</label><input type="number" id="setMaxPayout" value="${S.settings.maxPayout}" style="width:100px"></div>
-      <div><label>Acca edge %/leg</label><input type="number" id="setMargin" value="${S.settings.accaMarginPct}" style="width:100px"></div>
       <div><label>Algo edge %</label><input type="number" id="setAlgoEdge" value="${S.settings.algoEdgePct}" style="width:100px"></div>
       <button class="btn" onclick="saveSettings()">Save</button>
     </div>
-    <p class="muted small">Acca edge: combined odds clipped by (edge × legs)%. Algo edge: specials priced at fair × (1 − edge).</p>
+    <p class="muted small">Algo edge: specials priced at fair × (1 − edge).</p>
+    <hr class="hr">
+    <p><b>Acca edge by leg count</b> <span class="muted small">— flat % edge applied to a multi-leg bet's combined odds, one rate per leg count. Legs beyond 10 use the 10-leg rate. Takes effect live for any NEW bet placed after Save — bets already accepted/settled keep their frozen odds, this never recalculates them.</span></p>
+    <div class="formrow">
+      ${[1,2,3,4,5,6,7,8,9,10].map(n=>`<div><label>${n} leg${n>1?'s':''}</label><input type="number" step="0.1" min="0" max="99" id="setAccaEdge${n}" value="${S.settings.accaEdgeByLegs&&S.settings.accaEdgeByLegs[n]!=null?S.settings.accaEdgeByLegs[n]:0}" style="width:64px"></div>`).join('')}
+    </div>
   </div>
   <div class="card glow">
     <h3>🔗 FPL Sync</h3>
@@ -4500,9 +4528,15 @@ function saveSettings(){
   if(!requireAdmin()) return;
   S.settings.maxStake=parseFloat(document.getElementById('setMaxStake').value)||300;
   S.settings.maxPayout=parseFloat(document.getElementById('setMaxPayout').value)||10000;
-  S.settings.accaMarginPct=parseFloat(document.getElementById('setMargin').value)||10;
   S.settings.algoEdgePct=parseFloat(document.getElementById('setAlgoEdge').value)||20;
-  audit('settings',`stake £${S.settings.maxStake} · payout £${S.settings.maxPayout} · acca ${S.settings.accaMarginPct}% · algo ${S.settings.algoEdgePct}%`);
+  // Batch 31: acca edge-by-legs table — 10 flat per-leg-count % edges, admin-editable. Always-live:
+  // combinedOdds()/accaFactor() read this straight off S.settings at bet-build time, so saving here
+  // IS the "release" mechanism — no separate deploy/publish step. Already-accepted/settled bets keep
+  // their frozen bet.effOdds untouched (see settleBet()'s ratio-of-effOdds math).
+  const edgeByLegs={};
+  for(let n=1;n<=10;n++){ const v=parseFloat(document.getElementById('setAccaEdge'+n).value); edgeByLegs[n]=isNaN(v)?0:v; }
+  S.settings.accaEdgeByLegs=edgeByLegs;
+  audit('settings',`stake £${S.settings.maxStake} · payout £${S.settings.maxPayout} · acca edges [${[1,2,3,4,5,6,7,8,9,10].map(n=>edgeByLegs[n]).join(',')}]% · algo ${S.settings.algoEdgePct}%`);
   save(); render(); toast('Settings saved');
 }
 
