@@ -481,6 +481,32 @@ same-day turnaround), not delegated:
   `window.onerror` catches. Also visually verified via a mobile-width screenshot. Commit
   `ba76c61`.
 
+- [x] 34. (done directly) Fix squad matching: `element-status`' `owner` is `entry_id`, not the
+  league-entry `id` — batch 33 shipped a working auto-sync, but the user reported still seeing
+  "No squad data pulled yet." Root-caused by actually running the GitHub Action against live
+  data and reading Firebase directly (`fpl.squads`/`fpl.players` were `null` despite a
+  "successful" run) rather than assuming batch 29's squad code was correct. Turned out the Action
+  hadn't even run since before batch 26 (its `workflow_dispatch` history showed the latest run
+  used a commit from before squads existed) — running it fresh against current code surfaced the
+  real bug: `league/{id}/element-status`' `owner` field is FPL's global/classic `entry_id`, a
+  DIFFERENT number from the league-scoped `id` that `S.fpl.entryMap` is keyed by, despite both
+  being small integers in the same rough range (verified directly against the live API for the
+  real league, e.g. DUNNEY MONSTERS: league-entry id 5984, entry_id 5981 — confirmed all 12 real
+  squads, 15 players each, keyed by `entry_id` in the raw API response). Batch 29's squad code
+  (both `index.html`'s `ingestFplSquads()` and the mirrored GitHub Action script) assumed `owner`
+  was the league-entry id and looked it up in `entryMap`, silently matching zero players on every
+  run — the Action's own log confirmed this: "Squad data: 0 squad(s), 0 owned player(s)" even
+  though FDR (which doesn't need this mapping) pulled 38 gameweeks fine in the same run. Fix:
+  `ingestFpl()` now also builds `S.fpl.entryIdMap` (`entry_id -> teamId`) alongside the existing
+  `entryMap`, since `league_entries` carries both ids per manager; `ingestFplSquads()` (used by
+  both the standalone "Pull squads" button and batch 33's automatic sync) now looks up
+  `entryIdMap` instead. Mirrored identically in `.github/workflows/fpl-sync.yml`, including
+  correcting its now-wrong explanatory comment. Verified: balance check clean; rebuilt the test
+  harness with mock `id`/`entry_id` values deliberately different (the first harness happened to
+  use matching values and would NOT have caught this) — 18/18 assertions passed. Also re-ran the
+  actual GitHub Action against the fixed code and confirmed real squad data landed in Firebase.
+  Commit `8af2f65`.
+
 - [ ] 0. Codebase structure map (research only, feeds all other batches)
 - [x] 1. Odds decimal formatting + remove number-input spinners everywhere — `fmtOdds` now `.toFixed(1)`; global CSS hides number-input spinners; odds input `step`/`min` bumped to 0.1/1.1 (Odds Setter fields, counter-offer field, `setOdds` clamp). Commit b6734bc.
 - [x] 2. Cutoff / in-play-close time fields → calendar+clock picker widget — extracted `calGrid`+time-chip UI from the Loader into a shared, key-based `dtPicker`/`dtPickerPanelInner` widget (state in `dtPickState`, backed by `parseDTLocal`/`ukWallToTs`); Loader kickoff picker refactored to use it inline, GW deadline and in-play cutoff fields in Odds Setter now use it as a popover (raw `datetime-local` inputs removed). Commit 615a020.
