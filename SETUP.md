@@ -229,6 +229,10 @@ against what FPL has on file for them.
    markets if you want, then **Publish** to open it for betting
 4. Settler → settle the *previous* gameweek's bets once you're confident its results are final
 
+Once per week, ideally after the waiver deadline, also run **Actions → FPL Data Sync → Run
+workflow** so the squad viewer's squads, player form and fixture difficulty are current — see
+Step 8. Same Action, same button, nothing extra to configure.
+
 There's no auto-refresh in between — nothing changes underneath you until you next click sync.
 
 **Backups (set-and-forget):** a full snapshot of the database is committed automatically every
@@ -286,11 +290,117 @@ admin user IDs, which is a bigger change than tightening these rules alone and i
 
 ---
 
+## Step 8 — Squad viewer: squads, player form and fixture difficulty
+
+**What it is:** click any team name anywhere in the app — a match row in the Bet Builder, a name
+on the standings tables, the team on a bet card — and you get that manager's 15 players laid out
+on a pitch (GK / DEF / MID / FWD), coloured green→red by current form, with their top scorer
+crowned. From a specific gameweek fixture there's also a **⚔ Squads** button that puts both
+managers' squads side by side with each one's Fixture Difficulty Rating for that week.
+
+**What you need to do: nothing new, as long as the FPL Data Sync Action is already set up
+(Step 6, Option A).** Squads and difficulty ratings come down with it automatically. If you've
+never set that Action up, do Option A now — it's the only path that gets fixture difficulty.
+
+### Why this one needs the Action rather than the in-app button
+
+The app talks to two different FPL APIs, and they aren't equally reachable:
+
+| Data | Which API | Reachable from your browser? |
+|---|---|---|
+| Squads (who owns which player) | `draft.premierleague.com` | Only via the Step 6 Option B proxy |
+| Player names / positions / form / points | `draft.premierleague.com` | Only via the Step 6 Option B proxy |
+| **Fixture Difficulty Rating (1-5)** | `fantasy.premierleague.com` | **No — and the Option B proxy doesn't cover it either** |
+
+Fixture difficulty is a *classic* Fantasy Premier League concept. The Draft API doesn't expose it
+in any form, and the Cloudflare Worker from Step 6 Option B is written to only forward requests
+to `draft.premierleague.com` — so even with the proxy set up, the app can't get difficulty
+ratings on its own. Running the fetch inside the GitHub Action sidesteps all of this: it runs on
+a server, where none of these browser restrictions apply, and writes everything straight to
+Firebase. That's why it's the recommended route, and why it needs no extra setup from you.
+
+### Refreshing it
+
+Squads change when someone makes a waiver claim or a trade, and difficulty ratings shift as
+fixtures get rescheduled. Both refresh whenever you run the Action:
+
+> GitHub repo → **Actions → FPL Data Sync → Run workflow** → confirm → wait ~20 seconds
+
+That's the same Action and the same button you already use for fixtures and results — it now
+pulls squads and difficulty ratings in the same run, so there's no second thing to remember.
+It stays **manual only** (nothing runs on a schedule) exactly as before. Good habit: run it once
+after the waiver deadline each week, before you publish the gameweek's odds.
+
+Back Office → FPL Sync shows what's currently loaded ("Last squad pull… N squad(s)… FDR for N
+gameweek(s)"). Until you've run it at least once, clicking a team name shows a short "no squad
+data pulled yet" message rather than a pitch — nothing is broken, there's just nothing to draw.
+
+### Optional: the in-app button, and extending the proxy to cover difficulty
+
+Back Office → FPL Sync also has a **👥 Pull squads in-app (no FDR)** button. With the Step 6
+Option B proxy configured it'll fetch squads and player form directly, no GitHub tab — but it
+will skip fixture difficulty, for the reason in the table above.
+
+If you want that button to fetch difficulty too, you have to widen your Worker to forward a
+second host. Edit your Worker (Cloudflare dashboard → Workers & Pages → your worker → **Edit
+code**) and replace its code with this two-route version, then **Save and deploy**:
+
+```js
+export default {
+  async fetch(request) {
+    const url = new URL(request.url);
+    // /api/...  -> draft.premierleague.com   (unchanged, existing behaviour)
+    // /fpl/...  -> fantasy.premierleague.com (new: fixture difficulty)
+    let upstream = null;
+    if (url.pathname.startsWith('/api/')) {
+      upstream = 'https://draft.premierleague.com/api/' + url.pathname.slice(5);
+    } else if (url.pathname.startsWith('/fpl/')) {
+      upstream = 'https://fantasy.premierleague.com/api/' + url.pathname.slice(5);
+    } else {
+      return new Response('Missing path', { status: 400 });
+    }
+    const resp = await fetch(upstream + url.search, {
+      headers: { 'User-Agent': 'Mozilla/5.0' }
+    });
+    const body = await resp.text();
+    return new Response(body, {
+      status: resp.status,
+      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+    });
+  }
+};
+```
+
+Your **Proxy URL** setting doesn't change — keep it exactly as it is, still ending in `/api`.
+The app derives the `/fpl/` route from it automatically. Everything that worked before keeps
+working; you've only added a second route.
+
+This is genuinely optional. The Action already covers all of it with no Cloudflare editing, and
+that's the supported path — this is only worth doing if you dislike the extra GitHub tab.
+
+### Reading the pitch
+
+- **Chip colour / the number in the pill** — that player's FPL *form* (average points per game
+  over the last 30 days). Green is hot, gold and orange are cooling, pink is cold. Same
+  green-good / pink-bad language the form dots on the gameweek board already use.
+- **👑 gold chip** — that squad's top points scorer this season (occasionally two, if it's close).
+- **⚠** — flagged by FPL as doubtful or unavailable.
+- **The small line under each name** — the player's real-life club fixture that gameweek and its
+  difficulty, e.g. `@ LIV · 5` means away at Liverpool, difficulty 5 out of 5.
+- **FDR chips** — green for difficulty 1-2 (kind), amber for 3, red for 4-5 (tough). The colour
+  is purely a function of the number FPL publishes for that fixture.
+- **Bench** — only appears once a gameweek's line-ups are published; before that all 15 players
+  are shown on the pitch together, which is the normal pre-deadline view.
+
+---
+
 ## Usage summary
 
 | Action | Who |
 |---|---|
 | Place a bet | Any player |
+| View any squad on the pitch / compare two squads | Any player (click a team name) |
+| Pull squads & fixture difficulty | Admins (FPL Data Sync Action — see Step 8) |
 | Review & accept/reject bets | Admins (Jack, Daniel) |
 | Load gameweek fixtures | Admins |
 | Set odds | Admins |

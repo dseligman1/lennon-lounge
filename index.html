@@ -353,6 +353,141 @@
   .betmodal-close{background:var(--card2);border:1px solid var(--line);border-radius:10px;width:40px;height:40px;flex-shrink:0;font-size:16px;line-height:1;color:var(--muted);cursor:pointer;transition:border-color .15s,color .15s}
   .betmodal-close:hover{border-color:var(--pink);color:var(--pink)}
   .betmodal-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
+  /* ---------- Batch 29: Squad viewer (pitch view + fixture comparison) ---------- */
+  /* Exactly the #betModal/#betModalOverlay pattern above — fixed, outside #view, .open toggles
+     display + a scale transition — just wider (a pitch needs horizontal room, and compare mode
+     runs two of them side by side) and one z-index layer higher, so a squad opened from a team
+     name inside the bet detail modal sits on top of it rather than behind it. */
+  #squadModalOverlay{position:fixed;inset:0;z-index:71;background:rgba(0,0,0,.62);display:none}
+  #squadModalOverlay.open{display:block}
+  #squadModal{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.97);width:920px;max-width:94vw;max-height:90vh;overflow-y:auto;z-index:72;background:rgba(15,0,28,.98);backdrop-filter:blur(20px);border:1px solid var(--line);border-radius:20px;padding:22px;display:none;box-shadow:var(--shadow);transition:transform .15s}
+  #squadModal.open{display:block;transform:translate(-50%,-50%) scale(1)}
+  /* The pitch itself. Deliberately a dark, desaturated green tint rather than a bright turf
+     colour so it still reads as part of this app's glassmorphism rather than a pasted-in
+     graphic: a soft attacking-third glow at the top, faint mower stripes, and a green-black
+     base. Markings (goal box + centre circle) are pseudo-elements — pointer-events:none so
+     they can never swallow a tap on a player chip. */
+  .sq-pitch{position:relative;border:1px solid rgba(0,255,135,.16);border-radius:18px;padding:18px 12px 16px;overflow:hidden;
+    background:
+      radial-gradient(120% 76% at 50% -22%, rgba(0,255,135,.13), transparent 62%),
+      repeating-linear-gradient(180deg, rgba(255,255,255,.028) 0 34px, rgba(255,255,255,0) 34px 68px),
+      linear-gradient(180deg, rgba(0,58,32,.40), rgba(5,0,16,.62));}
+  .sq-pitch::before{content:'';position:absolute;top:-1px;left:50%;transform:translateX(-50%);width:min(48%,220px);height:54px;border:1.5px solid rgba(255,255,255,.11);border-top:none;border-radius:0 0 10px 10px;pointer-events:none}
+  .sq-pitch::after{content:'';position:absolute;bottom:-52px;left:50%;transform:translateX(-50%);width:150px;height:150px;border:1.5px solid rgba(255,255,255,.085);border-radius:50%;pointer-events:none}
+  .sq-rowwrap{position:relative;z-index:1;margin-bottom:13px}
+  .sq-rowwrap:last-child{margin-bottom:0}
+  .sq-rowlab{text-align:center;font-size:8.5px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;color:rgba(255,255,255,.28);margin-bottom:5px}
+  .sq-row{display:flex;justify-content:center;align-items:stretch;gap:7px;flex-wrap:wrap}
+  .sq-chip{position:relative;flex:1 1 80px;min-width:0;max-width:118px;background:rgba(6,0,16,.62);border:1px solid var(--line);border-radius:12px;padding:8px 5px 7px;text-align:center;transition:transform .13s,box-shadow .13s}
+  .sq-chip:hover{transform:translateY(-2px)}
+  .sq-chip .nm{font-weight:800;font-size:11.5px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sq-chip .club{font-size:8.5px;font-weight:800;letter-spacing:.7px;color:var(--muted);margin-top:2px;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sq-chip .sq-fx{font-size:8.5px;font-weight:800;letter-spacing:.4px;margin-top:2px;color:var(--muted);text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sq-chip .sq-fx.d1,.sq-chip .sq-fx.d2{color:var(--teal)}
+  .sq-chip .sq-fx.d3{color:var(--gold)}
+  .sq-chip .sq-fx.d4,.sq-chip .sq-fx.d5{color:var(--pink)}
+  .sq-meta{display:flex;justify-content:center;align-items:center;gap:5px;margin-top:6px;flex-wrap:wrap}
+  .sq-meta .fm{display:inline-block;padding:2px 6px;border-radius:8px;font-size:10px;font-weight:900;font-variant-numeric:tabular-nums;background:var(--card2);color:var(--muted)}
+  .sq-meta .tp{font-size:9.5px;font-weight:800;color:var(--muted);font-variant-numeric:tabular-nums}
+  /* Green→red form ramp. Same colour language as batch 30's formIndicator()/.formdot (--teal
+     hot, --pink cold) with --gold/--orange bridging the middle, so this reads as one continuous
+     app-wide "hot vs cold" vocabulary rather than a second competing one. Tints are kept low-
+     alpha over the near-black chip base so the white name text stays fully legible on the dark
+     theme; the saturated colour lives on the small .fm pill, which is where the eye goes. */
+  .sq-chip.f-hot{border-color:rgba(0,255,135,.5);background:linear-gradient(165deg,rgba(0,255,135,.14),rgba(6,0,16,.66))}
+  .sq-chip.f-hot .fm{background:rgba(0,255,135,.20);color:var(--teal)}
+  .sq-chip.f-warm{border-color:rgba(255,201,49,.45);background:linear-gradient(165deg,rgba(255,201,49,.12),rgba(6,0,16,.66))}
+  .sq-chip.f-warm .fm{background:rgba(255,201,49,.19);color:var(--gold)}
+  .sq-chip.f-mid{border-color:rgba(255,157,0,.42);background:linear-gradient(165deg,rgba(255,157,0,.11),rgba(6,0,16,.66))}
+  .sq-chip.f-mid .fm{background:rgba(255,157,0,.18);color:var(--orange)}
+  .sq-chip.f-cold{border-color:rgba(255,45,120,.42);background:linear-gradient(165deg,rgba(255,45,120,.11),rgba(6,0,16,.66))}
+  .sq-chip.f-cold .fm{background:rgba(255,45,120,.18);color:var(--pink)}
+  .sq-chip.f-none{opacity:.66}
+  .sq-chip.out{opacity:.55}
+  /* Bottom-left, not top-left: the row's position label (GK/DEF/…) sits directly above each
+     chip, and a top-anchored badge visually collided with it. The crown keeps the top-right. */
+  .sq-chip .sq-alert{position:absolute;bottom:4px;left:5px;font-size:10px;line-height:1;filter:drop-shadow(0 0 4px rgba(255,45,120,.9))}
+  /* Top scorer(s): gold border + glow + crown, and a slightly bigger name. Overrides the form
+     tint on the chip background but NOT the .fm pill, so both signals survive at a glance. */
+  .sq-chip.top{border-color:var(--gold);box-shadow:0 0 18px rgba(255,201,49,.3);background:linear-gradient(160deg,rgba(255,201,49,.22),rgba(6,0,16,.72))}
+  .sq-chip.top .nm{font-size:12.5px}
+  .sq-chip .crown{position:absolute;top:-10px;right:-6px;font-size:14px;line-height:1;filter:drop-shadow(0 0 6px rgba(255,201,49,.95))}
+  .sq-bench{margin-top:12px;padding-top:11px;border-top:1px dashed var(--line)}
+  .sq-bench .sq-chip{opacity:.72;padding:6px 5px 5px}
+  /* Single-squad mode centres its stats + pitch + fixture list in a column narrower than the
+     modal. Without this the pitch stretches the full ~900px on desktop and stops reading as a
+     pitch at all — the chips cap at 118px so the rows just float in a wide empty field. */
+  .sq-single{max-width:640px;margin:0 auto}
+  .sq-switch{display:flex;gap:6px;flex-wrap:wrap;margin-top:16px;padding-top:13px;border-top:1px solid var(--line)}
+  .sq-switch button{background:var(--card2);border:1px solid var(--line);color:var(--muted);border-radius:20px;padding:6px 12px;font-size:11.5px;font-weight:800;transition:all .13s}
+  .sq-switch button:hover{color:var(--text);border-color:var(--cyan)}
+  .sq-switch button.active{background:var(--grad);color:#00210f;border-color:transparent}
+  .sq-stats{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+  .sq-stat{background:rgba(0,0,0,.28);border:1px solid var(--line);border-radius:12px;padding:8px 12px;flex:1 1 96px;min-width:0}
+  .sq-stat .l{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.7px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sq-stat .v{font-size:17px;font-weight:900;margin-top:3px;font-variant-numeric:tabular-nums}
+  .sq-legend{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-top:12px;font-size:9.5px;color:var(--muted);font-weight:700}
+  .sq-legend i{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:4px;vertical-align:middle}
+  .sq-legend .fdr{font-size:9px;padding:2px 7px}
+  /* Fixture Difficulty Rating chip. Colour is driven ONLY by the numeric 1-5 rating the FPL API
+     returns for that fixture — no real-world team is ever named in the logic. 1-2 green, 3 amber,
+     4-5 red, neutral grey when there's no fixture/rating. */
+  .fdr{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:12px;font-size:10.5px;font-weight:900;letter-spacing:.5px;border:1px solid var(--line);background:var(--card2);color:var(--muted);white-space:nowrap}
+  .fdr b{font-size:11.5px}
+  .fdr.d1,.fdr.d2{background:rgba(0,255,135,.14);color:var(--teal);border-color:rgba(0,255,135,.42)}
+  .fdr.d3{background:rgba(255,201,49,.13);color:var(--gold);border-color:rgba(255,201,49,.40)}
+  .fdr.d4,.fdr.d5{background:rgba(255,45,120,.14);color:var(--pink);border-color:rgba(255,45,120,.45)}
+  .sq-compare{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
+  .sq-compare>div{min-width:0}
+  @media(max-width:760px){.sq-compare{grid-template-columns:1fr}}
+  .sq-side{border:1px solid var(--line);border-radius:18px;padding:13px;background:var(--card2)}
+  .sq-side.win{border-color:rgba(0,255,135,.35);box-shadow:0 0 20px rgba(0,255,135,.10)}
+  .sq-sidehead{margin-bottom:11px}
+  .sq-sidehead .nm{font-family:'Archivo Black','Inter',sans-serif;font-size:15px;line-height:1.2;letter-spacing:-.3px}
+  .sq-sidemeta{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:7px}
+  /* Compact variant used inside the side-by-side comparison — same component, smaller chips, so
+     two full pitches fit a desktop modal and each still fits a 375px phone once .sq-compare
+     stacks them at 760px. */
+  .sq-compact .sq-pitch{padding:13px 8px 11px}
+  .sq-compact .sq-rowwrap{margin-bottom:10px}
+  .sq-compact .sq-row{gap:5px}
+  .sq-compact .sq-chip{flex:1 1 58px;max-width:88px;padding:6px 4px 5px}
+  .sq-compact .sq-chip .nm{font-size:10px}
+  .sq-compact .sq-chip.top .nm{font-size:10.5px}
+  .sq-compact .sq-chip .club,.sq-compact .sq-chip .sq-fx{font-size:7.5px}
+  .sq-compact .sq-meta{margin-top:4px;gap:4px}
+  .sq-compact .sq-meta .fm{font-size:9px;padding:1px 5px}
+  .sq-compact .sq-meta .tp{font-size:8.5px}
+  .sq-fxlist{margin-top:12px;padding-top:10px;border-top:1px dashed var(--line)}
+  .sq-fxrow{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:11.5px;font-weight:700}
+  .sq-fxrow .sq-fxclub{min-width:54px;font-weight:900;letter-spacing:.4px}
+  .sq-fxrow .sq-fxopp{flex:1;min-width:0;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sq-fxrow .fdr{padding:2px 8px;font-size:10px}
+  /* Every team name in the app is now a click-through into that team's squad. Kept to a dotted
+     underline rather than a button so match rows / tables / bet cards read exactly as before. */
+  .teamlink{cursor:pointer;border-bottom:1px dotted rgba(255,255,255,.30);transition:color .13s,border-color .13s}
+  .teamlink:hover{color:var(--cyan);border-bottom-color:var(--cyan)}
+  .sq-cmpbtn{background:var(--card2);border:1px solid var(--line);color:var(--muted);border-radius:10px;padding:4px 9px;font-size:10px;font-weight:800;letter-spacing:.3px;margin-left:7px;vertical-align:middle;white-space:nowrap}
+  .sq-cmpbtn:hover{border-color:var(--violet);color:var(--violet)}
+  @media(max-width:480px){
+    #squadModal{padding:16px 12px;max-width:96vw}
+    .sq-chip{flex:1 1 60px;max-width:none}
+    .sq-chip .nm{font-size:10.5px}
+    .sq-chip.top .nm{font-size:11.5px}
+    .sq-row{gap:5px}
+    .sq-pitch{padding:15px 7px 13px}
+    /* 50px basis (not 54) so a 5-man DEF/MID row still fits on ONE line inside a compare column
+       on a 375px phone — a formation row that wraps to 4+1 stops reading as a formation. */
+    .sq-compact .sq-chip{flex:1 1 50px}
+    /* At that width the form pill + season points can't share one line, and wrapping them made
+       the chips ragged and uneven. In a side-by-side comparison on a phone, form and fixture
+       difficulty are what you're actually reading — season points stay in the tooltip and in the
+       full single-squad view. */
+    .sq-compact .sq-meta{flex-wrap:nowrap}
+    .sq-compact .sq-meta .tp{display:none}
+    /* 2x2 rather than 3+1 with a stranded full-width tile. */
+    .sq-stat{flex:1 1 calc(50% - 4px)}
+  }
   /* ---------- topbar ---------- */
   #topbar{position:sticky;top:0;z-index:40;background:rgba(11,0,20,.9);backdrop-filter:blur(18px);margin:0 -14px 18px;padding:8px 14px 0;border-bottom:1px solid var(--line)}
   #topbar header{position:static;background:transparent;border:none;margin:0 0 8px;padding:6px 2px;backdrop-filter:none}
@@ -520,6 +655,14 @@
 <div id="betModalOverlay" onclick="closeBetModal()"></div>
 <div id="betModal"><div id="betModalBody"></div></div>
 
+<!-- Batch 29: squad viewer modal — opened by clicking ANY team name in the app (vGwBoard match
+     rows, betCard(), standings tables, the form guide, the home mini-table), or in side-by-side
+     "compare" mode from a specific gameweek fixture's ⚔ Squads button. Same fixed/outside-#view
+     pattern as #betModal above so it survives render()'s innerHTML swap; renderSquadModal() is
+     called from render() while it's open so a background sync refreshes it in place. -->
+<div id="squadModalOverlay" onclick="closeSquadModal()"></div>
+<div id="squadModal"><div id="squadModalBody"></div></div>
+
 <!-- Batch 24: mobile nav drawer — flat list of every tab (same source as #topbar nav and
      #bottomNav's "More" detour), slides in from the left, dark-glass style matching
      #notifPanel/#notifOverlay's existing pattern. Content filled by renderNavDrawer(). -->
@@ -646,6 +789,10 @@ let sznSettleMktId = null;
 // gameweek `slip` array (season legs aren't tied to any gwId, and batch 27's settleSeasonBet()
 // assumes a season bet's legs are ALL type:'season', so we never let the two mix within one bet).
 let seasonSlip = [];
+// Batch 29: what the squad viewer modal is currently showing (null = closed).
+//   {mode:'single',  teamId, gwId}                 — one squad on the pitch
+//   {mode:'compare', teamId, teamB, gwId, matchId} — both sides of one gameweek fixture
+let squadModalState = null;
 let dbListener = null;
 let authPins = {};
 
@@ -659,7 +806,15 @@ function freshState() {
     teams: TEAMS.map(t => ({id:t.id, name:t.name, owner:t.owner, fplName:t.fplName, admin:t.admin})),
     stats: Object.fromEntries(TEAMS.map(t => [t.id, {base:t.base}])),
     gameweeks: [], bets: [], promos: [], chat: [], audit: [],
-    fpl: {leagueId:'', entryMap:{}, events:{}, lastSync:null, proxyUrl:''},
+    // Batch 29 added the squad-viewer fields to this node: `players` (player id → slimmed master
+    // data, ONLY the ~180 actually owned in this league), `plTeams` (real-life PL club id →
+    // {n,s}), `squads` (our teamId → array of ~15 owned player ids), `lineups` (our teamId →
+    // starting XI ids, optional — absent until a gameweek's picks are published), `plFixtures`
+    // (event → real-life fixtures with 1-5 difficulty ratings) and `squadEvent`/`squadSync`.
+    // All of it is written by the FPL Data Sync GitHub Action; see fplSyncSquads() below for the
+    // in-app partial equivalent and why FDR can't come from the browser.
+    fpl: {leagueId:'', entryMap:{}, events:{}, lastSync:null, proxyUrl:'',
+          players:{}, plTeams:{}, squads:{}, lineups:{}, plFixtures:{}, squadEvent:null, squadSync:null},
     history: [], fplFixtures: {},
     sim: {holdback:5, events:{}},
     // Batch 17: promotions/rewards system. Distinct from `promos` above (that's the older
@@ -729,6 +884,17 @@ function migrate(s) {
   if (!s.rewardGrants) s.rewardGrants = [];
   if (!s.fpl) s.fpl = {leagueId:'', entryMap:{}, events:{}, lastSync:null, proxyUrl:''};
   if (s.fpl && s.fpl.proxyUrl == null) s.fpl.proxyUrl = '';
+  // Batch 29: squad-viewer fields. Backfilled empty for any state saved before this batch (the
+  // UI has its own explicit "no squad data pulled yet" state, so empty is a valid resting
+  // position, not an error). The per-team squad/lineup lists are plain arrays of player ids and
+  // hit Firebase's usual array→{0:…,1:…} stringification on the way back, so they get the same
+  // toArr() treatment every other nested array in this function gets.
+  ['players','plTeams','squads','lineups','plFixtures'].forEach(k => { if (!s.fpl[k]) s.fpl[k] = {}; });
+  Object.keys(s.fpl.squads).forEach(tid => { s.fpl.squads[tid] = toArr(s.fpl.squads[tid]).map(Number).filter(n => !isNaN(n)); });
+  Object.keys(s.fpl.lineups).forEach(tid => { s.fpl.lineups[tid] = toArr(s.fpl.lineups[tid]).map(Number).filter(n => !isNaN(n)); });
+  Object.keys(s.fpl.plFixtures).forEach(ev => { s.fpl.plFixtures[ev] = toArr(s.fpl.plFixtures[ev]).filter(Boolean); });
+  if (s.fpl.squadEvent === undefined) s.fpl.squadEvent = null;
+  if (s.fpl.squadSync === undefined) s.fpl.squadSync = null;
   if (!s.fplFixtures) s.fplFixtures = {};
   if (!s.sim) s.sim = {holdback:5, events:{}};
   if (s.settings && s.settings.algoEdgePct == null) s.settings.algoEdgePct = 20;
@@ -910,6 +1076,7 @@ function logout() {
   if (bn) bn.style.display = 'none';
   closeNotifPanel();
   closeNavDrawer();
+  closeSquadModal();
 }
 
 /* ================================================================
@@ -1988,6 +2155,12 @@ function vBuilder(){
   return `<div class="grid2"><div>
     <h2>Bet Builder</h2>
     <div class="sub">Pick your spots, stack your legs, back yourself.</div>
+    <!-- Batch 29: page-level way into the squad viewer, so it's reachable from the Bet Builder
+         generally and not only via a specific match row's ⚔ Squads button. Opens on the
+         viewer's own team; the modal's own switcher covers the other 11. -->
+    <div class="quickrow" style="margin:0 0 14px">
+      <button class="btn secondary small" onclick="openSquadModal('${me.id}')">👥 Squads &amp; fixture difficulty</button>
+    </div>
     <div class="sectabs">
       <button class="${builderSec==='pre'?'active':''}" onclick="builderSec='pre';render()">📅 Pre-match<span class="cnt">${pre.length}</span></button>
       <button class="${builderSec==='inplay'?'active':''}" onclick="builderSec='inplay';render()">🔴 In-Play</button>
@@ -2060,7 +2233,7 @@ function vGwBoard(g,openByDefault,mode){
       };
       const liveScore=inplay&&m.result?`<span class="livechip" style="animation:none">${m.result.homePts??0}–${m.result.awayPts??0}</span>`:'';
       return `<div class="match${inplay||upcoming?' soon':''}">
-        <div class="names">${esc(team(m.home).name)}${formDot(m.home)}<span class="vs">v</span>${esc(team(m.away).name)}${formDot(m.away)} ${liveScore}</div>
+        <div class="names">${teamLink(m.home)}${formDot(m.home)}<span class="vs">v</span>${teamLink(m.away)}${formDot(m.away)} ${liveScore}${squadCompareBtn(g.id,m.id)}</div>
         <div class="oddsbtns">${btn('home','HOME')}${btn('draw','DRAW')}${btn('away','AWAY')}</div>
       </div>`;
     }).join('')||'<p class="muted">Fixtures coming soon.</p>'}
@@ -2324,7 +2497,7 @@ function betCard(b,perspective){
     ?`<span class="muted">Raw odds<b class="mono">${fmtOdds(b.legs.reduce((a,l)=>a*l.odds,1))}</b></span>`:'';
   return `<div class="bet ${needsMe?'needsme':''}">
     <div class="top">
-      <div><b>${esc(team(b.teamId).name)}</b> <span class="muted small">· ${esc(seasonBet?'🏆 Season':(g?g.name:'?'))} · ${b.legs.length===1?'Single':b.legs.length+'-leg Acca'}${b.algo?' · ⚡Algo':''}</span>
+      <div><b>${teamLink(b.teamId, team(b.teamId)?team(b.teamId).name:'?')}</b> <span class="muted small">· ${esc(seasonBet?'🏆 Season':(g?g.name:'?'))} · ${b.legs.length===1?'Single':b.legs.length+'-leg Acca'}${b.algo?' · ⚡Algo':''}</span>
         ${b.inplay?'<span class="flag late">🔴 IN-PLAY</span>':''}
         ${b.afterCutoff?'<span class="flag late">AFTER CUTOFF</span>':''}
         ${b.boostPct?`<span class="flag limit">🚀 +${b.boostPct}% BOOST</span>`:''}
@@ -2465,12 +2638,12 @@ function vStandings(){
     <h3>💷 Money table</h3>
     <p class="muted small">Settled bets only. Green = the house owes you. Pink = pay up.</p>
     <div style="overflow-x:auto"><table><tr><th>#</th><th>Team</th><th style="text-align:right">P&L</th></tr>
-    ${rows.map((r,i)=>`<tr><td>${i+1}</td><td><b>${esc(r.t.name)}</b> <span class="muted small">${esc(r.t.owner)}</span></td><td style="text-align:right" class="mono ${r.p>0?'pos':r.p<0?'neg':''}">${GBP(r.p)}</td></tr>`).join('')}
+    ${rows.map((r,i)=>`<tr><td>${i+1}</td><td><b>${teamLink(r.t.id)}</b> <span class="muted small">${esc(r.t.owner)}</span></td><td style="text-align:right" class="mono ${r.p>0?'pos':r.p<0?'neg':''}">${GBP(r.p)}</td></tr>`).join('')}
     <tr><td></td><td><b>🏠 The House</b> <span class="muted small">Dan & Jack</span></td><td style="text-align:right" class="mono ${house>0?'pos':house<0?'neg':''}">${GBP(house)}</td></tr></table></div>
   </div>
   <div class="card"><h3>⚽ FPL League table</h3>
     <div style="overflow-x:auto"><table><tr><th>#</th><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>PF</th><th>Pts</th></tr>
-    ${ltRows.map((r,i)=>`<tr><td>${i+1}</td><td><b>${esc(r.t.name)}</b></td><td>${r.p}</td><td>${r.w}</td><td>${r.d}</td><td>${r.l}</td><td>${r.pf}</td><td><b>${r.pts}</b></td></tr>`).join('')}</table></div>
+    ${ltRows.map((r,i)=>`<tr><td>${i+1}</td><td><b>${teamLink(r.t.id)}</b>${formDot(r.t.id)}</td><td>${r.p}</td><td>${r.w}</td><td>${r.d}</td><td>${r.l}</td><td>${r.pf}</td><td><b>${r.pts}</b></td></tr>`).join('')}</table></div>
   </div>`;
 }
 
@@ -2672,7 +2845,7 @@ function formGuideCard(n=5){
       const strip=r.f.games.map(gm=>`<span class="pill ${gm.res==='W'?'st-won':gm.res==='L'?'st-lost':'st-void'}" style="padding:2px 8px;font-size:9px;margin-right:2px">${gm.res}</span>`).join('');
       const trendTxt=r.f.games.length<2?'—':(r.f.trendDiff>=0?'+':'')+r.f.trendDiff.toFixed(1)+' pts';
       const trendCls=r.f.trendDiff>3?'pos':r.f.trendDiff<-3?'neg':'';
-      return `<tr><td><b>${esc(r.t.name)}</b>${ind?`<span class="formdot ${ind}" title="${ind==='hot'?'In form':'Out of form'}"></span>`:''}</td>
+      return `<tr><td><b>${teamLink(r.t.id)}</b>${ind?`<span class="formdot ${ind}" title="${ind==='hot'?'In form':'Out of form'}"></span>`:''}</td>
       <td>${strip}</td>
       <td style="text-align:right" class="mono ${trendCls}">${trendTxt}</td></tr>`;
     }).join('')}
@@ -2817,6 +2990,311 @@ function liveBetTable(feed,totalCount){
    perspective 'player' (only shows accept/decline/counter/cancel/message when it's their own
    bet, same as My Bets — no-op display otherwise). On top of betCard's own actions we add:
    admins get a shortcut into Bet Review; non-admins get "place duplicate bet". */
+/* ================================================================
+   BATCH 29 — SQUAD VIEWER
+   Reads S.fpl.players / .plTeams / .squads / .lineups / .plFixtures (all written by the FPL
+   Data Sync GitHub Action, or partially by fplSyncSquads() in-app — see the FPL SYNC section).
+   Everything here is a pure read of that cached data: no fetching, no state mutation.
+   ================================================================ */
+const FPL_POS = {1:'GK', 2:'DEF', 3:'MID', 4:'FWD'};
+
+function fplPlayers(){ return (S && S.fpl && S.fpl.players) || {}; }
+function plTeam(id){ const m=(S&&S.fpl&&S.fpl.plTeams)||{}; return m[id]||m[String(id)]||null; }
+function plTeamShort(id){ const t=plTeam(id); return t&&t.s?t.s:'???'; }
+function plTeamName(id){ const t=plTeam(id); return t&&t.n?t.n:'Unknown club'; }
+function squadIds(teamId){ const s=((S&&S.fpl&&S.fpl.squads)||{})[teamId]; return Array.isArray(s)?s:(s?Object.values(s):[]); }
+function lineupIds(teamId){ const l=((S&&S.fpl&&S.fpl.lineups)||{})[teamId]; return Array.isArray(l)?l:(l?Object.values(l):[]); }
+function hasSquadData(){ return Object.keys(fplPlayers()).length>0 && Object.keys((S&&S.fpl&&S.fpl.squads)||{}).length>0; }
+
+// Which real-life gameweek the squad/fixture view should be showing. A specific gameweek always
+// wins (that's the whole point of opening this from a fixture); otherwise fall back to whatever
+// event the last sync was focused on, then to the earliest event that still has an unplayed
+// fixture, then to the last event we know about at all.
+function squadFocusEvent(gwId){
+  if(gwId){ const g=gw(gwId); if(g&&g.event) return g.event; }
+  if(S.fpl&&S.fpl.squadEvent) return S.fpl.squadEvent;
+  const fx=(S.fpl&&S.fpl.plFixtures)||{};
+  const evs=Object.keys(fx).map(Number).filter(n=>!isNaN(n)).sort((a,b)=>a-b);
+  const now=Date.now();
+  for(const ev of evs){ if(plFixturesFor(ev).some(f=>!f.k||f.k>now)) return ev; }
+  return evs.length?evs[evs.length-1]:null;
+}
+function plFixturesFor(ev){
+  const fx=((S&&S.fpl&&S.fpl.plFixtures)||{})[ev];
+  return Array.isArray(fx)?fx:(fx?Object.values(fx):[]);
+}
+// A real-life club's fixture in a given gameweek. Blank gameweeks (no fixture) and double
+// gameweeks (two) are both normal in the PL calendar, so this returns null for a blank and
+// reports `count` for a double rather than pretending every club plays exactly once.
+function clubFixture(plTeamId, ev){
+  if(!plTeamId||!ev) return null;
+  const list=plFixturesFor(ev).filter(f=>f&&(f.h===plTeamId||f.a===plTeamId));
+  if(!list.length) return null;
+  const f=list[0], home=f.h===plTeamId, oppId=home?f.a:f.h;
+  return {home, oppId, oppShort:plTeamShort(oppId), oppName:plTeamName(oppId),
+          fdr:Number(home?f.hd:f.ad)||0, count:list.length, k:f.k||null};
+}
+// FDR colour, driven ONLY by the numeric 1-5 rating the FPL API returns for that fixture — no
+// real-world club is named anywhere in this logic. Green 1-2 (easy), amber 3, red 4-5 (tough).
+function fdrClass(d){ const n=Math.round(Number(d)||0); return (n>=1&&n<=5)?('d'+n):''; }
+function fdrLabel(d){ const n=Math.round(Number(d)||0); return n<=2?'kind':(n===3?'even':'tough'); }
+function fdrChip(fx){
+  if(!fx) return `<span class="fdr" title="Blank gameweek — this club has no fixture">BLANK</span>`;
+  const title=`${fx.oppName} ${fx.home?'at home':'away'} — difficulty ${fx.fdr||'?'}/5 (${fdrLabel(fx.fdr)})`
+    +(fx.count>1?` · double gameweek (${fx.count} fixtures)`:'');
+  return `<span class="fdr ${fdrClass(fx.fdr)}" title="${esc(title)}">${fx.home?'v':'@'} ${esc(fx.oppShort)}${fx.fdr?` <b>${fx.fdr}</b>`:''}${fx.count>1?' ×'+fx.count:''}</span>`;
+}
+// Green→red form ramp. FPL's `form` field is a player's average points per game over the last
+// 30 days (roughly a 0-10 range), so these buckets are calibrated to that, not to a 0-1 scale.
+// Colour language is deliberately batch 30's: --teal hot ... --pink cold, with --gold/--orange
+// bridging the middle so this and formIndicator()/.formdot speak the same visual language.
+function formClass(f){
+  const n=Number(f)||0;
+  if(n<=0) return 'f-none';
+  if(n>=5) return 'f-hot';
+  if(n>=3.5) return 'f-warm';
+  if(n>=2) return 'f-mid';
+  return 'f-cold';
+}
+// Joins a manager's owned player ids to their master data + this gameweek's real-life fixture.
+// `starter` is true/false when a published lineup is known for that team, null when it isn't
+// (pre-gameweek, or the picks endpoint had nothing) — callers treat null as "put them on the
+// pitch", so a squad with no lineup data still renders as a full 15-man formation.
+function squadPlayers(teamId, ev){
+  const P=fplPlayers();
+  const start=new Set(lineupIds(teamId));
+  return squadIds(teamId).map(id=>{
+    const p=P[id]||P[String(id)];
+    if(!p) return null;
+    const club=Number(p.t)||0;
+    return {id:Number(id), name:p.n||'?', pos:Number(p.p)||0, posName:FPL_POS[Number(p.p)]||'?',
+            club, form:Number(p.f)||0, pts:Number(p.tp)||0, ep:Number(p.ep)||0, status:p.st||'a',
+            starter: start.size ? start.has(Number(id)) : null,
+            fx: clubFixture(club, ev)};
+  }).filter(Boolean);
+}
+// Squad-level roll-up. avgFdr is the mean fixture difficulty across the players who'll actually
+// be on the pitch — that's the number the side-by-side comparison leads with ("who's got the
+// kinder week"). Blank gameweeks are excluded from the mean rather than scored as 0 (a 0 would
+// drag an average toward "easy", which is the opposite of what a blank means) and counted
+// separately so the UI can say so out loud.
+function squadSummary(teamId, ev){
+  const players=squadPlayers(teamId, ev);
+  const pool=players.filter(p=>p.starter!==false);
+  const withFx=pool.filter(p=>p.fx&&p.fx.fdr);
+  return {
+    players, count:players.length,
+    avgFdr: withFx.length?withFx.reduce((s,p)=>s+p.fx.fdr,0)/withFx.length:0,
+    totalPts: players.reduce((s,p)=>s+p.pts,0),
+    avgForm: players.length?players.reduce((s,p)=>s+p.form,0)/players.length:0,
+    blanks: pool.filter(p=>!p.fx).length,
+    doubles: pool.filter(p=>p.fx&&p.fx.count>1).length,
+    flagged: players.filter(p=>p.status&&p.status!=='a').length
+  };
+}
+// "Who's carrying this team" — the highest season points total gets the gold crown, and a second
+// player only joins them if it's genuinely close (within 15%), so a squad with one obvious
+// talisman lights up exactly one chip rather than diluting the signal.
+function squadTopScorers(players){
+  const sorted=players.filter(p=>p.pts>0).sort((a,b)=>b.pts-a.pts);
+  if(!sorted.length) return new Set();
+  const top=new Set([sorted[0].id]);
+  if(sorted[1]&&sorted[1].pts>=sorted[0].pts*0.85) top.add(sorted[1].id);
+  return top;
+}
+function squadChip(p, tops, opts){
+  opts=opts||{};
+  const isTop=tops.has(p.id), unavailable=!!(p.status&&p.status!=='a');
+  const cls='sq-chip '+formClass(p.form)+(isTop?' top':'')+(unavailable?' out':'');
+  const sub = opts.showFixture
+    ? (p.fx ? `<div class="sq-fx ${fdrClass(p.fx.fdr)}">${p.fx.home?'v':'@'} ${esc(p.fx.oppShort)}${p.fx.fdr?' · '+p.fx.fdr:''}</div>`
+            : `<div class="sq-fx">blank gw</div>`)
+    : `<div class="club">${esc(plTeamShort(p.club))}</div>`;
+  const title=`${p.name} — ${p.posName}, ${plTeamName(p.club)} · form ${p.form.toFixed(1)} · ${p.pts} pts this season`
+    +(p.fx?` · ${p.fx.home?'home to':'away at'} ${p.fx.oppName} (difficulty ${p.fx.fdr||'?'}/5)`:' · no fixture this gameweek')
+    +(isTop?' · 👑 top scorer':'')+(unavailable?' · ⚠ doubtful or unavailable':'');
+  return `<div class="${cls}" title="${esc(title)}">${isTop?'<span class="crown">👑</span>':''}${unavailable?'<span class="sq-alert">⚠</span>':''}
+    <div class="nm">${esc(p.name)}</div>${sub}
+    <div class="sq-meta"><span class="fm">${p.form.toFixed(1)}</span><span class="tp">${p.pts}pt</span></div>
+  </div>`;
+}
+// The actual pitch: GK at the back, then DEF / MID / FWD rows centred beneath, plus a bench
+// strip below the pitch when a published lineup tells us who's actually starting. Within each
+// row players are ordered by season points so the crowned talisman sits nearest the middle.
+function squadPitch(teamId, ev, opts){
+  opts=opts||{};
+  const sum=squadSummary(teamId, ev);
+  if(!sum.count) return '';
+  const tops=squadTopScorers(sum.players);
+  const onPitch=sum.players.filter(p=>p.starter!==false);
+  const bench=sum.players.filter(p=>p.starter===false).sort((a,b)=>a.pos-b.pos||b.pts-a.pts);
+  const row=pos=>{
+    const list=onPitch.filter(p=>p.pos===pos).sort((a,b)=>b.pts-a.pts);
+    if(!list.length) return '';
+    return `<div class="sq-rowwrap"><div class="sq-rowlab">${FPL_POS[pos]}</div>
+      <div class="sq-row">${list.map(p=>squadChip(p,tops,opts)).join('')}</div></div>`;
+  };
+  const unknownPos=onPitch.filter(p=>!FPL_POS[p.pos]);
+  return `<div class="sq-pitch">${[1,2,3,4].map(row).join('')}
+    ${unknownPos.length?`<div class="sq-rowwrap"><div class="sq-rowlab">Other</div><div class="sq-row">${unknownPos.map(p=>squadChip(p,tops,opts)).join('')}</div></div>`:''}</div>
+    ${bench.length?`<div class="sq-bench"><div class="sq-rowlab">Bench</div><div class="sq-row">${bench.map(p=>squadChip(p,tops,opts)).join('')}</div></div>`:''}`;
+}
+// Which real-life clubs a manager is exposed to this gameweek, one row per club, with that
+// club's opponent and FDR chip — the "who are they actually playing" half of the comparison.
+function squadFixtureList(teamId, ev){
+  const sum=squadSummary(teamId, ev);
+  const byClub={};
+  sum.players.filter(p=>p.starter!==false).forEach(p=>{
+    if(!byClub[p.club]) byClub[p.club]={club:p.club, fx:p.fx, n:0};
+    byClub[p.club].n++;
+  });
+  const rows=Object.values(byClub).sort((a,b)=>(a.fx?a.fx.fdr||9:9)-(b.fx?b.fx.fdr||9:9)||b.n-a.n);
+  if(!rows.length) return '';
+  return `<div class="sq-fxlist"><div class="sq-rowlab" style="text-align:left;margin-bottom:6px">Their real-life fixtures</div>
+    ${rows.map(r=>`<div class="sq-fxrow">
+      <span class="sq-fxclub">${esc(plTeamShort(r.club))}<span class="muted" style="font-weight:700"> ×${r.n}</span></span>
+      <span class="sq-fxopp">${r.fx?esc((r.fx.home?'v ':'away at ')+r.fx.oppName):'no fixture'}</span>
+      ${r.fx?`<span class="fdr ${fdrClass(r.fx.fdr)}" title="Difficulty ${r.fx.fdr||'?'}/5 — ${fdrLabel(r.fx.fdr)}"><b>${r.fx.fdr||'?'}</b></span>`:'<span class="fdr">BLANK</span>'}
+    </div>`).join('')}</div>`;
+}
+function squadLegend(){
+  return `<div class="sq-legend">
+    <span><i style="background:var(--teal)"></i>Hot form</span>
+    <span><i style="background:var(--gold)"></i>Warm</span>
+    <span><i style="background:var(--orange)"></i>Cooling</span>
+    <span><i style="background:var(--pink)"></i>Cold</span>
+    <span>👑 Top scorer</span><span>⚠ Doubtful</span>
+    <span class="fdr d1">FDR 1-2 kind</span><span class="fdr d3">3</span><span class="fdr d5">4-5 tough</span>
+  </div>`;
+}
+function squadEmptyState(){
+  return `<div class="helpbox" style="margin:0">
+    <b>No squad data pulled yet.</b> Player squads come from the FPL Draft API and fixture
+    difficulty from the classic FPL API — a browser can't reach the second one at all, so both
+    are pulled server-side by the <b>FPL Data Sync</b> GitHub Action.
+    ${me&&me.admin
+      ? `Run it from <a style="color:var(--cyan)" href="https://github.com/dseligman1/lennon-lounge/actions/workflows/fpl-sync.yml" target="_blank">Actions → FPL Data Sync → Run workflow</a>, wait ~20 seconds, and this fills in by itself.`
+      : `Give Dan or Jack a nudge to run it.`}
+  </div>`;
+}
+function openSquadModal(teamId, gwId){
+  if(!S||!me||!team(teamId)) return;
+  squadModalState={mode:'single', teamId, gwId:gwId||null};
+  renderSquadModal();
+}
+// Side-by-side mode, opened from one specific gameweek fixture (the ⚔ Squads button on a
+// vGwBoard match row) — deliberately the same #squadModal, just a different body, so there's
+// only ever one squad-modal open/close mechanism to reason about.
+function openSquadCompare(gwId, matchId){
+  const g=gw(gwId); if(!g) return;
+  const m=(g.matches||[]).find(x=>x.id===matchId); if(!m||!m.home||!m.away) return;
+  squadModalState={mode:'compare', teamId:m.home, teamB:m.away, gwId, matchId};
+  renderSquadModal();
+}
+function closeSquadModal(){
+  squadModalState=null;
+  const panel=document.getElementById('squadModal'), overlay=document.getElementById('squadModalOverlay');
+  if(panel) panel.classList.remove('open');
+  if(overlay) overlay.classList.remove('open');
+}
+function squadSwitchTeam(teamId){
+  if(!squadModalState) return openSquadModal(teamId);
+  squadModalState={mode:'single', teamId, gwId:squadModalState.gwId||null};
+  renderSquadModal();
+}
+function renderSquadModal(){
+  const panel=document.getElementById('squadModal'), overlay=document.getElementById('squadModalOverlay'), body=document.getElementById('squadModalBody');
+  if(!panel||!overlay||!body) return;
+  const st=squadModalState;
+  if(!st){ panel.classList.remove('open'); overlay.classList.remove('open'); return; }
+  body.innerHTML = st.mode==='compare' ? squadCompareBody(st) : squadSingleBody(st);
+  panel.classList.add('open'); overlay.classList.add('open');
+}
+function squadTeamSwitcher(activeId){
+  return `<div class="sq-switch">${S.teams.map(t=>
+    `<button class="${t.id===activeId?'active':''}" onclick="squadSwitchTeam('${t.id}')">${esc(t.name)}</button>`).join('')}</div>`;
+}
+function squadSingleBody(st){
+  const t=team(st.teamId);
+  const ev=squadFocusEvent(st.gwId);
+  const evLabel=ev?('GW '+ev):'—';
+  const sum=hasSquadData()?squadSummary(st.teamId, ev):null;
+  const notes=[];
+  if(sum){
+    if(sum.blanks) notes.push(sum.blanks+' player'+(sum.blanks===1?'':'s')+' blank this week');
+    if(sum.doubles) notes.push(sum.doubles+' on a double');
+    if(sum.flagged) notes.push('⚠ '+sum.flagged+' doubtful');
+  }
+  return `<div class="betmodal-head">
+    <div><h3 style="margin:0">👥 ${esc(t?t.name:'?')}</h3>
+      <div class="muted small">${esc(t?t.owner:'')} · squad on the pitch · ${esc(evLabel)} fixtures</div></div>
+    <button class="betmodal-close" onclick="closeSquadModal()">✕</button>
+  </div>
+  ${(!sum||!sum.count)?squadEmptyState():`
+  <div class="sq-single">
+    <div class="sq-stats">
+      <div class="sq-stat"><div class="l">Squad points</div><div class="v mono">${sum.totalPts}</div></div>
+      <div class="sq-stat"><div class="l">Avg form</div><div class="v mono ${sum.avgForm>=4?'pos':sum.avgForm<2?'neg':''}">${sum.avgForm.toFixed(1)}</div></div>
+      <div class="sq-stat"><div class="l">Avg FDR</div><div class="v">${sum.avgFdr?`<span class="fdr ${fdrClass(sum.avgFdr)}">${sum.avgFdr.toFixed(1)}<span style="font-weight:800;opacity:.75"> ${fdrLabel(sum.avgFdr)}</span></span>`:'<span class="fdr">—</span>'}</div></div>
+      <div class="sq-stat"><div class="l">Players</div><div class="v mono">${sum.count}</div></div>
+    </div>
+    ${notes.length?`<p class="muted small" style="margin:-4px 0 10px">${esc(notes.join(' · '))}</p>`:''}
+    ${squadPitch(st.teamId, ev, {showFixture:true})}
+    ${squadFixtureList(st.teamId, ev)}
+    ${squadLegend()}
+  </div>`}
+  ${squadTeamSwitcher(st.teamId)}`;
+}
+function squadCompareBody(st){
+  const g=st.gwId?gw(st.gwId):null;
+  const ev=squadFocusEvent(st.gwId);
+  const evLabel=ev?('GW '+ev):(g?g.name:'—');
+  const ready=hasSquadData();
+  const sums=ready?{[st.teamId]:squadSummary(st.teamId,ev), [st.teamB]:squadSummary(st.teamB,ev)}:null;
+  // Lower average difficulty = the kinder week. Only called when both sides actually have a
+  // rated fixture, so a blank/unsynced side never wins by default.
+  const easier = (sums&&sums[st.teamId].avgFdr&&sums[st.teamB].avgFdr)
+    ? (sums[st.teamId].avgFdr<sums[st.teamB].avgFdr?st.teamId:(sums[st.teamB].avgFdr<sums[st.teamId].avgFdr?st.teamB:null))
+    : null;
+  const side=tid=>{
+    const t=team(tid), s=sums[tid];
+    return `<div class="sq-side sq-compact${easier===tid?' win':''}">
+      <div class="sq-sidehead">
+        <div class="nm teamlink" onclick="squadSwitchTeam('${tid}')" title="Open ${esc(t?t.name:'')}'s full squad">${esc(t?t.name:'?')}</div>
+        <div class="sq-sidemeta">
+          ${s.avgFdr?`<span class="fdr ${fdrClass(s.avgFdr)}" title="Average fixture difficulty across this squad's real-life fixtures this gameweek">FDR <b>${s.avgFdr.toFixed(1)}</b> ${fdrLabel(s.avgFdr)}</span>`:'<span class="fdr">FDR —</span>'}
+          <span class="muted small">${s.totalPts} pts · form ${s.avgForm.toFixed(1)}</span>
+          ${easier===tid?'<span class="pill st-accepted">Kinder week</span>':''}
+        </div>
+      </div>
+      ${s.count?squadPitch(tid, ev, {showFixture:true}):'<p class="muted small">No squad synced for this team.</p>'}
+      ${s.count?squadFixtureList(tid, ev):''}
+    </div>`;
+  };
+  const a=team(st.teamId), b=team(st.teamB);
+  return `<div class="betmodal-head">
+    <div><h3 style="margin:0">⚔️ ${esc(a?a.name:'?')} <span class="muted" style="font-weight:600">v</span> ${esc(b?b.name:'?')}</h3>
+      <div class="muted small">Squad comparison · ${esc(g?g.name:evLabel)}${ev?' · '+esc(evLabel)+' real-life fixtures':''}</div></div>
+    <button class="betmodal-close" onclick="closeSquadModal()">✕</button>
+  </div>
+  ${!ready?squadEmptyState():`
+    ${easier?`<p class="muted small" style="margin-bottom:10px">🟢 <b>${esc(team(easier)?team(easier).name:'')}</b> has the kinder run of real-life fixtures this gameweek (lower average difficulty across their pitch).</p>`:''}
+    <div class="sq-compare"><div>${side(st.teamId)}</div><div>${side(st.teamB)}</div></div>
+    ${squadLegend()}
+  `}`;
+}
+// A team name rendered as a click-through into that team's squad. Used everywhere a team name
+// used to be a static esc()'d label. stopPropagation() is baked in because several call sites
+// sit inside an already-clickable card (e.g. the home page's standings card).
+function teamLink(teamId, label){
+  const t=team(teamId);
+  const nm=label!=null?label:(t?t.name:'?');
+  return `<span class="teamlink" onclick="event.stopPropagation();openSquadModal('${teamId}')" title="View ${esc(t?t.name:'this team')}'s squad">${esc(nm)}</span>`;
+}
+function squadCompareBtn(gwId, matchId){
+  return `<button class="sq-cmpbtn" onclick="event.stopPropagation();openSquadCompare('${gwId}','${matchId}')" title="Compare both squads side by side, with this week's fixture difficulty">⚔ Squads</button>`;
+}
+
 function openBetModal(id){
   if(!getBet(id)) return;
   openBetModalId=id;
@@ -2938,6 +3416,7 @@ function vHome(){
     <button class="btn hot" onclick="go('builder');setTimeout(spinAlgo,80)">🎰 Spin The Algo</button>
     <button class="btn ${na?'gold':'secondary'}" onclick="go('mybets')">🧾 My Bets${na?' · '+na+' need action 🚨':''}</button>
     <button class="btn secondary" onclick="go('results')">🏆 Results</button>
+    <button class="btn secondary" onclick="openSquadModal('${me.id}')">👥 Squads</button>
   </div>
   ${liveBetTable(feed, S.bets.length)}
   <div class="homegrid">
@@ -2957,7 +3436,7 @@ function vHome(){
     <div class="card clickable" onclick="myBetsSec='auto';go('mybets')" title="Go to My Bets"><h3>📊 Your form</h3><p style="font-size:13.5px;line-height:1.65">${settled.length===0?'No settled bets yet — get involved!':w+' wins from '+settled.length+' settled bets. Current P&L: '+GBP(myP)+'.'}</p></div>
     <div class="card clickable" onclick="resultsSec='feed';go('results')" title="Go to Bet Results"><h3>📡 League pulse</h3><p style="font-size:13.5px;line-height:1.65">${S.bets.length===0?'No bets placed yet — quiet lounge!':''+S.bets.length+' bets placed across the league. House is '+GBP(house)+' on the season.'}</p></div>
     <div class="card clickable" onclick="resultsSec='standings';go('results')" title="Go to full standings"><h3>💷 Standings</h3>
-      <div style="overflow-x:auto"><table>${rows.slice(0,6).map((r,i)=>`<tr><td>${i+1}</td><td><b>${esc(r.t.name)}</b></td><td style="text-align:right" class="mono ${r.p>0?'pos':r.p<0?'neg':''}">${GBP(r.p)}</td></tr>`).join('')}</table></div>
+      <div style="overflow-x:auto"><table>${rows.slice(0,6).map((r,i)=>`<tr><td>${i+1}</td><td><b>${teamLink(r.t.id)}</b></td><td style="text-align:right" class="mono ${r.p>0?'pos':r.p<0?'neg':''}">${GBP(r.p)}</td></tr>`).join('')}</table></div>
       <button class="btn ghost small" style="margin-top:10px" onclick="event.stopPropagation();resultsSec='standings';go('results')">Full standings →</button>
     </div>
     <div class="card" style="grid-column:1/-1"><h3 class="hg-toggle" onclick="homeChatExpanded=!homeChatExpanded;render()" title="${homeChatExpanded?'Show fewer messages':'Show more chat history'}">💬 The Lounge chat <span class="card-hint">${homeChatExpanded?'▴ show fewer':'▾ show more'}</span></h3>
@@ -4472,6 +4951,14 @@ function vOffice(){
       <button class="btn big gold" onclick="syncAndStage()">⟳ Sync &amp; stage gameweeks</button>
     </div>
     <span class="muted small">Last sync: ${S.fpl.lastSync?fmtDT(S.fpl.lastSync):'never'} · ${S.history.length} result(s) in form model · ${Object.keys(S.fplFixtures).length} gameweek(s) with fixtures pulled</span>
+    <hr class="hr">
+    <p><b>👥 Squads &amp; fixture difficulty</b> <span class="muted small">— powers the squad viewer players see when they click any team name. Separate from the button above because it's a different data set on a different cadence (squads move on waivers and trades, not when results land).</span></p>
+    <p class="muted small">Fixture Difficulty Ratings only exist on the <i>classic</i> FPL API, which a browser can't reach and the optional Cloudflare Worker proxy doesn't cover — so the <b>GitHub Action pulls everything, FDR included, with no extra setup</b>. The in-app button below gets squads + player form but will usually skip FDR. See SETUP.md Step 8.</p>
+    <div class="actions">
+      <a class="btn secondary small" href="https://github.com/dseligman1/lennon-lounge/actions/workflows/fpl-sync.yml" target="_blank">▶ Run FPL Data Sync (squads + FDR) →</a>
+      <button class="btn secondary small" onclick="fplSyncSquads()">👥 Pull squads in-app (no FDR)</button>
+    </div>
+    <div class="muted small" style="margin-top:8px">Last squad pull: ${S.fpl.squadSync?fmtDT(S.fpl.squadSync):'never'} · ${Object.keys((S.fpl.squads)||{}).length} squad(s) · ${Object.keys((S.fpl.players)||{}).length} player(s) · FDR for ${Object.keys((S.fpl.plFixtures)||{}).length} gameweek(s)${S.fpl.squadEvent?' · focus GW '+S.fpl.squadEvent:''}</div>
     <div id="fplFallback" style="display:none">
       <hr class="hr">
       <p class="muted small">Your browser can't reach the FPL API directly (CORS) and no proxy is set below, so this staged from whatever was already synced. For fresher data first: <a style="color:var(--cyan)" href="https://github.com/dseligman1/lennon-lounge/actions/workflows/fpl-sync.yml" target="_blank">run the GitHub Action</a> (Run workflow → confirm), then click Sync &amp; stage again — or set up the proxy below so this button does the whole thing itself. Last-resort manual fallback: open your <a style="color:var(--cyan)" href="https://draft.premierleague.com/api/league/${esc(S.fpl.leagueId||'YOUR_ID')}/details" target="_blank">league details JSON</a>, copy all, paste here:</p>
@@ -4492,7 +4979,7 @@ function vOffice(){
   <div class="card">
     <h3>💳 P&L breakdown</h3>
     <div style="overflow-x:auto"><table><tr><th>#</th><th>Team</th><th style="text-align:right">P&L</th></tr>
-    ${S.teams.map(t=>({t,p:pnl[t.id]||0})).sort((a,b)=>b.p-a.p).map((r,i)=>`<tr><td>${i+1}</td><td><b>${esc(r.t.name)}</b> <span class="muted small">${esc(r.t.owner)}</span></td><td style="text-align:right" class="mono ${r.p>0?'pos':r.p<0?'neg':''}">${GBP(r.p)}</td></tr>`).join('')}
+    ${S.teams.map(t=>({t,p:pnl[t.id]||0})).sort((a,b)=>b.p-a.p).map((r,i)=>`<tr><td>${i+1}</td><td><b>${teamLink(r.t.id)}</b> <span class="muted small">${esc(r.t.owner)}</span></td><td style="text-align:right" class="mono ${r.p>0?'pos':r.p<0?'neg':''}">${GBP(r.p)}</td></tr>`).join('')}
     <tr><td></td><td><b>🏠 The House</b></td><td style="text-align:right" class="mono ${house>0?'pos':house<0?'neg':''}">${GBP(house)}</td></tr></table></div>
   </div>
   <div class="card">
@@ -4559,6 +5046,93 @@ async function fplFetchAny(path){
     }
     throw e;
   }
+}
+// Batch 29: the classic FPL API (fantasy.premierleague.com) — a genuinely DIFFERENT host from the
+// draft API everything else here uses, and the only source of Fixture Difficulty Ratings, which
+// draft.premierleague.com does not expose in any form. The Cloudflare Worker in SETUP.md Step 6
+// Option B only proxies draft.premierleague.com, so this will normally fail in a browser; the
+// GitHub Action is the supported, zero-setup path for FDR and every caller here treats a failure
+// as non-fatal. If the admin has upgraded their Worker to the optional two-host version in
+// SETUP.md Step 8, its classic route lives at /fpl/ alongside the existing /api/ — derived here
+// rather than stored as a second setting, so there's still only one Proxy URL to maintain.
+async function fplFetchClassic(path){
+  try{ return await fplFetch('https://fantasy.premierleague.com/api/'+path); }
+  catch(e){
+    const p=(S.fpl.proxyUrl||'').trim();
+    if(/\/api\/?$/.test(p)) return await fplFetch(p.replace(/\/api\/?$/,'/fpl/')+path);
+    throw e;
+  }
+}
+// Pulls the squad-viewer data set in-app: player master data + per-manager 15-man squads from the
+// draft API (both already reachable through the existing fplFetchAny direct→proxy path, so no
+// change to anyone's Worker is needed), plus FDR from the classic API on a best-effort basis.
+// Deliberately its own button rather than bolted onto syncAndStage(): it's a different data set
+// on a different cadence (squads change on waivers/trades, not when results land), and folding it
+// in would make the one-click weekly flow fail noisily for something optional.
+async function fplSyncSquads(){
+  if(!requireAdmin()) return false;
+  const inp=document.getElementById('fplLeagueId');
+  const id=((inp?inp.value:'')||S.fpl.leagueId||'').trim();
+  if(!id){ toast('Enter your draft league ID first',true); return false; }
+  if(!Object.keys(S.fpl.entryMap||{}).length){ toast('Run "Sync & stage gameweeks" first — squads are matched via the entry map that builds',true); return false; }
+  toast('Pulling squads…');
+  let boot=null, es=null;
+  try{
+    boot=await fplFetchAny('bootstrap-static');
+    es=await fplFetchAny('league/'+id+'/element-status');
+  }catch(e){
+    toast('Browser can\'t reach the draft API (CORS). Run the FPL Data Sync GitHub Action instead — it also pulls fixture difficulty, which a browser can never get.',true);
+    return false;
+  }
+  let fixtures=null;
+  try{ fixtures=await fplFetchClassic('fixtures/'); }catch(e){ /* expected without the two-host proxy */ }
+  return ingestFplSquads(boot, es, fixtures);
+}
+// Mirrors, field for field, the "Batch 29: Squad Viewer data" block in .github/workflows/fpl-sync.yml —
+// keep the two in step if either is changed. Writes only the fpl/audit keys via saveFields() for
+// the same stale-tab-clobbering reason ingestFpl() does.
+function ingestFplSquads(boot, es, fixtures){
+  if(!requireAdmin()) return false;
+  const em=S.fpl.entryMap||{};
+  const plTeams={};
+  ((boot&&boot.teams)||[]).forEach(t=>{ plTeams[t.id]={n:t.name, s:t.short_name}; });
+  const squads={}, owned=new Set();
+  ((es&&es.element_status)||[]).forEach(r=>{
+    // element-status' `owner` is the LEAGUE ENTRY id — the same id entryMap is keyed by — not the
+    // global FPL entry id, so it maps onto our teamIds with no second lookup.
+    const tid=(r&&r.owner!=null)?em[r.owner]:null;
+    if(!tid) return;
+    (squads[tid]=squads[tid]||[]).push(r.element);
+    owned.add(r.element);
+  });
+  if(!Object.keys(squads).length){ toast('No squads matched — check FPL Sync for unmatched entries first',true); return false; }
+  const players={};
+  ((boot&&boot.elements)||[]).forEach(el=>{
+    if(!owned.has(el.id)) return;
+    players[el.id]={n:el.web_name, t:el.team, p:el.element_type, f:Number(el.form)||0,
+                    tp:el.total_points||0, ep:el.event_points||0, ppg:Number(el.points_per_game)||0, st:el.status||'a'};
+  });
+  S.fpl.plTeams=plTeams; S.fpl.players=players; S.fpl.squads=squads;
+  let fdrGws=0;
+  if(Array.isArray(fixtures)&&fixtures.length){
+    const fx={};
+    fixtures.forEach(f=>{ if(!f||!f.event) return;
+      (fx[f.event]=fx[f.event]||[]).push({h:f.team_h, a:f.team_a, hd:f.team_h_difficulty, ad:f.team_a_difficulty,
+                                          k:f.kickoff_time?new Date(f.kickoff_time).getTime():null}); });
+    S.fpl.plFixtures=fx; fdrGws=Object.keys(fx).length;
+  }
+  // Same "which gameweek is current" derivation the Action uses: the draft bootstrap keeps it at
+  // events.current (null pre-season) rather than an is_current flag on each event, so fall back to
+  // the earliest unfinished event by deadline.
+  const evs=(boot&&(Array.isArray(boot.events)?boot.events:(boot.events&&boot.events.data)))||[];
+  S.fpl.squadEvent=(boot&&boot.events&&boot.events.current)
+    ||(evs.filter(e=>e&&!e.finished).sort((a,b)=>new Date(a.deadline_time)-new Date(b.deadline_time))[0]||{}).id||null;
+  S.fpl.squadSync=Date.now();
+  audit('FPL squads', Object.keys(squads).length+' squad(s), '+Object.keys(players).length+' player(s), FDR '+(fdrGws?fdrGws+' GW(s)':'not available in-browser'));
+  saveFields({fpl:S.fpl, audit:S.audit});
+  render();
+  toast('✅ Squads pulled — '+Object.keys(squads).length+' squads'+(fdrGws?' + fixture difficulty':' (no FDR — run the GitHub Action for that)'));
+  return true;
 }
 async function fplSync(){
   if(!requireAdmin()) return;
@@ -4823,6 +5397,9 @@ function render(){
   // Batch 14: keep the bet detail modal's content in sync with S.bets across any render()
   // (e.g. an accept/reject/counter/cancel done from inside the modal itself).
   if(openBetModalId) renderBetModal();
+  // Batch 29: same treatment for the squad viewer — a background FPL sync landing while it's
+  // open refreshes the pitch in place rather than leaving stale form/FDR on screen.
+  if(squadModalState) renderSquadModal();
   // Auto-refresh reminder on time-sensitive tabs
   clearTimeout(render._rt);
   if(['builder','review','settler'].includes(activeTab)){

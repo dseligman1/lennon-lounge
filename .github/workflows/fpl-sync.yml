@@ -237,6 +237,114 @@ jobs:
               console.log('League details unavailable this run — synced live scores only.');
             }
 
+            // ================= Batch 29: Squad Viewer data =================
+            // Three new things the app's squad-on-pitch / fixture-comparison popups need, none of
+            // which existed before this batch: player master data, per-manager 15-man squads, and
+            // Fixture Difficulty Ratings. All of it is fetched HERE, server-side, rather than in
+            // the browser — that's the whole point: FDR only exists on the CLASSIC FPL API
+            // (fantasy.premierleague.com), which the app's optional Cloudflare Worker proxy does
+            // NOT whitelist, so doing it in-app would force every user to hand-edit their Worker.
+            // Running it in this Action means it works for everyone with zero extra setup.
+            // Every step below is individually try/caught and non-fatal: a failure here must never
+            // break the fixtures/results/standings sync above, which is the load-bearing part.
+            try {
+              const entryMap = fplPatch.entryMap || (await readFirebase('lennon-lounge/fpl/entryMap', token)) || {};
+
+              // The draft bootstrap's events live at events.data[] with the current gameweek id at
+              // events.current (NOT an is_current flag on each event — that's the classic API's
+              // shape). Pre-season, events.current is null, so fall back to the earliest unfinished
+              // gameweek by deadline.
+              const focusEvent = (bootstrap.events && bootstrap.events.current)
+                || (evList.filter(e => !e.finished)
+                          .sort((a, b) => new Date(a.deadline_time) - new Date(b.deadline_time))[0] || {}).id
+                || null;
+
+              // (1) Real-life Premier League clubs. Verified against both APIs on 2026-08-19: the
+              // draft and classic bootstraps carry an IDENTICAL 20-team list with identical ids, so
+              // elements[].team from the draft API indexes straight into the classic fixtures'
+              // team_h/team_a with no translation table needed.
+              const plTeams = {};
+              (bootstrap.teams || []).forEach(t => { plTeams[t.id] = { n: t.name, s: t.short_name }; });
+
+              // (2) Per-manager squads. league/{id}/element-status is the draft API's ownership map;
+              // its `owner` field is the LEAGUE ENTRY id — the same id entryMap is keyed by and that
+              // matches[].league_entry_1/2 use — NOT the global FPL entry id, so it maps onto our
+              // teamIds directly. Returns exactly 15 players per owner, and works even before a
+              // gameweek's picks exist (unlike the entry/.../event/... endpoint used in step 5).
+              const squads = {};
+              const ownedIds = new Set();
+              try {
+                const es = await fetchJson(`https://draft.premierleague.com/api/league/${LEAGUE_ID}/element-status`);
+                (es.element_status || []).forEach(r => {
+                  const tid = (r.owner != null) ? entryMap[r.owner] : null;
+                  if (!tid) return;
+                  (squads[tid] = squads[tid] || []).push(r.element);
+                  ownedIds.add(r.element);
+                });
+              } catch (e) { console.log('Could not fetch element-status:', e.message); }
+
+              // (3) Player master data, slimmed hard and scoped to ONLY the ~180 players actually
+              // owned in this league (not all ~600 in the game). The app keeps this inside its
+              // single Firebase state blob, which the debounced save() rewrites in full — so this
+              // has to stay tens of KB, not the ~900KB the raw elements[] array is.
+              const players = {};
+              (bootstrap.elements || []).forEach(el => {
+                if (!ownedIds.has(el.id)) return;
+                players[el.id] = {
+                  n: el.web_name, t: el.team, p: el.element_type,
+                  f: Number(el.form) || 0, tp: el.total_points || 0, ep: el.event_points || 0,
+                  ppg: Number(el.points_per_game) || 0, st: el.status || 'a'
+                };
+              });
+
+              // (4) Fixture Difficulty Rating (1-5 per side, per fixture). The one call in this
+              // whole workflow that hits fantasy.premierleague.com rather than draft.premierleague.com
+              // — FDR simply is not exposed by the draft API at all.
+              const plFixtures = {};
+              try {
+                const fixtures = await fetchJson('https://fantasy.premierleague.com/api/fixtures/');
+                (Array.isArray(fixtures) ? fixtures : []).forEach(f => {
+                  if (!f.event) return;
+                  (plFixtures[f.event] = plFixtures[f.event] || []).push({
+                    h: f.team_h, a: f.team_a,
+                    hd: f.team_h_difficulty, ad: f.team_a_difficulty,
+                    k: f.kickoff_time ? new Date(f.kickoff_time).getTime() : null
+                  });
+                });
+              } catch (e) { console.log('Could not fetch classic fixtures (FDR):', e.message); }
+
+              // (5) Starting XI vs bench — best effort only. entry/{entry_id}/event/{ev} returns
+              // {picks:[{element, position, ...}]} with positions 1-11 the starters and 12-15 the
+              // bench. It 404s with "No pick history" until that gameweek's picks actually exist,
+              // so this is deliberately optional: the app renders a perfectly good pitch from the
+              // 15-man squad alone whenever `lineups` is missing. Note this endpoint keys on
+              // league_entries[].entry_id (the global FPL entry id), NOT the .id used everywhere
+              // else above — the two are different numbers.
+              const lineups = {};
+              if (focusEvent && details && details.league_entries) {
+                for (const en of details.league_entries) {
+                  const tid = entryMap[en.id];
+                  if (!tid || !en.entry_id) continue;
+                  try {
+                    const p = await fetchJson(`https://draft.premierleague.com/api/entry/${en.entry_id}/event/${focusEvent}`);
+                    const start = ((p && p.picks) || []).filter(x => x.position <= 11).map(x => x.element);
+                    if (start.length) lineups[tid] = start;
+                  } catch (e) { /* no picks published for this entry/event yet — expected */ }
+                }
+              }
+
+              Object.assign(fplPatch, {
+                plTeams, players, squads, plFixtures,
+                // null deletes the key on a Firebase PATCH, which is what we want when picks
+                // aren't available — better a missing `lineups` than a stale one from last week.
+                lineups: Object.keys(lineups).length ? lineups : null,
+                squadEvent: focusEvent, squadSync: Date.now()
+              });
+              console.log(`Squad data: ${Object.keys(squads).length} squad(s), ${Object.keys(players).length} owned player(s), ${Object.keys(plFixtures).length} gameweek(s) of FDR, ${Object.keys(lineups).length} lineup(s), focus GW ${focusEvent}`);
+            } catch (e) {
+              console.log('Squad/FDR sync step failed (non-fatal, rest of the sync stands):', e.message);
+            }
+
             await writeToFirebase('lennon-lounge/fpl', fplPatch, token);
             console.log('FPL sync complete');
           }
