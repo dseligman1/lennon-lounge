@@ -3175,11 +3175,13 @@ function squadLegend(){
 }
 function squadEmptyState(){
   return `<div class="helpbox" style="margin:0">
-    <b>No squad data pulled yet.</b> Player squads come from the FPL Draft API and fixture
-    difficulty from the classic FPL API — a browser can't reach the second one at all, so both
-    are pulled server-side by the <b>FPL Data Sync</b> GitHub Action.
+    <b>No squad data pulled yet.</b> Squads now pull automatically as part of the normal weekly
+    <b>⟳ Sync &amp; stage gameweeks</b> click in Back Office — no separate step needed any more.
     ${me&&me.admin
-      ? `Run it from <a style="color:var(--cyan)" href="https://github.com/dseligman1/lennon-lounge/actions/workflows/fpl-sync.yml" target="_blank">Actions → FPL Data Sync → Run workflow</a>, wait ~20 seconds, and this fills in by itself.`
+      ? `If you haven't run that yet this week, do it now and this fills in by itself. Fixture
+         difficulty (the FDR colours) still needs the <a style="color:var(--cyan)" href="https://github.com/dseligman1/lennon-lounge/actions/workflows/fpl-sync.yml" target="_blank">FPL Data Sync GitHub Action</a>
+         at least once, since a browser can never reach the classic FPL API that comes from —
+         squads and form will show either way.`
       : `Give Dan or Jack a nudge to run it.`}
   </div>`;
 }
@@ -5040,11 +5042,11 @@ function vOffice(){
     </div>
     <span class="muted small">Last sync: ${S.fpl.lastSync?fmtDT(S.fpl.lastSync):'never'} · ${S.history.length} result(s) in form model · ${Object.keys(S.fplFixtures).length} gameweek(s) with fixtures pulled</span>
     <hr class="hr">
-    <p><b>👥 Squads &amp; fixture difficulty</b> <span class="muted small">— powers the squad viewer players see when they click any team name. Separate from the button above because it's a different data set on a different cadence (squads move on waivers and trades, not when results land).</span></p>
-    <p class="muted small">Fixture Difficulty Ratings only exist on the <i>classic</i> FPL API, which a browser can't reach and the optional Cloudflare Worker proxy doesn't cover — so the <b>GitHub Action pulls everything, FDR included, with no extra setup</b>. The in-app button below gets squads + player form but will usually skip FDR. See SETUP.md Step 8.</p>
+    <p><b>👥 Squads &amp; fixture difficulty</b> <span class="muted small">— powers the squad viewer players see when they click any team name.</span></p>
+    <p class="muted small"><b>Squads + player form now pull automatically</b> every time you click "⟳ Sync &amp; stage gameweeks" above — no separate step. The one thing that button can't get is Fixture Difficulty Ratings (the FDR colours in the squad comparison view): those only exist on the <i>classic</i> FPL API, which a browser can never reach at all, proxy or not — so FDR still needs the GitHub Action run at least once (squads/form show fine without it). See SETUP.md Step 8.</p>
     <div class="actions">
-      <a class="btn secondary small" href="https://github.com/dseligman1/lennon-lounge/actions/workflows/fpl-sync.yml" target="_blank">▶ Run FPL Data Sync (squads + FDR) →</a>
-      <button class="btn secondary small" onclick="fplSyncSquads()">👥 Pull squads in-app (no FDR)</button>
+      <a class="btn secondary small" href="https://github.com/dseligman1/lennon-lounge/actions/workflows/fpl-sync.yml" target="_blank">▶ Run FPL Data Sync (adds FDR) →</a>
+      <button class="btn secondary small" onclick="fplSyncSquads()">👥 Pull squads now (manual, no FDR)</button>
     </div>
     <div class="muted small" style="margin-top:8px">Last squad pull: ${S.fpl.squadSync?fmtDT(S.fpl.squadSync):'never'} · ${Object.keys((S.fpl.squads)||{}).length} squad(s) · ${Object.keys((S.fpl.players)||{}).length} player(s) · FDR for ${Object.keys((S.fpl.plFixtures)||{}).length} gameweek(s)${S.fpl.squadEvent?' · focus GW '+S.fpl.squadEvent:''}</div>
     <div id="fplFallback" style="display:none">
@@ -5166,9 +5168,10 @@ async function fplFetchClassic(path){
 // Pulls the squad-viewer data set in-app: player master data + per-manager 15-man squads from the
 // draft API (both already reachable through the existing fplFetchAny direct→proxy path, so no
 // change to anyone's Worker is needed), plus FDR from the classic API on a best-effort basis.
-// Deliberately its own button rather than bolted onto syncAndStage(): it's a different data set
-// on a different cadence (squads change on waivers/trades, not when results land), and folding it
-// in would make the one-click weekly flow fail noisily for something optional.
+// Batch 33: this also now runs automatically at the end of every syncAndStage() weekly sync (see
+// that function), reusing this same ingestFplSquads() path — kept as its own standalone button
+// too, for an on-demand pull between weekly syncs (e.g. right after a waiver deadline) without
+// needing to re-run the full gameweek-staging flow.
 async function fplSyncSquads(){
   if(!requireAdmin()) return false;
   const inp=document.getElementById('fplLeagueId');
@@ -5369,7 +5372,26 @@ async function syncAndStage(){
     const det=await fplFetchAny('league/'+id+'/details');
     let boot=null;
     try{ boot=await fplFetchAny('bootstrap-static'); }catch(e){}
-    if(ingestFpl(det,boot)) finish(stageAllGameweeks());
+    if(ingestFpl(det,boot)){
+      // Batch 33: piggyback squads onto this same weekly click, reusing the bootstrap-static
+      // payload already fetched above (it's the same draft-API response the squad pull needs —
+      // no second fetch) rather than requiring a separate manual "pull squads" step nobody
+      // actually remembers to run. Best-effort and silent on failure: if this fails the main
+      // sync above has already succeeded and gameweeks still stage normally — squads just won't
+      // be fresh until the next sync. FDR (fixture difficulty) opportunistically tries the
+      // classic API too (works if the two-host proxy is set up) but falls back to whatever the
+      // GitHub Action last wrote otherwise — ingestFplSquads() never clears plFixtures when
+      // fixtures is null, so a prior Action run's FDR data is never lost by this path.
+      if(boot && Object.keys(S.fpl.entryMap||{}).length){
+        try{
+          const es=await fplFetchAny('league/'+id+'/element-status');
+          let fixtures=null;
+          try{ fixtures=await fplFetchClassic('fixtures/'); }catch(e){ /* expected without the two-host proxy */ }
+          ingestFplSquads(boot, es, fixtures);
+        }catch(e){ /* squads just won't be fresh this time — not fatal to the main sync */ }
+      }
+      finish(stageAllGameweeks());
+    }
   }catch(e){
     const fb=document.getElementById('fplFallback'); if(fb) fb.style.display='block';
     finish(stageAllGameweeks(),(S.fpl.proxyUrl?'Direct + proxy fetch both blocked — staged from last-synced data instead.':'Direct fetch blocked (CORS) — staged from last-synced data instead.'));
