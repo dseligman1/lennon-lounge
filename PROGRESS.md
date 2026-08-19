@@ -195,7 +195,71 @@ polish and financial correctness get Opus 5, contained data/UI plumbing gets Son
   Bets/Bet Review/Bet Feed, and the duplicate-bet flow — 36/36 checks passed, zero
   `window.onerror` catches. Copied to the Downloads sync file and diffed identical.
   Commit `f928ebc`.
-- [ ] 29. (Opus 5) Squad viewer — visual pitch view + fixture-comparison popup.
+- [x] 29. (Opus 5) Squad viewer — visual pitch view + fixture-comparison popup.
+  **DONE, commit `53900e6`.** FDR approach: **extended `.github/workflows/fpl-sync.yml`**
+  (the preferred option in the spec) rather than the Cloudflare proxy — zero extra setup
+  for the user, works for everyone. Endpoint research done against the live APIs first
+  rather than assumed: (a) the DRAFT bootstrap-static's `elements[]` already carries
+  `web_name`/`element_type`/`team`/`form`/`total_points`/`event_points`/`points_per_game`/
+  `status`, so the CLASSIC bootstrap is **not** needed for players at all; (b) squads come
+  from `league/{id}/element-status` (not the entry/picks endpoint) because its `owner`
+  field is the **league-entry id** — the exact id `S.fpl.entryMap` is already keyed by and
+  that `matches[].league_entry_1/2` uses — so it maps to our teamIds with no second lookup,
+  returns all 12 squads in ONE call, and works pre-season before any picks exist;
+  (c) FDR from `fantasy.premierleague.com/api/fixtures/` (`team_h_difficulty`/
+  `team_a_difficulty`). **Verified directly against both live APIs that draft and classic
+  share an IDENTICAL 20-team list with identical ids**, so `elements[].team` indexes
+  straight into the classic fixtures' `team_h`/`team_a` with no translation table.
+  Starting-XI/bench via `entry/{entry_id}/event/{ev}` picks is **best-effort and optional**
+  (it 404s "No pick history" until a gameweek's picks exist — confirmed live; note it keys
+  on `league_entries[].entry_id`, a *different* number from the `.id` used everywhere else)
+  — the pitch renders all 15 when absent, which is the normal pre-deadline view.
+  New `S.fpl` fields: `players` (id→slimmed master data, scoped to ONLY the ~180 owned in
+  this league, not all ~600 — the debounced `save()` rewrites all of `S`, so size matters),
+  `plTeams`, `squads`, `lineups`, `plFixtures`, `squadEvent`, `squadSync`; all backfilled +
+  `toArr()`-normalised in `migrate()`. New functions: `fplPlayers`/`plTeam`/`plTeamShort`/
+  `plTeamName`/`squadIds`/`lineupIds`/`hasSquadData`/`squadFocusEvent`/`plFixturesFor`/
+  `clubFixture`/`fdrClass`/`fdrLabel`/`fdrChip`/`formClass`/`squadPlayers`/`squadSummary`/
+  `squadTopScorers`/`squadChip`/`squadPitch`/`squadFixtureList`/`squadLegend`/
+  `squadEmptyState`/`openSquadModal`/`openSquadCompare`/`closeSquadModal`/`squadSwitchTeam`/
+  `renderSquadModal`/`squadTeamSwitcher`/`squadSingleBody`/`squadCompareBody`/`teamLink`/
+  `squadCompareBtn`, plus `fplFetchClassic`/`fplSyncSquads`/`ingestFplSquads` on the sync
+  side. `#squadModal`/`#squadModalOverlay` mirror `#betModal`'s pattern exactly, one
+  z-index layer up (71/72 vs 69/70) so a squad opened from a team name *inside* the bet
+  modal stacks above it. Team-name click-throughs wired into: `vGwBoard` match rows (plus a
+  per-fixture ⚔ Squads compare button), `betCard()`, both `vStandings()` tables,
+  `formGuideCard()`, `vHome()`'s mini standings, `vOffice()`'s P&L table, and page-level
+  buttons on Bet Builder + Home. FDR colour is computed purely from the numeric 1-5 rating
+  (green 1-2 / amber 3 / red 4-5) — **no real-world team name appears in any logic**, and a
+  test asserts every rendered chip's colour band matches its own number. Form ramp reuses
+  batch 30's colour language (`--teal` hot → `--pink` cold, `--gold`/`--orange` bridging)
+  rather than inventing a second vocabulary. Verified: brace/paren/bracket/backtick balance
+  on the full file (baseline HEAD `{`2222/2222 `(`4736/4736 `[`475/475 726 backticks checked
+  first to confirm a clean baseline; after `{`2531/2531 `(`5329/5329 `[`534/534 818
+  backticks, all balanced) plus the workflow's own JS (`{`147/147 `(`265/265 `[`42/42); a
+  headless Edge (`--dump-dom`) run against a harness with **both Firebase CDN `<script src>`
+  tags stripped entirely** and replaced by a stub (zero network/live-DB contact) plus
+  `save()`/`saveNow()`/`startListener()`/`saveFields()` overridden, seeding 12 teams × 15
+  players across 20 PL clubs with deliberately varied positions/form/points (every colour
+  bucket exercised, one talisman + one doubtful + one zero-form player per squad, lineups
+  seeded as a real 1-4-4-2 for only half the teams so BOTH the bench and the flat-15 render
+  paths run) plus GW7/GW8 fixtures with all five difficulty values — **65/65 assertions
+  passed, `TESTOK:true`, zero `window.onerror` catches**, covering the pure data layer, both
+  modal modes, the team switcher, every click-through surface, `render()` keeping an open
+  modal in sync, and the no-data empty state. **Visual check done and actually looked at**
+  (screenshots at 375px and 1200px for both modal modes, plus the Bet Builder at 375px):
+  first pass at `--window-size=375` appeared to clip badly, but measuring proved that was
+  the CSS-px mismatch batch 25 already documented, not a real bug — re-shot through a 375px
+  **iframe** harness where a measurement pass across 4 modes × 4 phone widths
+  (320/375/390/414) reported **`pageOverflow=0` and `modalOverflow=0` everywhere, 0 JS
+  errors**. Four real issues were found in the screenshots and fixed before committing:
+  the ⚠ doubtful badge collided with the row's position label (moved to the chip's
+  bottom-left), the desktop pitch stretched the full ~900px and stopped reading as a pitch
+  (new `.sq-single` 640px centred column), the mobile stat row was 3+1 with a truncated
+  "Avg difficulty" label (now 2×2, relabelled "Avg FDR"), and 5-man rows in compare mode
+  wrapped to 4+1 on a phone which broke the formation read (compact basis 54→50px, season
+  points hidden in that one cramped case, kept in the tooltip). Copied to the Downloads
+  sync file and diffed identical.
   Biggest/most novel batch, do last. New FPL data pull needed (this app currently
   only fetches Draft league standings/fixtures + gameweek deadlines — no player-
   level data exists yet): (a) classic FPL `bootstrap-static` `elements[]` (player
