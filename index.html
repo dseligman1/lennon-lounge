@@ -625,6 +625,12 @@ let homePnlExpanded = false, homeChatExpanded = false;
 // "Add to gameweek". line/odds are kept as raw strings ('' = "not overridden, use the computed
 // suggestion") rather than numbers so an empty input field round-trips cleanly.
 let mktBuilder = {gwId:'', templateId:'', teamId:'', matchId:'', line:'', odds:''};
+// Batch 27: admin builder state for the season-long/mid-season/bespoke "🏆 Season & bespoke
+// markets" card (vOddSetter, below the per-gameweek specials above) — same '' = "not
+// overridden yet" convention as mktBuilder. sznSettleMktId tracks which open market currently
+// has its inline settle panel expanded (null = none).
+let seasonMktBuilder = {mode:'template', templateId:'', teamId:'', scopeType:'season', odds:'', bespokeName:'', settleAt:null};
+let sznSettleMktId = null;
 let dbListener = null;
 let authPins = {};
 
@@ -649,6 +655,10 @@ function freshState() {
     // combinations have already paid out, so evaluatePromoRules() never double-grants. Full
     // shape documented above evaluatePromoRules().
     rewardRules: [], rewards: {}, rewardGrants: [],
+    // Batch 27: season-long/mid-season/bespoke special markets — a sibling to each
+    // gameweek's `gw.specialMarkets[]` (batch 20) but NOT tied to any specific gameweek.
+    // Full shape documented above `SEASON_MARKET_TEMPLATES`.
+    seasonMarkets: [],
     seq: 1
   };
 }
@@ -656,7 +666,7 @@ function freshState() {
 function migrate(s) {
   // Firebase stores arrays as {0:{}, 1:{}} — convert all back to real arrays
   const toArr = v => v == null ? [] : Array.isArray(v) ? v : Object.values(v);
-  ['teams','gameweeks','bets','promos','chat','audit','history','rewardRules','rewardGrants'].forEach(k => { s[k] = toArr(s[k]); });
+  ['teams','gameweeks','bets','promos','chat','audit','history','rewardRules','rewardGrants','seasonMarkets'].forEach(k => { s[k] = toArr(s[k]); });
   // Also fix nested matches arrays inside each gameweek. Batch 20: gameweeks also carry a
   // `specialMarkets` array (admin-added special-market offers) that needs the same Firebase
   // object-vs-array fixup; defaults to [] for every gameweek loaded before this batch.
@@ -3239,6 +3249,278 @@ function specialMarketBuilderCard(){
     `}
   </div>`;
 }
+
+/* ================================================================
+   BATCH 27 — SEASON-LONG / MID-SEASON / BESPOKE SPECIAL MARKETS
+   ================================================================
+   Sibling to the batch-20 gw.specialMarkets[] system above, but NOT tied to any specific
+   gameweek — lives in S.seasonMarkets[] instead. Same "template → target team → suggested
+   odds → admin can edit → publish" shape as SPECIAL_MARKET_TEMPLATES for the 3 season-long
+   templates below, plus a bespoke/custom builder (free-text name + a settle-by date via the
+   existing dtPicker widget from batch 2) for one-off markets like "Top of the table at
+   midnight 25 Dec". Each market is priced on ONE side of a yes/no proposition (mirrors
+   top_score/haul in the gw system) — settling it just records won/lost/void for THAT
+   specific market, not a shared "who actually won" fact applied across every market of the
+   same kind. Player-facing bet placement (a vSeasonBets() view + addSeasonLeg()) is
+   explicitly deferred to batch 28 per the spec — this batch only builds creation/viewing/
+   settling. settleSeasonBet()/evalSeasonLeg() below are wired up as forward-compatible
+   plumbing so batch 28 doesn't need to touch settlement at all, but they're dead code today
+   since nothing places a `leg.type==='season'` leg yet anywhere in the app. */
+const SEASON_MARKET_TEMPLATES = [
+  {id:'most_points', name:'📊 Most Points — full season',      kind:'most_points',
+    blurb:'This team finishes with the most total FPL points of anyone in the league.'},
+  {id:'most_wins',   name:'🏅 Most Wins',                       kind:'most_wins',
+    blurb:'This team racks up the most gameweek match wins across the season.'},
+  {id:'wins_draft',  name:'👑 League Winner (wins the Draft)',  kind:'league_winner',
+    blurb:'This team finishes top of the actual FPL Draft league standings at season end.'},
+];
+// Tally of pf (points for)/w (wins)/pts (league points, 3/1/0) per team from exactly the same
+// data vStandings()'s FPL League table loops — reused here as a strength proxy for suggested
+// odds and as a "who's currently ahead" hint at settle time. Cheap to recompute each render,
+// same small gameweeks/history arrays vStandings already loops every render too.
+function seasonStandingsTally(){
+  const lt={}; S.teams.forEach(t=>lt[t.id]={pf:0,w:0,pts:0});
+  const localEvents=new Set(S.gameweeks.filter(g=>g.event&&g.matches.some(m=>m.result)).map(g=>g.event));
+  const addRes=(hid,aid,hp,ap)=>{
+    const h=lt[hid],a=lt[aid]; if(!h||!a) return;
+    h.pf+=hp;a.pf+=ap;
+    if(hp>ap){h.w++;h.pts+=3;} else if(hp<ap){a.w++;a.pts+=3;} else {h.pts++;a.pts++;}
+  };
+  (S.history||[]).forEach(h=>{ if(!localEvents.has(h.event)) addRes(h.a,h.b,h.ap,h.bp); });
+  S.gameweeks.forEach(g=>g.matches.forEach(m=>{ if(m.result&&m.home&&m.away) addRes(m.home,m.away,m.result.homePts,m.result.awayPts); }));
+  return lt;
+}
+function seasonKindKey(kind){ return kind==='most_points'?'pf':(kind==='most_wins'?'w':'pts'); }
+// Suggested odds for a template+team — same softmax-off-a-strength-number shape as batch 20's
+// suggestSpecialOdds() top_score branch, not real ML, editable by the admin before saving.
+function suggestSeasonOdds(tpl, teamId){
+  if(!tpl||!teamId) return null;
+  const lt=seasonStandingsTally(); const key=seasonKindKey(tpl.kind);
+  const edge=(S.settings&&S.settings.algoEdgePct)||20;
+  const scale= key==='pf' ? 0.05 : 0.35;
+  const ws=S.teams.map(t=>({tid:t.id,w:Math.exp(scale*(lt[t.id][key]||0))}));
+  const tot=ws.reduce((s,x)=>s+x.w,0);
+  const mine=ws.find(x=>x.tid===teamId);
+  return mine&&tot?edgedOdds(mine.w/tot, edge):null;
+}
+// Which team currently leads on the relevant metric — surfaced only as a settle-time hint,
+// never auto-applied; the admin still explicitly picks won/lost/void per market below.
+function seasonMarketActualLeader(kind){
+  const lt=seasonStandingsTally(); const key=seasonKindKey(kind);
+  let best=null;
+  S.teams.forEach(t=>{ if(!best||lt[t.id][key]>lt[best][key]) best=t.id; });
+  return best;
+}
+function seasonMarketLabel(tpl, teamId, scopeType){
+  const t=teamId?team(teamId):null;
+  if(!t) return tpl.name;
+  const scopeTxt = scopeType==='midseason' ? ' (mid-season)' : '';
+  if(tpl.kind==='most_points')   return `${t.name} — Most Points${scopeTxt}`;
+  if(tpl.kind==='most_wins')     return `${t.name} — Most Wins${scopeTxt}`;
+  if(tpl.kind==='league_winner') return `${t.name} — League Winner`;
+  return `${t.name} — ${tpl.name}`;
+}
+function setSznMode(mode){ seasonMktBuilder.mode=mode; render(); }
+function setSznTemplate(tid){ seasonMktBuilder.templateId=tid; seasonMktBuilder.teamId=''; seasonMktBuilder.odds=''; render(); }
+function setSznField(k,v){ seasonMktBuilder[k]=v; if(k!=='odds') seasonMktBuilder.odds=''; render(); }
+function setSznScopeType(t){ seasonMktBuilder.scopeType=t; render(); }
+function seasonMktSetSettle(v){ const ts=parseDTLocal(v); if(!ts){ toast('Bad date',true); return; } seasonMktBuilder.settleAt=ts; render(); }
+function addSeasonMarketFromBuilder(){
+  if(!requireAdmin()) return;
+  const b=seasonMktBuilder;
+  let name, kind, teamId=null, scope, tpl=null;
+  if(b.mode==='bespoke'){
+    name=(b.bespokeName||'').trim();
+    if(!name){ toast('Enter a name/description',true); return; }
+    if(!b.settleAt){ toast('Pick a settle-by date & time',true); return; }
+    if(b.odds===''||b.odds==null||isNaN(parseFloat(b.odds))){ toast('Enter odds',true); return; }
+    kind='custom';
+    scope={type:'date', settleAt:b.settleAt};
+  } else {
+    tpl=SEASON_MARKET_TEMPLATES.find(t=>t.id===b.templateId);
+    if(!tpl){ toast('Pick a template',true); return; }
+    if(!b.teamId){ toast('Pick a target team',true); return; }
+    teamId=b.teamId; kind=tpl.kind;
+    name=seasonMarketLabel(tpl, teamId, b.scopeType);
+    scope = b.scopeType==='midseason' ? {type:'midseason', settleAt:b.settleAt||null} : {type:'season', settleAt:null};
+  }
+  const odds=(b.odds!==''&&b.odds!=null)?parseFloat(b.odds):(tpl?suggestSeasonOdds(tpl,teamId):null);
+  const market={
+    id:nid('szn'), name, kind, scope,
+    teamId, line:null,
+    odds:Math.max(1.05, Number(odds)||1.05),
+    status:'open', result:null,
+    createdAt:Date.now(), createdBy:me.id
+  };
+  S.seasonMarkets.push(market);
+  audit('season market added', name+' @ '+fmtOdds(market.odds));
+  save(); toast('Added: '+name+' @ '+fmtOdds(market.odds)+' 🏆');
+  seasonMktBuilder.teamId=''; seasonMktBuilder.odds=''; seasonMktBuilder.bespokeName=''; seasonMktBuilder.settleAt=null;
+  dtPickState['seasonMktSettle']={day:null,time:null};
+  render();
+}
+function removeSeasonMarket(marketId){
+  if(!requireAdmin()) return;
+  const m=(S.seasonMarkets||[]).find(x=>x.id===marketId); if(!m) return;
+  if(m.status==='settled'){ toast("Already settled — can't remove",true); return; }
+  S.seasonMarkets=S.seasonMarkets.filter(x=>x.id!==marketId);
+  audit('season market removed', m.name);
+  save(); render(); toast('Market removed');
+}
+function openSznSettle(marketId){ sznSettleMktId = sznSettleMktId===marketId ? null : marketId; render(); }
+// Leg-level outcome for a placed season-market bet leg — the market itself IS the
+// proposition being priced, so grading is a direct lookup of its recorded result.
+function evalSeasonLeg(leg){
+  const m=(S.seasonMarkets||[]).find(x=>x.id===leg.marketId);
+  if(!m||m.status!=='settled') return null;
+  return m.result==='void' ? 'void' : m.result;
+}
+// Mirrors settleBet()'s payout math (combinedOdds/accaMarginPct ratio-of-effOdds) but for a
+// bet whose legs are ALL season-market legs — a season leg isn't tied to any gw.matches, so
+// it can't reuse settleBet() directly (that one keys off a single bet.gwId). Batch 28's
+// addSeasonLeg() is expected to keep season legs and gw legs on separate bets, matching how
+// gw.specialMarkets legs already coexist with match legs today (same bet, same evalLeg()).
+function settleSeasonBet(bet){
+  if(!bet.legs||!bet.legs.length||!bet.legs.every(l=>l.type==='season')) return null;
+  const evals=bet.legs.map(l=>({odds:l.odds, out:evalSeasonLeg(l)}));
+  if(evals.some(e=>e.out===null)) return null;
+  let outcome,payout;
+  if(evals.some(e=>e.out==='lost')){ outcome='lost'; payout=0; }
+  else{
+    const active=evals.filter(e=>e.out==='won');
+    if(!active.length){ outcome='void'; payout=bet.stake; }
+    else{
+      const orig=combinedOdds(bet.legs.map(l=>l.odds), S.settings.accaMarginPct);
+      const recomputed=combinedOdds(active.map(e=>e.odds), S.settings.accaMarginPct);
+      const ratio=bet.effOdds/orig;
+      outcome='won'; payout=bet.stake*Math.max(1, recomputed*ratio);
+    }
+  }
+  bet.status=outcome; bet.settledPayout=payout; bet.settledAt=Date.now();
+  bet.history=bet.history||[]; bet.history.push({at:Date.now(),by:'system',action:'season-settled',note:outcome});
+  return {outcome,payout};
+}
+// The lightweight settle action: admin marks ONE season market won/lost/void, which grades
+// only bets/legs referencing that specific market — nothing else. Kept simple deliberately
+// (a plain confirm(), matching settleGw()'s own safety gate) since this isn't the financially-
+// sensitive override tool that's batch 32.
+function settleSeasonMarket(marketId, result){
+  if(!requireAdmin()) return;
+  const m=(S.seasonMarkets||[]).find(x=>x.id===marketId); if(!m) return;
+  if(m.status==='settled'){ toast('Already settled',true); return; }
+  if(!confirm(`Settle "${m.name}" as ${result.toUpperCase()}? This grades any bets placed on it.`)) return;
+  m.status='settled'; m.result=result; m.settledAt=Date.now(); m.settledBy=me.id;
+  let graded=0;
+  S.bets.forEach(b=>{
+    if(!b.legs||!b.legs.some(l=>l.type==='season'&&l.marketId===m.id)) return;
+    const r=settleSeasonBet(b);
+    if(r){
+      graded++;
+      const msg=r.outcome==='won'?`🎉 SEASON BET WON! £${r.payout.toFixed(2)} incoming · ${m.name}`
+        :r.outcome==='void'?`↩️ Season bet voided — stake of £${b.stake} returned · ${m.name}`
+        :`❌ Season bet lost · £${b.stake} · ${m.name}`;
+      pushNotif(b.teamId,'bet_settled',msg);
+    }
+  });
+  audit('season market settled', m.name+' → '+result.toUpperCase());
+  sznSettleMktId=null;
+  saveNow(); render();
+  toast('Settled: '+m.name+(graded?` (${graded} bet(s) graded)`:''));
+}
+function seasonSettleHint(m){
+  if(!['most_points','most_wins','league_winner'].includes(m.kind)) return '';
+  const lt=seasonStandingsTally(); const key=seasonKindKey(m.kind);
+  const leaderId=seasonMarketActualLeader(m.kind);
+  const leader=leaderId?team(leaderId):null;
+  if(!leader) return '';
+  const label=key==='pf'?'points for':(key==='w'?'wins':'league points');
+  return `<div class="muted small">📊 Current standings hint: <b>${esc(leader.name)}</b> leads on ${label} (${lt[leaderId][key]}) — a pointer only, you still choose the result.</div>`;
+}
+function seasonMarketRow(m){
+  const isOpen=m.status==='open';
+  const scopeLabel=m.scope.type==='season'?'Full season'
+    :m.scope.type==='midseason'?('Mid-season'+(m.scope.settleAt?(' · settle by '+fmtDT(m.scope.settleAt)):''))
+    :('Bespoke · settle by '+fmtDT(m.scope.settleAt));
+  return `<div style="padding:8px 0;border-bottom:1px solid var(--line)">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <span class="small"><b>${esc(m.name)}</b> <span class="muted">— ${esc(scopeLabel)}</span></span>
+      <span style="display:flex;align-items:center;gap:10px">
+        <span class="mono">${fmtOdds(m.odds)}</span>
+        ${isOpen?`<span class="pill st-pending">OPEN</span>`:`<span class="pill st-void">${esc((m.result||'').toUpperCase())}</span>`}
+        ${isOpen?`<button class="btn secondary small" onclick="openSznSettle('${m.id}')">⚖️ Settle</button>
+        <button class="x" onclick="removeSeasonMarket('${m.id}')" title="Remove market">×</button>`:''}
+      </span>
+    </div>
+    ${isOpen&&sznSettleMktId===m.id?`<div style="margin-top:8px;padding:10px;background:var(--card2);border-radius:10px">
+      ${seasonSettleHint(m)}
+      <div class="actions" style="margin-top:8px">
+        <button class="btn small" onclick="settleSeasonMarket('${m.id}','won')">✅ Won</button>
+        <button class="btn secondary small" onclick="settleSeasonMarket('${m.id}','lost')">❌ Lost</button>
+        <button class="btn secondary small" onclick="settleSeasonMarket('${m.id}','void')">↩️ Void</button>
+        <button class="btn secondary small" onclick="openSznSettle('${m.id}')">Cancel</button>
+      </div>
+    </div>`:''}
+  </div>`;
+}
+function seasonMarketBuilderCard(){
+  const b=seasonMktBuilder;
+  if(!b.templateId) b.templateId=SEASON_MARKET_TEMPLATES[0].id;
+  const tpl=SEASON_MARKET_TEMPLATES.find(t=>t.id===b.templateId)||SEASON_MARKET_TEMPLATES[0];
+  const isTpl=b.mode!=='bespoke';
+  const suggested=isTpl&&b.teamId?suggestSeasonOdds(tpl,b.teamId):null;
+  const oddsShown=(b.odds!==''&&b.odds!=null)?parseFloat(b.odds):suggested;
+  const label=isTpl?(b.teamId?seasonMarketLabel(tpl,b.teamId,b.scopeType):null):((b.bespokeName||'').trim()||null);
+  const markets=(S.seasonMarkets||[]).slice().sort((a,b2)=>(a.status==='open'?0:1)-(b2.status==='open'?0:1)||b2.createdAt-a.createdAt);
+  return `<div class="card">
+    <h3>🏆 Season &amp; bespoke markets</h3>
+    <p class="muted small">Season-long, mid-season and one-off markets — NOT tied to any single gameweek, so they sit in their own section below the per-gameweek specials above and stay out of that flow.</p>
+    <div class="actions" style="margin-bottom:10px">
+      <button class="btn ${isTpl?'':'secondary'} small" onclick="setSznMode('template')">📋 Template</button>
+      <button class="btn ${isTpl?'secondary':''} small" onclick="setSznMode('bespoke')">✏️ Bespoke</button>
+    </div>
+    ${isTpl?`
+    <div class="formrow">
+      <div><label>Template</label><select onchange="setSznTemplate(this.value)">
+        ${SEASON_MARKET_TEMPLATES.map(t=>`<option value="${t.id}" ${t.id===b.templateId?'selected':''}>${t.name}</option>`).join('')}
+      </select></div>
+      <div><label>Target team</label><select onchange="setSznField('teamId',this.value)">
+        <option value="">— pick team —</option>
+        ${S.teams.map(t=>`<option value="${t.id}" ${t.id===b.teamId?'selected':''}>${esc(t.name)}</option>`).join('')}
+      </select></div>
+    </div>
+    <div class="muted small" style="margin:-6px 0 10px">${esc(tpl.blurb)}</div>
+    <div class="formrow">
+      <div><label>Scope</label><select onchange="setSznScopeType(this.value)">
+        <option value="season" ${b.scopeType==='season'?'selected':''}>Full season</option>
+        <option value="midseason" ${b.scopeType==='midseason'?'selected':''}>Mid-season (custom window)</option>
+      </select></div>
+      <div><label>Odds</label>
+        <input type="number" step="0.1" min="1.05" value="${oddsShown!=null?Number(oddsShown).toFixed(1):''}" style="width:90px;font-weight:800" onchange="setSznField('odds',this.value)" ${b.teamId?'':'disabled'}></div>
+    </div>
+    ${b.scopeType==='midseason'?`<div style="margin:6px 0 10px"><label>Settle by (optional)</label><br>
+      ${dtPicker('seasonMktSettle', b.settleAt, {label:'Pick settle-by date & time', onConfirm:`dtPickConfirm('seasonMktSettle',v=>seasonMktSetSettle(v))`})}
+    </div>`:''}
+    `:`
+    <div class="formrow">
+      <div style="flex:2"><label>Name / description</label>
+        <input type="text" placeholder="e.g. Top of the table at midnight 25 Dec" value="${esc(b.bespokeName)}" onchange="setSznField('bespokeName',this.value)"></div>
+      <div><label>Odds</label>
+        <input type="number" step="0.1" min="1.05" value="${b.odds!==''&&b.odds!=null?Number(b.odds).toFixed(1):''}" style="width:90px;font-weight:800" onchange="setSznField('odds',this.value)"></div>
+    </div>
+    <div style="margin:6px 0 10px"><label>Settle by (required)</label><br>
+      ${dtPicker('seasonMktSettle', b.settleAt, {label:'Pick settle-by date & time', onConfirm:`dtPickConfirm('seasonMktSettle',v=>seasonMktSetSettle(v))`})}
+    </div>
+    `}
+    ${label?`<div class="muted small">Preview: <b>${esc(label)}</b> ${oddsShown!=null?`<span class="mono" style="color:var(--gold)">@ ${fmtOdds(oddsShown||1.05)}</span>`:''}</div>`:'<div class="muted small">Fill in the fields above to see a preview.</div>'}
+    <div class="actions" style="margin-top:10px">
+      <button class="btn" onclick="addSeasonMarketFromBuilder()">➕ Add market</button>
+    </div>
+    ${markets.length?`<hr class="hr">
+      <div class="muted small" style="margin-bottom:6px">All season/bespoke markets (${markets.length}):</div>
+      ${markets.map(m=>seasonMarketRow(m)).join('')}`:''}
+  </div>`;
+}
+
 function importFplEvent(ev){
   const fx=S.fplFixtures[ev]||[];
   const isSim=!!S.sim.events[ev];
@@ -3382,6 +3664,7 @@ function vOddSetter(){
   ${open.map(g=>oddsCard(g,false)).join('')}
   ${laterDrafts.length?`<div class="card"><p class="muted small">+${laterDrafts.length} more gameweek(s) staged and visible to players under "Coming up" (${laterDrafts.map(g=>esc(g.name)).join(', ')}) — not shown here for review yet since their odds are based on today's form and will be stale by the time they're due. They'll appear here for review once ${esc(nextDraft?nextDraft.name:'the current one')} is published.</p></div>`:''}
   ${(nextDraft||open.length)?specialMarketBuilderCard():''}
+  ${seasonMarketBuilderCard()}
   <div class="card"><details><summary>📊 Team form data</summary>
     <div class="statgrid">${S.teams.map(t=>`<div class="codecard"><b>${esc(t.name)}</b><br>
       <span class="muted small">Baseline</span> <input type="number" value="${S.stats[t.id]?S.stats[t.id].base:50}" style="width:64px;padding:4px 7px" onchange="if(!S.stats['${t.id}'])S.stats['${t.id}']={};S.stats['${t.id}'].base=parseFloat(this.value)||50;save()">
