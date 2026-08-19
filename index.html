@@ -631,6 +631,10 @@ let mktBuilder = {gwId:'', templateId:'', teamId:'', matchId:'', line:'', odds:'
 // has its inline settle panel expanded (null = none).
 let seasonMktBuilder = {mode:'template', templateId:'', teamId:'', scopeType:'season', odds:'', bespokeName:'', settleAt:null};
 let sznSettleMktId = null;
+// Batch 28: player-facing bet slip for season/bespoke markets — deliberately separate from the
+// gameweek `slip` array (season legs aren't tied to any gwId, and batch 27's settleSeasonBet()
+// assumes a season bet's legs are ALL type:'season', so we never let the two mix within one bet).
+let seasonSlip = [];
 let dbListener = null;
 let authPins = {};
 
@@ -1867,11 +1871,24 @@ function slipViolatesIntegrity(legs, myTeamId){
 }
 
 function submitBet({gwId, legs, effOdds, stake, viaAlgo, boostPct, freeBetAmount, message, duplicateOf}){
-  const g=gw(gwId); const mode=bettableNow(g);
-  if(!mode){ toast('Betting is closed for '+g.name+' right now', true); render(); return false; }
-  if(mode==='inplay'){
-    toast("In-play betting is coming soon — new in-play bets can't be placed yet.", true);
-    render(); return false;
+  // Batch 28: a season-market bet has no gwId — legs are ALL type:'season' (batch 27's
+  // settleSeasonBet() requires that uniformity, and addSeasonLeg() below never mixes a season
+  // leg into the gameweek `slip`), so it skips the gw/bettableNow gating entirely and instead
+  // just re-checks that every referenced market is still open (belt-and-braces — vSeasonBets()
+  // already only offers open markets as clickable buttons).
+  const isSeason = !!(legs && legs.length && legs.every(l=>l.type==='season'));
+  let g=null, mode='pre';
+  if(isSeason){
+    if(legs.some(l=>{ const m=(S.seasonMarkets||[]).find(x=>x.id===l.marketId); return !m||m.status!=='open'; })){
+      toast('One or more of these season markets is no longer open', true); render(); return false;
+    }
+  } else {
+    g=gw(gwId); mode=bettableNow(g);
+    if(!mode){ toast('Betting is closed for '+g.name+' right now', true); render(); return false; }
+    if(mode==='inplay'){
+      toast("In-play betting is coming soon — new in-play bets can't be placed yet.", true);
+      render(); return false;
+    }
   }
   if(slipViolatesIntegrity(legs, me.id)){
     toast("Can't place this bet — it includes a pick against/on your own match that isn't a straight win or top-scorer bet.", true);
@@ -1879,9 +1896,12 @@ function submitBet({gwId, legs, effOdds, stake, viaAlgo, boostPct, freeBetAmount
   }
   const now=Date.now();
   const bet={
-    id:nid('bet'), teamId:me.id, gwId, legs, stake, effOdds,
-    status:'pending', placedAt:now, inplay:mode==='inplay', afterCutoff:false,
+    id:nid('bet'), teamId:me.id, gwId: isSeason?null:gwId, legs, stake, effOdds,
+    status:'pending', placedAt:now, inplay: isSeason?false:mode==='inplay', afterCutoff:false,
     algo:!!viaAlgo, boostPct:boostPct||0,
+    // Batch 28: explicit marker (also derivable via isSeasonBet(bet) from legs alone — kept as a
+    // real field too for cheap filtering/debugging without re-walking legs every time).
+    seasonBet: isSeason,
     // Batch 17: amount of this bet's stake that was covered by an auto-applied free-bet reward
     // (0 for a normal bet). It's the player's OWN money at risk that's reduced by this amount —
     // see computePnl()'s stakeCredit handling for exactly how that plays out on win/loss.
@@ -1943,6 +1963,7 @@ function vBuilder(){
       <button class="${builderSec==='pre'?'active':''}" onclick="builderSec='pre';render()">📅 Pre-match<span class="cnt">${pre.length}</span></button>
       <button class="${builderSec==='inplay'?'active':''}" onclick="builderSec='inplay';render()">🔴 In-Play</button>
     </div>
+    ${seasonBetsSummaryCard()}
     ${builderSec==='pre'?vAlgoZone():''}
     ${builderSec==='inplay'?`<div class="card inplay-soon-banner"><b>🚧 In-play betting — Coming soon</b><div class="muted small" style="margin-top:4px">Nothing to see here yet — check back once this is live.</div></div>`:`
     ${list.length===0?`<div class="card"><h3>😴 Nothing open for pre-match betting</h3><p class="muted">The house has not published a board yet.</p></div>`:''}
@@ -2149,6 +2170,15 @@ function pushHist(b,action,extra={}){
 }
 
 function legLiveInfo(leg,g){
+  // Batch 28: season-market legs aren't tied to a gameweek at all (g is always null for a
+  // season bet, see submitBet()), so they need their own branch ahead of the `!g` bail-out
+  // below — graded via evalSeasonLeg()/S.seasonMarkets instead of evalLeg()/g.matches.
+  if(leg.type==='season'){
+    const m=(S.seasonMarkets||[]).find(x=>x.id===leg.marketId);
+    const out=evalSeasonLeg(leg);
+    const score=m&&m.status==='settled'?('result: '+String(m.result).toUpperCase()):'';
+    return {out,score};
+  }
   if(!g) return {out:null,score:''};
   const out=evalLeg(leg,g);
   let score='';
@@ -2229,7 +2259,13 @@ function filterBar(){
 
 function betCard(b,perspective){
   const g=gw(b.gwId);
-  const passed=g?gwDeadlinePassed(g):true;
+  const seasonBet=isSeasonBet(b);
+  // Batch 28: a season bet has no gw deadline to check — "locked in, can't cancel" instead means
+  // at least one of its referenced season markets has already been settled (its outcome is fixed).
+  // Non-season bets keep the exact prior gwDeadlinePassed() behavior, untouched.
+  const passed=seasonBet
+    ? b.legs.some(l=>{ const m=(S.seasonMarkets||[]).find(x=>x.id===l.marketId); return !m||m.status!=='open'; })
+    : (g?gwDeadlinePassed(g):true);
   const offer=b.offer;
   const stLabel={pending:'Pending review',accepted:'Accepted ✓',rejected:'Rejected',cancelled:'Cancelled',
     counter_house:'House offer 📨',counter_user:'Your counter sent',won:'WON 🎉',lost:'LOST',void:'Void',expired:'Expired'}[b.status]||b.status;
@@ -2259,7 +2295,7 @@ function betCard(b,perspective){
     ?`<span class="muted">Raw odds<b class="mono">${fmtOdds(b.legs.reduce((a,l)=>a*l.odds,1))}</b></span>`:'';
   return `<div class="bet ${needsMe?'needsme':''}">
     <div class="top">
-      <div><b>${esc(team(b.teamId).name)}</b> <span class="muted small">· ${esc(g?g.name:'?')} · ${b.legs.length===1?'Single':b.legs.length+'-leg Acca'}${b.algo?' · ⚡Algo':''}</span>
+      <div><b>${esc(team(b.teamId).name)}</b> <span class="muted small">· ${esc(seasonBet?'🏆 Season':(g?g.name:'?'))} · ${b.legs.length===1?'Single':b.legs.length+'-leg Acca'}${b.algo?' · ⚡Algo':''}</span>
         ${b.inplay?'<span class="flag late">🔴 IN-PLAY</span>':''}
         ${b.afterCutoff?'<span class="flag late">AFTER CUTOFF</span>':''}
         ${b.boostPct?`<span class="flag limit">🚀 +${b.boostPct}% BOOST</span>`:''}
@@ -2332,7 +2368,14 @@ function declineOffer(id){
 
 function cancelBet(id){
   const b=getBet(id);
-  if(gwDeadlinePassed(gw(b.gwId))){ toast('Cutoff passed — locked in',true); return; }
+  // Batch 28: season bets have no gw (gw(b.gwId) is undefined for them — see submitBet()), so
+  // gwDeadlinePassed() can't be called directly here; mirror betCard()'s "passed" definition
+  // instead (locked once any referenced season market has already settled).
+  if(isSeasonBet(b)){
+    if(b.legs.some(l=>{ const m=(S.seasonMarkets||[]).find(x=>x.id===l.marketId); return !m||m.status!=='open'; })){
+      toast('One of this bet\'s season markets has already settled — locked in',true); return;
+    }
+  } else if(gwDeadlinePassed(gw(b.gwId))){ toast('Cutoff passed — locked in',true); return; }
   b.status='cancelled'; b.offer=null; pushHist(b,'cancelled'); save(); render(); toast('Bet cancelled');
 }
 
@@ -2693,21 +2736,28 @@ function renderBetModal(){
   const b=openBetModalId?getBet(openBetModalId):null;
   if(!b){ panel.classList.remove('open'); overlay.classList.remove('open'); return; }
   const g=gw(b.gwId);
+  const seasonBet=isSeasonBet(b);
   const perspective=me.admin?'house':'player';
   let dupBtn='';
   if(!me.admin){
-    const mode=g?bettableNow(g):null;
-    if(mode==='pre'){
+    if(seasonBet){
+      // Batch 28: a season bet has no gw/bettableNow gate — duplicateBet() below checks
+      // per-market openness itself and toasts if nothing's left to duplicate.
       dupBtn=`<button class="btn hot" onclick="duplicateBet('${b.id}')">📋 Place duplicate bet</button>`;
     } else {
-      dupBtn=`<button class="btn hot" disabled>📋 Place duplicate bet</button>
-        <div class="small muted" style="width:100%;margin-top:4px">${mode==='inplay'?"🚧 In-play betting is coming soon — can't duplicate this one yet.":'Betting is closed for '+esc(g?g.name:'this gameweek')+'.'}</div>`;
+      const mode=g?bettableNow(g):null;
+      if(mode==='pre'){
+        dupBtn=`<button class="btn hot" onclick="duplicateBet('${b.id}')">📋 Place duplicate bet</button>`;
+      } else {
+        dupBtn=`<button class="btn hot" disabled>📋 Place duplicate bet</button>
+          <div class="small muted" style="width:100%;margin-top:4px">${mode==='inplay'?"🚧 In-play betting is coming soon — can't duplicate this one yet.":'Betting is closed for '+esc(g?g.name:'this gameweek')+'.'}</div>`;
+      }
     }
   }
   const reviewBtn=me.admin?`<button class="btn secondary" onclick="closeBetModal();reviewFilter='all';go('review')">🏠 Open in Bet Review →</button>`:'';
   body.innerHTML=`
     <div class="betmodal-head">
-      <div><h3 style="margin:0">🎫 Bet detail</h3><div class="muted small">${esc(team(b.teamId)?.name||'?')} · ${esc(g?g.name:'?')}</div></div>
+      <div><h3 style="margin:0">🎫 Bet detail</h3><div class="muted small">${esc(team(b.teamId)?.name||'?')} · ${esc(seasonBet?'🏆 Season':(g?g.name:'?'))}</div></div>
       <button class="betmodal-close" onclick="closeBetModal()">✕</button>
     </div>
     ${betCard(b,perspective)}
@@ -2722,6 +2772,18 @@ function renderBetModal(){
 // celebration) without this function needing to know anything about that animation.
 function duplicateBet(id){
   const b=getBet(id); if(!b) return;
+  // Batch 28: a season bet duplicates into the separate seasonSlip/vSeasonBets() flow instead of
+  // the gameweek builder slip — only legs whose market is still open can carry over (a settled
+  // market can't be re-bet on).
+  if(isSeasonBet(b)){
+    const openLegs=b.legs.filter(l=>{ const m=(S.seasonMarkets||[]).find(x=>x.id===l.marketId); return m&&m.status==='open'; });
+    if(!openLegs.length){ toast('Every market in this bet has already settled — nothing to duplicate', true); return; }
+    seasonSlip=openLegs.map(l=>({...l}));
+    closeBetModal();
+    go('seasonbets');
+    toast('Bet duplicated — set your stake and place it 📋');
+    return;
+  }
   const g=gw(b.gwId); const mode=g?bettableNow(g):null;
   if(mode!=='pre'){
     toast(mode==='inplay'?"In-play betting is coming soon — can't duplicate this one yet.":'Betting is closed for that gameweek', true);
@@ -2789,6 +2851,7 @@ function vHome(){
       ${homePnlExpanded?`<div class="pnl-spark-wrap">${spark||'<p class="muted small">Not enough settled bets yet for a trend line — need at least 2.</p>'}</div>`:''}
     </div>
     ${rewardsTrackerWidget(me.id)}
+    ${seasonBetsSummaryCard()}
     <div class="card clickable" onclick="myBetsSec='auto';go('mybets')" title="Go to My Bets"><h3>📊 Your form</h3><p style="font-size:13.5px;line-height:1.65">${settled.length===0?'No settled bets yet — get involved!':w+' wins from '+settled.length+' settled bets. Current P&L: '+GBP(myP)+'.'}</p></div>
     <div class="card clickable" onclick="resultsSec='feed';go('results')" title="Go to Bet Results"><h3>📡 League pulse</h3><p style="font-size:13.5px;line-height:1.65">${S.bets.length===0?'No bets placed yet — quiet lounge!':''+S.bets.length+' bets placed across the league. House is '+GBP(house)+' on the season.'}</p></div>
     <div class="card clickable" onclick="resultsSec='standings';go('results')" title="Go to full standings"><h3>💷 Standings</h3>
@@ -3027,6 +3090,11 @@ function houseCancel(id){
   const b0=matches[0];
   const g=gw(b0.gwId);
   if(g&&gwDeadlinePassed(g)){ toast('Cutoff passed — bet is locked in, cannot cancel',true); return; }
+  // Batch 28: same season-bet lock rule as cancelBet()/betCard() — once any referenced market
+  // has already settled, the house can't cancel it either.
+  if(isSeasonBet(b0) && b0.legs.some(l=>{ const m=(S.seasonMarkets||[]).find(x=>x.id===l.marketId); return !m||m.status!=='open'; })){
+    toast('One of this bet\'s season markets has already settled — cannot cancel',true); return;
+  }
   if(!confirm('Cancel this bet? The player will be notified.')) return;
   matches.forEach(b=>{
     b.status='cancelled'; b.offer=null;
@@ -3518,6 +3586,150 @@ function seasonMarketBuilderCard(){
     ${markets.length?`<hr class="hr">
       <div class="muted small" style="margin-bottom:6px">All season/bespoke markets (${markets.length}):</div>
       ${markets.map(m=>seasonMarketRow(m)).join('')}`:''}
+  </div>`;
+}
+
+/* ================================================================
+   BATCH 28 — SEASON BETS: compact home/builder entry point + vSeasonBets() + placement
+   ================================================================
+   Batch 27 built creation/viewing/settling of S.seasonMarkets[] plus the forward-compatible
+   evalSeasonLeg()/settleSeasonBet() grading path, but deliberately left player-facing placement
+   as dead code — nothing anywhere pushed a `leg.type==='season'` leg onto a bet. This batch wires
+   that up. Per the user's explicit ask ("a separate house for my bets so it doesn't overwhelm the
+   home page or my bet page during the season... a clean little card... you can click into it to
+   see more detail"), this is deliberately NOT a new top-level nav tab (grep navTabs() — 'loader'
+   already sets the precedent for a view reached only by a click-through link, not a tab) — just a
+   small summary card on Home and Bet Builder linking into vSeasonBets() via go('seasonbets'),
+   wired into render()'s `views` dispatch map alongside the rest.
+   Placement reuses submitBet() (see its isSeason branch above) rather than duplicating the whole
+   accept/reject/counter/settle pipeline — so a season bet behaves exactly like any other bet
+   everywhere else in the app (My Bets, Bet Review, Bet Feed, the click-into-bet modal) once
+   placed. It's staged in its own `seasonSlip` array, not the gameweek `slip`, since a season leg
+   has no gwId and batch 27's settleSeasonBet() requires a season bet's legs to be ALL type:
+   'season' (never mixed with match/special legs on the same bet). */
+
+// True if every leg on this bet is a season-market leg — the single source of truth used
+// everywhere else in the app (betCard, legLiveInfo, cancelBet, houseCancel, the bet modal) to
+// treat a season bet differently from a normal gw-tied one. Works even for a bet placed before
+// the explicit `seasonBet` field existed (none do yet — season placement is new this batch — but
+// this keeps the check correct by construction rather than relying solely on the flag).
+function isSeasonBet(b){ return !!(b&&b.legs&&b.legs.length&&b.legs.every(l=>l.type==='season')); }
+
+// Mirrors batch 20's addMarketLeg() exactly, just targeting S.seasonMarkets[]/seasonSlip instead
+// of gw.specialMarkets[]/slip. Toggles off if already staged. No slipViolatesIntegrity() check —
+// unlike a single gameweek's match/special legs, a season-long proposition (most points, most
+// wins, league winner, or an admin's own bespoke market) isn't something one player can realistically
+// fix by underperforming in a single week, so batch 3's anti-match-fixing rule was written for and
+// scoped to gw-level legs only; season legs pass through untouched, matching how
+// slipViolatesIntegrity() already returns false (allowed) for any leg.type it doesn't recognise.
+function addSeasonLeg(marketId){
+  const m=(S.seasonMarkets||[]).find(x=>x.id===marketId);
+  if(!m||m.status!=='open'){ toast('That market is no longer open',true); return; }
+  const i=seasonSlip.findIndex(l=>l.marketId===marketId);
+  if(i>-1){ seasonSlip.splice(i,1); render(); return; }
+  seasonSlip.push({type:'season', marketId:m.id, kind:m.kind, teamId:m.teamId||undefined, odds:m.odds, label:m.name});
+  render();
+}
+function removeSeasonSlipLeg(i){ seasonSlip.splice(i,1); render(); }
+function clearSeasonSlip(){ seasonSlip=[]; render(); }
+function seasonSlipOdds(){
+  if(seasonSlip.length===0) return 0;
+  if(seasonSlip.length===1) return seasonSlip[0].odds;
+  return combinedOdds(seasonSlip.map(l=>l.odds), S.settings.accaMarginPct);
+}
+// Mirrors slipOddsFinal() — same auto-applied-boost preview as the main gameweek slip, since
+// submitBet() (which both funnel through) doesn't distinguish where the boost token came from.
+function seasonSlipOddsFinal(){ const t=autoBoostToken(me.id); const o=seasonSlipOdds(); return t?Math.round(o*(1+t.pct/100)*100)/100:o; }
+function vSeasonSlip(){
+  if(seasonSlip.length===0) return `<div class="card"><h3>🧾 Season slip</h3><p class="muted">Tap a season/bespoke market to add it here.</p></div>`;
+  const eff=seasonSlipOddsFinal();
+  const stake=parseFloat(document.getElementById('seasonStakeInput')?.value)||0;
+  const potential=stake*eff;
+  const flags=betLimitFlags(stake,potential,S.settings);
+  const boostTok=autoBoostToken(me.id);
+  const freeTok=autoFreeBetToken(me.id, stake);
+  return `<div class="card glow"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><h3 style="margin:0">🧾 Season slip</h3><button class="btn danger small" onclick="clearSeasonSlip()">Clear all</button></div>
+  <div class="muted small" style="font-weight:800;text-transform:uppercase;letter-spacing:.6px;margin-top:6px">Your build · ${seasonSlip.length===1?'Single':seasonSlip.length+'-leg Acca'}</div>
+  ${seasonSlip.map((l,i)=>`<div class="slipleg"><span>${esc(l.label)}</span><span style="display:flex;gap:6px;align-items:center"><b class="mono">${fmtOdds(l.odds)}</b><button class="x" onclick="removeSeasonSlipLeg(${i})">×</button></span></div>`).join('')}
+  ${boostTok?`<div class="small" style="color:var(--gold);margin:10px 0 2px">🎁 Reward auto-applied: +${boostTok.pct}% odds boost</div>`:''}
+  ${freeTok?`<div class="small" style="color:var(--teal);margin:2px 0 2px">🎟️ Free bet credit ${GBP(Math.min(freeTok.amount,stake))} auto-applied — that much of your stake is on the house</div>`:''}
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px">
+    <span class="muted small">Total odds${boostTok?' (boosted 🚀)':''}</span>
+    <span class="bigodds gradtxt mono">${fmtOdds(eff)}</span>
+  </div>
+  <div class="formrow" style="margin-top:8px">
+    <div><label>Stake £</label><input id="seasonStakeInput" type="number" min="1" step="1" value="${stake||''}" style="width:110px;font-size:16px;font-weight:800" oninput="render()"></div>
+    <div class="small muted">Potential return<br><b class="mono" style="font-size:19px;color:var(--teal)">${GBP(potential)}</b></div>
+  </div>
+  ${flags.map(f=>`<div class="small" style="color:var(--gold);margin-bottom:6px">⚠ ${f} — submit anyway and the house will review.</div>`).join('')}
+  <textarea id="seasonBetMsg" placeholder="Optional message to the house…" style="min-height:48px;margin:8px 0"></textarea>
+  <button class="btn big" style="width:100%" onclick="placeSeasonBet()" ${stake>0?'':'disabled'}>PLACE BET · ${GBP(stake)}</button>
+  </div>`;
+}
+function placeSeasonBet(){
+  const stakeEl=document.getElementById('seasonStakeInput');
+  const stake=parseFloat(stakeEl&&stakeEl.value);
+  if(!stake||stake<S.settings.minStake){ toast('Enter a stake',true); return; }
+  if(!seasonSlip.length){ toast('Add at least one season market to your slip',true); return; }
+  const tok=autoBoostToken(me.id);
+  const freeTok=autoFreeBetToken(me.id, stake);
+  const eff=seasonSlipOddsFinal();
+  const msgEl=document.getElementById('seasonBetMsg');
+  const msg=msgEl?msgEl.value.trim():'';
+  if(submitBet({gwId:null, legs:seasonSlip.map(l=>({...l})), effOdds:eff, stake, boostPct:tok?tok.pct:0, freeBetAmount:freeTok?Math.min(freeTok.amount,stake):0, message:msg})){
+    if(tok) tok.used=true;
+    if(freeTok) freeTok.used=true;
+    seasonSlip=[]; save();
+  }
+}
+// Player-facing odds button for one open season market — same look/toggle behaviour as
+// specialMarketsBoard()'s buttons, just keyed into seasonSlip instead of the gw slip.
+function seasonOddBtn(m){
+  const sel=seasonSlip.some(l=>l.marketId===m.id)?'sel':'';
+  return `<button class="oddbtn ${sel}" onclick="addSeasonLeg('${m.id}')">${esc(m.name)}<b>${fmtOdds(m.odds)}</b></button>`;
+}
+// Batch 28's new view: every open/settled season market, separate from the GW-by-GW Bet Builder
+// board, reached only via the summary card's click-through (see seasonBetsSummaryCard() below) —
+// deliberately not a top-level nav tab, per the user's "doesn't overwhelm... creates noise" ask.
+function vSeasonBets(){
+  const all=(S.seasonMarkets||[]).slice().sort((a,b)=>(a.status==='open'?0:1)-(b.status==='open'?0:1)||b.createdAt-a.createdAt);
+  const open=all.filter(m=>m.status==='open');
+  const settled=all.filter(m=>m.status==='settled');
+  const mine=S.bets.filter(b=>b.teamId===me.id&&isSeasonBet(b)).sort((a,b)=>b.placedAt-a.placedAt);
+  return `<div class="grid2"><div>
+    <h2>🏆 Season Bets</h2>
+    <div class="sub">Season-long, mid-season and bespoke markets — kept separate from the week-to-week board so they don't clutter it.</div>
+    <a href="#" onclick="go('home');return false" class="muted small">← Back to Home</a>
+    ${me.admin?`<div class="card"><p class="muted small">Create or settle markets from <a href="#" onclick="go('odds');return false" style="color:var(--gold)">Odds Setter</a> → "🏆 Season &amp; bespoke markets".</p></div>`:''}
+    ${!all.length?`<div class="card"><h3>😴 Nothing here yet</h3><p class="muted">The house hasn't added a season/bespoke market yet.</p></div>`:`
+    <div class="card"><h3>Open markets (${open.length})</h3>
+      ${open.length?`<div class="oddsbtns" style="flex-wrap:wrap">${open.map(m=>seasonOddBtn(m)).join('')}</div>`:'<p class="muted small">Nothing open right now — check back once the house adds one.</p>'}
+    </div>
+    ${settled.length?`<div class="card"><h3>Settled (${settled.length})</h3>
+      ${settled.map(m=>`<div style="padding:6px 0;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+        <span class="small">${esc(m.name)}</span>
+        <span class="pill st-${m.result}">${esc((m.result||'').toUpperCase())}</span>
+      </div>`).join('')}
+    </div>`:''}
+    `}
+    ${mine.length?`<h3 style="margin:18px 0 8px">🧾 My season bets (${mine.length})</h3>${mine.map(b=>betCard(b,me.admin?'house':'player')).join('')}`:''}
+  </div>
+  <div class="slip">${vSeasonSlip()}</div></div>`;
+}
+// Compact "🏆 Season Bets" summary card — open-market count + click-through only, per the user's
+// spec: "a clean little card... doesn't overwhelm... you can click into it to see more detail".
+// Shown on Home and Bet Builder (added there below); returns '' (renders nothing) until the house
+// has created at least one season/bespoke market — nothing to click into before that.
+function seasonBetsSummaryCard(){
+  const all=S.seasonMarkets||[];
+  if(!all.length) return '';
+  const openCount=all.filter(m=>m.status==='open').length;
+  return `<div class="card clickable" onclick="go('seasonbets')" title="Go to Season Bets" style="margin-bottom:14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <h3 style="margin:0">🏆 Season Bets</h3>
+      <span class="pill ${openCount?'st-pending':'st-void'}">${openCount} open</span>
+    </div>
+    <p class="muted small" style="margin:6px 0 0">Season-long &amp; bespoke markets, kept off the weekly board — tap to view &amp; place.</p>
   </div>`;
 }
 
@@ -4457,7 +4669,11 @@ function render(){
   const navEl=document.getElementById('nav');
   if(navEl) navEl.innerHTML=tabs.map(t=>`<button class="${t.house?'houseTab':''} ${activeTab===t.id?'active':''}" onclick="go('${t.id}')">${t.label}${t.badge?`<span class="badge">${t.badge}</span>`:''}</button>`).join('');
   const views={home:vHome,builder:vBuilder,mybets:vMyBets,results:vResults,insights:vInsights,usettings:vUserSettings,
-    review:vReview,loader:vLoader,odds:vOddSetter,settler:vSettler,promos:vPromos,office:vOffice};
+    review:vReview,loader:vLoader,odds:vOddSetter,settler:vSettler,promos:vPromos,office:vOffice,
+    // Batch 28: reached only via the "🏆 Season Bets" summary card's click-through (Home/Builder)
+    // or the bet-detail modal's duplicate-bet flow — deliberately not in navTabs()'s tab list,
+    // same precedent as 'loader' above.
+    seasonbets:vSeasonBets};
   const viewEl=document.getElementById('view');
   if(viewEl) viewEl.innerHTML=(views[activeTab]||vHome)();
   const cb=document.getElementById('chatBox'); if(cb) cb.scrollTop=cb.scrollHeight;
@@ -4487,7 +4703,7 @@ function render(){
     if(btn) btn.classList.toggle('active',activeTab===id);
   });
   const moreBtn=document.getElementById('bn-more');
-  if(moreBtn) moreBtn.classList.toggle('active',['usettings','review','loader','odds','settler','promos','office'].includes(activeTab));
+  if(moreBtn) moreBtn.classList.toggle('active',['usettings','review','loader','odds','settler','promos','office','seasonbets'].includes(activeTab));
   // Notification dot
   renderNotifications();
   // Batch 24: keep the mobile nav drawer's list (badges, active state) in sync too.
