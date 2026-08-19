@@ -194,11 +194,22 @@ jobs:
               const hb = Math.max(0, Number(holdbackRaw) || 0);
 
               const entryMap = { ...(existingFpl.entryMap || {}) };
+              // Batch 33 fix: league_entries carries two different ids per manager -- `id` (the
+              // league-scoped id entryMap above is keyed by, matching matches[].league_entry_1/2)
+              // and `entry_id` (FPL's global/classic entry id). element-status' `owner` field
+              // (used below to build squads) turns out to be `entry_id`, verified directly
+              // against the live API on 2026-08-19 -- the squad section previously assumed
+              // `owner` was the league-scoped id and looked it up in entryMap, which silently
+              // matched zero players on every single run. entryIdMap fixes that: entry_id -> teamId.
+              const entryIdMap = { ...(existingFpl.entryIdMap || {}) };
               const unmatched = [];
               details.league_entries.forEach(en => {
                 const playerName = ((en.player_first_name || '') + ' ' + (en.player_last_name || '')).trim();
                 const tid = matchTeamName(playerName) || matchTeamName(en.entry_name || '');
-                if (tid) entryMap[en.id] = tid;
+                if (tid) {
+                  entryMap[en.id] = tid;
+                  if (en.entry_id != null) entryIdMap[en.entry_id] = tid;
+                }
                 else if (en.entry_name) unmatched.push(`${en.entry_name} (${playerName || 'no manager name'})`);
               });
 
@@ -224,7 +235,7 @@ jobs:
               const events = { ...(existingFpl.events || {}) };
               evList.forEach(ev => { events[ev.id] = { deadline: ev.deadline_time ? new Date(ev.deadline_time).getTime() : null, name: ev.name }; });
 
-              Object.assign(fplPatch, { entryMap, events });
+              Object.assign(fplPatch, { entryMap, entryIdMap, events });
               await writeToFirebase('lennon-lounge', { history, fplFixtures }, token);
               // sim.events isn't touched here deliberately — it's only ever populated when
               // holdback > 0 (a deliberate testing setup) and the admin's own in-app sync
@@ -249,6 +260,7 @@ jobs:
             // break the fixtures/results/standings sync above, which is the load-bearing part.
             try {
               const entryMap = fplPatch.entryMap || (await readFirebase('lennon-lounge/fpl/entryMap', token)) || {};
+              const entryIdMap = fplPatch.entryIdMap || (await readFirebase('lennon-lounge/fpl/entryIdMap', token)) || {};
 
               // The draft bootstrap's events live at events.data[] with the current gameweek id at
               // events.current (NOT an is_current flag on each event — that's the classic API's
@@ -267,16 +279,18 @@ jobs:
               (bootstrap.teams || []).forEach(t => { plTeams[t.id] = { n: t.name, s: t.short_name }; });
 
               // (2) Per-manager squads. league/{id}/element-status is the draft API's ownership map;
-              // its `owner` field is the LEAGUE ENTRY id — the same id entryMap is keyed by and that
-              // matches[].league_entry_1/2 use — NOT the global FPL entry id, so it maps onto our
-              // teamIds directly. Returns exactly 15 players per owner, and works even before a
-              // gameweek's picks exist (unlike the entry/.../event/... endpoint used in step 5).
+              // its `owner` field is FPL's global/classic entry_id (verified directly against the
+              // live API on 2026-08-19) — a DIFFERENT number from the league-scoped id entryMap is
+              // keyed by, despite both being small integers in the same rough range. entryIdMap
+              // (built above, entry_id -> teamId) is the correct lookup. Returns exactly 15 players
+              // per owner, and works even before a gameweek's picks exist (unlike the
+              // entry/.../event/... endpoint used in step 5).
               const squads = {};
               const ownedIds = new Set();
               try {
                 const es = await fetchJson(`https://draft.premierleague.com/api/league/${LEAGUE_ID}/element-status`);
                 (es.element_status || []).forEach(r => {
-                  const tid = (r.owner != null) ? entryMap[r.owner] : null;
+                  const tid = (r.owner != null) ? entryIdMap[r.owner] : null;
                   if (!tid) return;
                   (squads[tid] = squads[tid] || []).push(r.element);
                   ownedIds.add(r.element);

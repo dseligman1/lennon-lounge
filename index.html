@@ -5177,7 +5177,7 @@ async function fplSyncSquads(){
   const inp=document.getElementById('fplLeagueId');
   const id=((inp?inp.value:'')||S.fpl.leagueId||'').trim();
   if(!id){ toast('Enter your draft league ID first',true); return false; }
-  if(!Object.keys(S.fpl.entryMap||{}).length){ toast('Run "Sync & stage gameweeks" first — squads are matched via the entry map that builds',true); return false; }
+  if(!Object.keys(S.fpl.entryIdMap||{}).length){ toast('Run "Sync & stage gameweeks" first — squads are matched via the entry map that builds',true); return false; }
   toast('Pulling squads…');
   let boot=null, es=null;
   try{
@@ -5196,19 +5196,23 @@ async function fplSyncSquads(){
 // the same stale-tab-clobbering reason ingestFpl() does.
 function ingestFplSquads(boot, es, fixtures){
   if(!requireAdmin()) return false;
-  const em=S.fpl.entryMap||{};
+  // Batch 33 fix: element-status' `owner` field is FPL's global/classic entry_id, NOT the
+  // league-scoped id S.fpl.entryMap is keyed by — they're both small integers in the same rough
+  // range and easy to assume are the same thing (a prior version of this code did exactly that
+  // and silently matched zero players on every run). S.fpl.entryIdMap (built in ingestFpl(),
+  // which must run at least once — via "Sync & stage gameweeks" — before this can match anyone)
+  // is keyed the right way: entry_id -> teamId.
+  const eim=S.fpl.entryIdMap||{};
   const plTeams={};
   ((boot&&boot.teams)||[]).forEach(t=>{ plTeams[t.id]={n:t.name, s:t.short_name}; });
   const squads={}, owned=new Set();
   ((es&&es.element_status)||[]).forEach(r=>{
-    // element-status' `owner` is the LEAGUE ENTRY id — the same id entryMap is keyed by — not the
-    // global FPL entry id, so it maps onto our teamIds with no second lookup.
-    const tid=(r&&r.owner!=null)?em[r.owner]:null;
+    const tid=(r&&r.owner!=null)?eim[r.owner]:null;
     if(!tid) return;
     (squads[tid]=squads[tid]||[]).push(r.element);
     owned.add(r.element);
   });
-  if(!Object.keys(squads).length){ toast('No squads matched — check FPL Sync for unmatched entries first',true); return false; }
+  if(!Object.keys(squads).length){ toast('No squads matched — run "Sync & stage gameweeks" first if you haven\'t recently, then try again',true); return false; }
   const players={};
   ((boot&&boot.elements)||[]).forEach(el=>{
     if(!owned.has(el.id)) return;
@@ -5283,13 +5287,25 @@ function ingestFpl(det,boot){
   const hbInp=document.getElementById('fplHoldback');
   if(hbInp) S.sim.holdback=Math.max(0,parseInt(hbInp.value)||0);
   const unmatched=[];
+  if(!S.fpl.entryIdMap) S.fpl.entryIdMap={};
   det.league_entries.forEach(en=>{
     // Match on the manager's real name first (fixed, anchors login/mapping), falling back
     // to the FPL team name only if that fails — protects against an owner renaming their
     // FPL team mid-season and silently breaking the sync.
     const playerName=((en.player_first_name||'')+' '+(en.player_last_name||'')).trim();
     const tid=matchTeamName(playerName)||matchTeamName(en.entry_name||'');
-    if(tid) S.fpl.entryMap[en.id]=tid; else if(en.entry_name) unmatched.push(en.entry_name+' ('+(playerName||'no manager name')+')');
+    if(tid){
+      S.fpl.entryMap[en.id]=tid;
+      // Batch 33 fix: league_entries carries TWO different ids per manager — `id` (the
+      // league-scoped id that entryMap above is keyed by, and that matches[].league_entry_1/2
+      // use) and `entry_id` (FPL's global/classic entry id). They're both small integers in the
+      // same rough range, easy to assume are the same thing — they are not. element-status'
+      // `owner` field (used to build squads) turns out to be `entry_id`, verified directly
+      // against the live API — a prior version of this code looked it up in entryMap (keyed by
+      // `id`) and silently matched zero players, every single sync. This second map is what
+      // fixes that.
+      if(en.entry_id!=null) S.fpl.entryIdMap[en.entry_id]=tid;
+    } else if(en.entry_name) unmatched.push(en.entry_name+' ('+(playerName||'no manager name')+')');
   });
   const em=S.fpl.entryMap;
   S.history=[]; S.fplFixtures={}; S.sim.events={};
