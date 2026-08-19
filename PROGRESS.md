@@ -566,9 +566,27 @@ real money. Batch-by-batch: implement, verify, commit, push, move to next.
   remains anywhere in the file. No browser extension available in this session to visually
   confirm keystroke-by-keystroke — flagged plainly rather than claiming a visual check that
   didn't happen; worth a quick manual look once live.
-- [ ] 38. Mobile bet-slip placement — on mobile, the slip currently renders at the very
-  bottom of the page below every gameweek board, forcing a long scroll after adding a leg.
-  Move it to render directly under the current/open gameweek's board on mobile.
+- [x] 38. Mobile bet-slip placement — root cause: `.grid2` (`h2/#stakeInput/etc. content` +
+  `.slip` sidebar) collapses to a single column under 880px via CSS, and since `.slip` was
+  always the second grid child in DOM order, it landed below every gameweek board once
+  stacked. `vSlip()` renders fixed ids (`#stakeInput` etc.) so it can't just be duplicated
+  into two DOM locations gated by CSS — `getElementById` would always resolve to whichever
+  copy came first regardless of which was visually shown, breaking the slip on one layout.
+  Fix: `vBuilder()` now builds the slip HTML once and places that single instance into
+  whichever of two slots actually matches the real viewport (`isMobileLayout()`, same 880px
+  cutoff as the CSS) — directly under the current (first, open-by-default) gameweek board on
+  mobile, or the existing sticky sidebar on desktop. New debounced `resize` listener
+  (`watchLayoutBreakpoint()`) re-renders only when a resize actually crosses the 880px
+  boundary — not on every resize event, so a mobile virtual keyboard opening (which changes
+  `innerHeight`, not `innerWidth`) can never trigger a spurious re-render mid-typing (would
+  have undone batch 37's fix). In-play tab unaffected — its gw-board HTML still isn't built
+  at all when `builderSec==='inplay'` (same short-circuit as before this batch), it only
+  gained the mobile/desktop slip-slot logic like the pre-match tab. Verified via brace/
+  paren/bracket/backtick balance (`{`2631/2631 `(`5605/5605 `[`538/538, 862 backticks) and a
+  manual trace of both branches (mobile/desktop × pre/inplay) confirming exactly one
+  `vSlip()` output ever lands in the returned HTML. No browser extension available this
+  session to visually confirm at a real phone width — flagged plainly, worth a quick look
+  once live.
 - [ ] 39. Player-requested bespoke bets + Settler support — new player-facing "request a
   bespoke bet" flow (free-text description + their proposed odds), landing with the house
   for review/recalculation (reuse the existing counter-offer negotiation pattern) before

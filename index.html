@@ -996,6 +996,22 @@ function setSyncDot(connected) {
   d.classList.toggle('off', !connected);
   d.title = connected ? 'Live — connected' : 'Reconnecting…';
 }
+// Batch 38: re-render only when a resize actually crosses the mobile/desktop layout breakpoint
+// (isMobileLayout's 880px, matching .grid2's own media query) — not on every resize event, so a
+// mobile virtual keyboard opening (which changes innerHeight, not innerWidth) never triggers a
+// spurious re-render mid-typing.
+let _wasMobileLayout = null, _resizeTimer = null;
+function watchLayoutBreakpoint() {
+  _wasMobileLayout = isMobileLayout();
+  window.addEventListener('resize', () => {
+    clearTimeout(_resizeTimer);
+    _resizeTimer = setTimeout(() => {
+      const nowMobile = isMobileLayout();
+      if (nowMobile !== _wasMobileLayout) { _wasMobileLayout = nowMobile; if (me) render(); }
+    }, 200);
+  });
+}
+watchLayoutBreakpoint();
 
 /* ================================================================
    AUTH — 6-digit PIN
@@ -2189,6 +2205,14 @@ function submitBet({gwId, legs, effOdds, stake, viaAlgo, boostPct, freeBetAmount
 }
 
 /* ---- Bet Builder ---- */
+// Batch 38: on mobile the slip used to always sit at the very end of the page (as the second
+// .grid2 column, which stacks below everything once the grid collapses to one column under
+// 880px — the same breakpoint checked here), forcing a scroll past every other gameweek board
+// to find it after adding a leg. Fix renders the ONE vSlip() instance (it carries fixed ids
+// like #stakeInput — two copies in the DOM at once would break getElementById) into whichever
+// of two possible slots actually matches the real viewport width: right under the current
+// (first, open-by-default) gameweek board on mobile, or the sticky sidebar column on desktop.
+function isMobileLayout(){ return window.innerWidth<=880; }
 function vBuilder(){
   const open=publishedGws();
   const pre=open.filter(g=>bettableNow(g)==='pre');
@@ -2199,6 +2223,17 @@ function vBuilder(){
   // what's coming, per the house's request. Sorted earliest-first since that's the order
   // they'll actually get published in.
   const upcoming=builderSec==='pre'?S.gameweeks.filter(g=>g.status==='draft').sort((a,b)=>(a.event||0)-(b.event||0)):[];
+  // Only build gw-board HTML for the section actually being shown — the in-play tab renders
+  // just its coming-soon banner (below), so skip the vGwBoard() calls entirely there, same as
+  // before this batch.
+  let currentBoard='', restBoards='';
+  if(builderSec!=='inplay'){
+    const ordered=list.slice().reverse();
+    currentBoard=ordered.length?vGwBoard(ordered[0],true,builderSec):'';
+    restBoards=ordered.slice(1).map(g=>vGwBoard(g,false,builderSec)).join('');
+  }
+  const slipHtml=vSlip();
+  const mobile=isMobileLayout();
   return `<div class="grid2"><div>
     <h2>Bet Builder</h2>
     <div class="sub">Pick your spots, stack your legs, back yourself.</div>
@@ -2217,11 +2252,13 @@ function vBuilder(){
     ${builderSec==='inplay'?`<div class="card inplay-soon-banner"><b>🚧 In-play betting — Coming soon</b><div class="muted small" style="margin-top:4px">Nothing to see here yet — check back once this is live.</div></div>`:`
     ${list.length===0?`<div class="card"><h3>😴 Nothing open for pre-match betting</h3><p class="muted">The house has not published a board yet.</p></div>`:''}
     ${paused.length?paused.map(g=>`<div class="card"><h3>⏸ ${esc(g.name)}</h3><p class="muted">Cutoff passed — betting is paused until first kick-off${g.kickoff?' ('+fmtDT(g.kickoff)+')':''}, then In-Play opens.</p></div>`).join(''):''}
-    ${list.slice().reverse().map((g,idx)=>vGwBoard(g,idx===0,builderSec)).join('')}
+    ${currentBoard}
+    ${mobile?`<div class="slip" style="position:static;margin:14px 0">${slipHtml}</div>`:''}
+    ${restBoards}
     ${upcoming.length?`<h3 style="margin:18px 0 8px">📅 Coming up (${upcoming.length})</h3>${upcoming.map(g=>vGwBoard(g,false,'upcoming')).join('')}`:''}
     `}
   </div>
-  <div class="slip">${vSlip()}</div></div>`;
+  ${mobile?'':`<div class="slip">${slipHtml}</div>`}</div>`;
 }
 
 // Batch 20: renders the admin-added special markets (gw.specialMarkets[], built in the Loader's
