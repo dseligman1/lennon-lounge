@@ -106,20 +106,43 @@ polish and financial correctness get Opus 5, contained data/UI plumbing gets Son
   Edge run exercising the actual restore pipeline end-to-end with a fake backup file
   (FileReader → migrate → confirm → saveFields all fired correctly, zero console errors).
   Commit 3884313.
-- [ ] 27. (Sonnet) Season-long / mid-season / bespoke special markets — new market
-  scope NOT tied to a gameweek. New `S.seasonMarkets[]` (separate from `gw.
-  specialMarkets[]`), each `{id,name,kind,scope:{type:'season'|'midseason'|'date',
-  settleAt},teamId?,line?,odds,status:'open'|'settled',result?,createdAt}`. New
-  templates: full-season winner, most points, most wins, most draws ("wins draft"
-  — confirm this means most-draws with the user if it renders ambiguously in
-  practice), plus a bespoke builder (admin types a custom name/description and
-  picks a settle-by date+time, e.g. "Top of the table — midnight 25 Dec") reusing
-  the existing `dtPicker` widget from batch 2. New admin section in `vLoader()`,
-  rendered as a clearly separate card BELOW the existing per-gameweek special-
-  markets card (own heading, e.g. "🏆 Season & bespoke markets") so the gameweek
-  flow stays clean. New lightweight settle action (admin marks a season market's
-  winner/result → grades any placed legs, adapts `settleBet`-style logic for a
-  leg that isn't tied to `gw.matches`). Verify same as batch 26.
+- [x] 27. (Sonnet) Season-long / mid-season / bespoke special markets — new `S.
+  seasonMarkets[]` (added to `freshState()` + `migrate()`'s array-normalisation list,
+  same pattern as `rewardRules`/`rewardGrants`), a sibling to `gw.specialMarkets[]`
+  (batch 20) but NOT tied to any gameweek. Each market: `{id,name,kind,scope:{type:
+  'season'|'midseason'|'date',settleAt},teamId?,line?,odds,status:'open'|'settled',
+  result?,createdAt,createdBy}`. New `SEASON_MARKET_TEMPLATES` (Most Points, Most
+  Wins, "League Winner (wins the Draft)" — user confirmed "wins draft" means wins
+  the actual FPL Draft league outright, named unambiguously in the UI as "League
+  Winner"), plus a bespoke free-text builder (name/description + settle-by date via
+  the existing `dtPicker` widget from batch 2, e.g. "Top of the table — midnight 25
+  Dec"). New "🏆 Season & bespoke markets" card (`seasonMarketBuilderCard()`) — note:
+  the spec's cited call site (~line 3384-3411, where `specialMarketBuilderCard()` is
+  called) is actually `vOddSetter()`, not `vLoader()` (the fixture-loading view is
+  separate); added the new card there, directly below the existing per-gameweek
+  specials card, own heading, so that flow stays clean. Suggested-odds heuristic
+  (`seasonStandingsTally()`/`suggestSeasonOdds()`, same softmax-off-a-strength-number
+  shape as batch 20's `suggestSpecialOdds()` top_score branch) using the same
+  pf/w/pts tally `vStandings()`'s FPL League table already computes. Lightweight
+  settle action (`settleSeasonMarket()`): admin picks won/lost/void per market (with
+  a non-binding "current standings leader" hint), grading only bets/legs referencing
+  that specific market via new `evalSeasonLeg()`/`settleSeasonBet()` (a parallel path
+  to `evalLeg()`/`settleBet()`, since a season leg isn't tied to `gw.matches` or a
+  single `bet.gwId`). Player-facing bet placement (`vSeasonBets()`, `addSeasonLeg()`)
+  is explicitly deferred to batch 28 per the spec — `evalSeasonLeg()`/
+  `settleSeasonBet()` are forward-compatible plumbing only, dead code today since
+  nothing places a `type:'season'` leg yet anywhere in the app. Verified via a
+  brace/paren/bracket/backtick balance check on the full script (all balanced: `{`
+  1766/1766, `(` 3951/3951, `[` 440/440, 664 backticks) and a headless Edge
+  (`--dump-dom`) run against a harness that stubbed `firebase.initializeApp`/
+  `database()` entirely (no network/live-DB touch at all) plus `save()`/`saveNow()`/
+  `startListener()`, seeded 3 sample season markets (open template, open bespoke,
+  settled), logged in as an admin team, exercised the builder's mode-toggle/
+  template-pick/scope-select/settle-panel functions the way a real click would, then
+  re-rendered — zero JS errors caught via `window.onerror`, confirmed the new card
+  and all 3 seeded markets present in the rendered `#view` DOM, correct suggested
+  odds/scope-label/status-pill/settle-hint text all rendered as expected. Commit
+  `e139f11`.
 - [ ] 28. (Sonnet) Dedicated "Season Bets" card/page — depends on batch 27's `S.
   seasonMarkets[]`. Adds a compact "🏆 Season Bets" summary card (open-market
   count + link) to Home and Bet Builder, clicking through to a new `vSeasonBets()`
