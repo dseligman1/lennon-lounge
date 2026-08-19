@@ -1,0 +1,116 @@
+name: Weekly Backup
+
+on:
+  # Batch 26: the safety net for Back Office's "wipe betting data" button (and anything else
+  # that goes wrong) — a full snapshot of the database, taken automatically so nobody has to
+  # remember to. Runs on a schedule AND can be triggered manually (via this page's "Run
+  # workflow" button, or the shortcut link in the app's Back Office → Backups card).
+  schedule:
+    # Every Monday 06:00 UTC — after the weekend's games are long done, well clear of any
+    # Sunday in-play window, and before anyone's usual "sync & settle" routine that day.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+# Needed so the final step can commit the snapshot back into this repo using the default
+# GITHUB_TOKEN — without this the checkout/push has read-only access and the commit step fails.
+permissions:
+  contents: write
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read Firebase and write dated snapshot
+        env:
+          FIREBASE_DB_URL: ${{ secrets.FIREBASE_DB_URL }}
+          FIREBASE_SERVICE_KEY: ${{ secrets.FIREBASE_SERVICE_KEY }}
+        run: |
+          node - << 'EOF'
+          // Mirrors fpl-sync.yml's Firebase service-account auth (JWT → OAuth access token)
+          // exactly — same secrets, same flow — just doing a single unauthenticated-read-turned-
+          // authenticated-read of the whole ROOT node instead of a targeted fetch/patch.
+          const https = require('https');
+          const fs = require('fs');
+
+          const DB_URL = process.env.FIREBASE_DB_URL;
+          const SERVICE_KEY = JSON.parse(process.env.FIREBASE_SERVICE_KEY);
+
+          async function getAccessToken(serviceKey) {
+            const { private_key: privateKey, client_email: clientEmail } = serviceKey;
+            const now = Math.floor(Date.now() / 1000);
+            const payload = {
+              iss: clientEmail, sub: clientEmail,
+              aud: 'https://oauth2.googleapis.com/token',
+              iat: now, exp: now + 3600,
+              scope: 'https://www.googleapis.com/auth/firebase.database https://www.googleapis.com/auth/userinfo.email'
+            };
+            const { createSign } = require('crypto');
+            const header = Buffer.from(JSON.stringify({alg:'RS256',typ:'JWT'})).toString('base64url');
+            const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+            const sign = createSign('RSA-SHA256');
+            sign.update(`${header}.${body}`);
+            const sig = sign.sign(privateKey, 'base64url');
+            const jwt = `${header}.${body}.${sig}`;
+
+            return new Promise((resolve, reject) => {
+              const postData = `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`;
+              const req = https.request({
+                hostname: 'oauth2.googleapis.com', path: '/token', method: 'POST',
+                headers: {'Content-Type':'application/x-www-form-urlencoded','Content-Length':postData.length}
+              }, res => {
+                let d = '';
+                res.on('data', c => d += c);
+                res.on('end', () => { try { resolve(JSON.parse(d).access_token); } catch(e) { reject(e); } });
+              });
+              req.on('error', reject);
+              req.write(postData);
+              req.end();
+            });
+          }
+
+          function readFirebase(path, token) {
+            const dbHost = DB_URL.replace('https://','').replace(/\/$/, '');
+            return new Promise((resolve, reject) => {
+              https.get({
+                hostname: dbHost, path: `/${path}.json`,
+                headers: { 'Authorization': `Bearer ${token}` }
+              }, res => {
+                let d = '';
+                res.on('data', c => d += c);
+                res.on('end', () => {
+                  try { resolve(JSON.parse(d)); }
+                  catch(e) { reject(new Error('Parse error reading ' + path + ': ' + d.slice(0,200))); }
+                });
+              }).on('error', reject);
+            });
+          }
+
+          async function main() {
+            const token = await getAccessToken(SERVICE_KEY);
+            const data = await readFirebase('lennon-lounge', token);
+            if (!data) { console.log('Nothing at lennon-lounge root — skipping (empty database?).'); return; }
+
+            fs.mkdirSync('backups', { recursive: true });
+            const date = new Date().toISOString().slice(0, 10); // YYYY-MM-DD, UTC
+            const outPath = `backups/${date}.json`;
+            fs.writeFileSync(outPath, JSON.stringify(data, null, 2));
+            console.log(`Wrote ${outPath} (${JSON.stringify(data).length} bytes)`);
+          }
+
+          main().catch(e => { console.error('Backup failed:', e); process.exit(1); });
+          EOF
+
+      - name: Commit and push snapshot
+        run: |
+          git config user.name "Lennon Lounge Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add backups/
+          if git diff --cached --quiet; then
+            echo "No changes to commit (identical to the last snapshot, or nothing was written)."
+          else
+            git commit -m "Weekly backup: $(date -u +%Y-%m-%d)"
+            git push
+          fi

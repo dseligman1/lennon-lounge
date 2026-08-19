@@ -231,6 +231,12 @@ against what FPL has on file for them.
 
 There's no auto-refresh in between — nothing changes underneath you until you next click sync.
 
+**Backups (set-and-forget):** a full snapshot of the database is committed automatically every
+Monday morning to this repo's `backups/` folder (`.github/workflows/backup.yml`) — no action
+needed. If you ever need to roll back (e.g. after "wipe betting data" or any other mistake),
+Back Office → Backups has a manual "Run backup now" link plus a "Restore from backup file"
+uploader that accepts either that folder's files or an in-app Export JSON download.
+
 ---
 
 ## Betting cutoff — how it's calculated

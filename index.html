@@ -3899,6 +3899,18 @@ function vOffice(){
     <button class="btn danger" onclick="clearTestData()">Clear all gameweeks, bets & promos</button>
     <span class="muted small"> Keeps FPL sync, settings and teams. Use if you need a clean slate mid-season without losing your league setup.</span>
   </div>
+  <div class="card glow">
+    <h3>📦 Backups</h3>
+    <p class="muted small">The safety net for the button above (and anything else that goes wrong): a full snapshot of the database is committed automatically to this repo's <code>backups/</code> folder every Monday morning, no action needed. You can also trigger one on demand, grab an instant local copy, or roll back to any past snapshot below.</p>
+    <div class="actions">
+      <a class="btn secondary small" href="https://github.com/dseligman1/lennon-lounge/actions/workflows/backup.yml" target="_blank">▶ Run backup now →</a>
+      <button class="btn secondary small" onclick="exportData()">⬇ Export JSON (instant local copy)</button>
+    </div>
+    <hr class="hr">
+    <p><b>📤 Restore from backup file</b></p>
+    <p class="muted small">Accepts either an "Export JSON" download or a <code>backups/YYYY-MM-DD.json</code> file from the Action — same shape either way. <b>This OVERWRITES current gameweeks, bets, promos, rewards and history/standings</b> with whatever's in the file. There's no undo from inside the app except restoring an even older backup.</p>
+    <input type="file" id="restoreFileInput" accept="application/json,.json" onchange="restoreBackupPick(this)">
+  </div>
   <div class="card"><details><summary>📜 Audit log (${S.audit.length})</summary>
     <div style="overflow-x:auto"><table style="margin-top:10px"><tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th></tr>
     ${S.audit.slice(-60).reverse().map(a=>`<tr><td class="small mono">${fmtDT(a.at)}</td><td class="small">${team(a.by)?esc(team(a.by).owner):esc(a.by)}</td><td class="small"><b>${esc(a.action)}</b></td><td class="small muted">${esc(a.detail)}</td></tr>`).join('')||'<tr><td colspan="4" class="muted small">No edits yet.</td></tr>'}</table></div>
@@ -4101,6 +4113,44 @@ function exportData(){
   a.href=URL.createObjectURL(blob);
   a.download='lennon-lounge-'+new Date().toISOString().slice(0,10)+'.json';
   a.click();
+}
+// Batch 26: restore the whole database from either an exportData() download or a
+// backups/YYYY-MM-DD.json file written by .github/workflows/backup.yml — both dump the same
+// shape (the full ROOT node). Reuses the FileReader pattern already used elsewhere (attachShot)
+// for local file reads, and migrate() to normalise Firebase's array-as-object encoding — a raw
+// Action dump straight off the REST API hasn't been through startListener()'s migrate() call the
+// way S normally has, so without this, saveFields() would write plain objects where the rest of
+// the app expects real arrays (.filter/.map/.forEach) and silently break everything downstream.
+function restoreBackupPick(input){
+  if(!requireAdmin()){ input.value=''; return; }
+  const f=input.files&&input.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=e=>{
+    let raw;
+    try{ raw=JSON.parse(e.target.result); }
+    catch(err){ toast('Could not parse that file as JSON',true); input.value=''; return; }
+    if(!raw||typeof raw!=='object'||!('gameweeks' in raw)||!('bets' in raw)||!('teams' in raw)){
+      toast('Does not look like a Lennon Lounge backup file',true); input.value=''; return;
+    }
+    const data=migrate(raw);
+    if(!confirm('⚠️ RESTORE FROM BACKUP\n\nThis will OVERWRITE current gameweeks, bets, promos, rewards and history/standings with the contents of "'+f.name+'". Anything placed or settled since that snapshot was taken will be LOST. This cannot be undone except by restoring an even older backup.\n\nContinue?')){
+      input.value=''; return;
+    }
+    // Retarget S.audit to the incoming (older) log first, then log the restore itself onto the
+    // END of it, so the "a restore happened" trail survives even though the rest of the audit
+    // history was just rolled back — and it goes out in the SAME write as the rest of the
+    // restored state, not a separate one that could land out of order.
+    S.audit=Array.isArray(data.audit)?data.audit:[];
+    audit('backup restored', 'from file '+f.name+' — overwrote gameweeks/bets/promos/rewards/history/standings');
+    data.audit=S.audit;
+    saveFields(data).then(()=>{
+      render();
+      toast('Restored from backup: '+f.name);
+    }).catch(()=>{ toast('Restore failed — see console',true); });
+    input.value='';
+  };
+  r.onerror=()=>{ toast('Could not read that file',true); input.value=''; };
+  r.readAsText(f);
 }
 function resetAll(){
   if(!requireAdmin()) return;
