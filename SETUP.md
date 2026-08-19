@@ -124,56 +124,109 @@ rest — fixtures, results, standings, live in-play scores — pulls in automati
 
 ---
 
-## Step 6 — Set up automatic FPL sync (does everything — do this instead of manual sync)
+## Step 6 — Load a gameweek: the one button you actually use week to week
 
-A GitHub Action fetches your league from FPL's servers directly (server-side, so it isn't
-blocked by the browser CORS restriction the in-app "Sync FPL" button hits) and writes
-fixtures, results, standings and live in-play scores straight to Firebase. Once it's set up
-you never need to touch FPL sync again — no JSON, no copy-pasting.
+Everything lives in **Back Office → 🔗 FPL Sync**. There is one button:
+**"⟳ Sync & stage next gameweek."** Click it and it:
 
-It runs automatically:
-- Every 30 minutes on Saturdays & Sundays, 12:00–23:00 UK time (matchday live scores)
-- Once daily at 6am UTC (catch-all refresh)
-- **Or on demand**, any time, via a button — see "Run it right now" below
+1. Pulls fixtures, results and standings from the FPL Draft API
+2. Works out which gameweek is next (the earliest one that has fixtures but no board yet)
+3. Builds that gameweek's board with recommended odds and drops you straight into **Odds
+   Setter** to review, tweak, and publish
 
-### 1. Create a Firebase Service Account
-1. Firebase Console → **Project Settings → Service Accounts**
-2. Click **Generate new private key** → downloads a JSON file to your computer
+Nothing runs on a schedule — it only does anything when you click it. Repeat once a week,
+whenever you're ready to open the next gameweek for betting (see "Your weekly routine" below).
 
-### 2. Add 3 GitHub Secrets (one-time)
-In your GitHub repo → **Settings → Secrets and variables → Actions → New repository secret**,
-add each of these:
+**Before your first real sync**, set your league ID (Step 5) into the **Draft league ID**
+field in that same card, and check **"Hold back last N GWs" is 0** — it defaults to a
+testing value of 5, which deliberately hides recent real results so you can rehearse the
+betting flow; leave it above 0 for a live season and recent gameweeks will look like they
+haven't happened yet.
 
-| Secret name | Value |
-|---|---|
-| `FIREBASE_DB_URL` | Your database URL (e.g. `https://lennon-lounge-12345-default-rtdb.europe-west1.firebasedatabase.app`) — find it in Firebase Console → Realtime Database |
-| `FIREBASE_SERVICE_KEY` | Open the JSON file from step 1 in a text editor, select all, copy the **entire contents**, paste as the secret value |
-| `FPL_LEAGUE_ID` | The numeric league ID from Step 5 above (e.g. `12345`) |
+### The CORS catch, and your two options
 
-The workflow file (`.github/workflows/fpl-sync.yml`) is already in this repo — GitHub picks
-it up automatically once the secrets exist. Nothing else to configure.
+Browsers block a page from calling `draft.premierleague.com` directly (CORS) — this affects
+every browser, not a bug in this app. That means "Sync & stage" needs one of the two setups
+below to actually reach FPL. Pick one:
 
-### 3. Run it right now ("push of a button")
-1. In your GitHub repo, click the **Actions** tab
-2. Click **FPL Data Sync** in the left sidebar
-3. Click **Run workflow** (top right) → **Run workflow** again to confirm
-4. Wait ~15 seconds, refresh — a green ✅ means it worked. Click into the run and expand
-   the step to see a log line like `Full sync: 6 history result(s), 1 gameweek(s) with
-   fixtures, 0 unmatched entr(y/ies)`
-5. Reload the app — fixtures/standings should now be populated
+**Option A — GitHub Action (works today, needs an extra tab each time you sync)**
 
-Re-run this manual trigger any time you want a sync immediately instead of waiting for the
-schedule (e.g. right after your draft, or right after a gameweek finishes).
+The Action already in this repo (`.github/workflows/fpl-sync.yml`) fetches server-side, where
+CORS doesn't apply, and writes straight to Firebase. Set it up once:
 
-**One thing to check first:** in the app, go to **Back Office → FPL Settings** and make sure
-**"Hold back last N GWs"** is set to **0** before your first real sync. That field is a
-testing toggle (defaults to 5) that deliberately hides the most recent real gameweeks so you
-can rehearse the betting flow against real historical data — leave it above 0 for a live
-season and recent results will look like they haven't happened yet.
+1. Firebase Console → **Project Settings → Service Accounts → Generate new private key**
+   → downloads a JSON file
+2. GitHub repo → **Settings → Secrets and variables → Actions → New repository secret**,
+   add all three:
 
-**If a run ever shows unmatched entries** in its log: that means an FPL manager's registered
-name (or team name) on the draft site doesn't match anyone in the app's team list (see
-"Team & player names" below) — check spelling against what FPL has on file for them.
+   | Secret name | Value |
+   |---|---|
+   | `FIREBASE_DB_URL` | Your database URL, e.g. `https://lennon-lounge-12345-default-rtdb.europe-west1.firebasedatabase.app` |
+   | `FIREBASE_SERVICE_KEY` | Entire contents of the JSON file from step 1 |
+   | `FPL_LEAGUE_ID` | The numeric league ID from Step 5 |
+
+Then each week: GitHub repo → **Actions → FPL Data Sync → Run workflow** → confirm → wait
+~15 seconds → back in the app, click **Sync & stage next gameweek** (it'll now find the fresh
+data already sitting in Firebase and stage from it, CORS or not). Back Office → FPL Sync also
+has a direct link to the Actions page so you don't have to go hunting for it.
+
+**Option B — Cloudflare Worker proxy (one-time ~3 min setup, then truly one click forever)**
+
+A tiny free proxy that adds the CORS header the browser needs, so "Sync & stage" fetches live
+data itself with no GitHub tab, ever. No local tools needed — everything happens in a browser.
+
+1. Go to [dash.cloudflare.com/sign-up](https://dash.cloudflare.com/sign-up) → create a free
+   account (no credit card needed for the free tier)
+2. In the dashboard: **Workers & Pages → Create → Create Worker** → give it any name (e.g.
+   `lennon-lounge-fpl-proxy`) → **Deploy** (deploys a placeholder first, that's fine)
+3. Click **Edit code** (or "Quick edit") to open the built-in code editor
+4. Delete everything in the editor and paste this in its place:
+
+   ```js
+   export default {
+     async fetch(request) {
+       const url = new URL(request.url);
+       const upstreamPath = url.pathname.replace(/^\/api\//, '');
+       if (!upstreamPath) return new Response('Missing path', { status: 400 });
+       const resp = await fetch('https://draft.premierleague.com/api/' + upstreamPath + url.search, {
+         headers: { 'User-Agent': 'Mozilla/5.0' }
+       });
+       const body = await resp.text();
+       return new Response(body, {
+         status: resp.status,
+         headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+       });
+     }
+   };
+   ```
+
+5. Click **Save and deploy**
+6. Copy the Worker's URL from the top of the page (looks like
+   `https://lennon-lounge-fpl-proxy.YOUR-SUBDOMAIN.workers.dev`) and add `/api` to the end
+7. In the app: **Back Office → FPL Sync → ⚙️ Advanced → Proxy URL** → paste that URL (with
+   `/api` on the end) → **Save**
+
+From then on, **Sync & stage next gameweek** fetches live data directly — no GitHub tab
+needed. This proxy only ever reads public FPL data; it doesn't touch your Firebase database
+or hold any of your secrets.
+
+Either option (or both — the app tries direct, then the proxy if set, then falls back to
+whatever's already synced) works fine. Option A needs zero new accounts but an extra tab each
+week; Option B is a one-time setup for a genuinely single in-app click from then on.
+
+**If a sync ever shows unmatched entries**: an FPL manager's registered name (or team name)
+doesn't match anyone in the app's team list — see "Team & player names" above, check spelling
+against what FPL has on file for them.
+
+### Your weekly routine
+
+1. Wait until a gameweek's results are official/final on FPL's own standings page
+2. Back Office → FPL Sync → **Sync & stage next gameweek**
+3. You land in Odds Setter with the new gameweek as a draft — tweak odds/cutoff/special
+   markets if you want, then **Publish** to open it for betting
+4. Settler → settle the *previous* gameweek's bets once you're confident its results are final
+
+There's no auto-refresh in between — nothing changes underneath you until you next click sync.
 
 ---
 
@@ -214,20 +267,35 @@ This is sufficient for a private league where all 12 members share the same port
 **"Connecting to Lennon Lounge..." never goes away**  
 → Check your `FIREBASE_CONFIG` values in the HTML. The `databaseURL` is the most commonly wrong field.
 
-**FPL sync shows "CORS error" when I click the in-app Sync FPL button**  
-→ Expected — the FPL API blocks direct browser requests. Don't fight it: set up the GitHub
-Actions workflow instead (Step 6) and use its "Run workflow" button — that runs server-side
-and isn't affected by CORS. The in-app paste box still exists as a last-resort fallback if
-GitHub Actions is ever unavailable to you.
+**"Sync & stage next gameweek" shows a CORS message**  
+→ Expected unless you've set up Option A or B in Step 6 — the FPL API blocks direct browser
+requests for everyone, not just this app. It still stages from whatever's already synced
+(e.g. from a previous GitHub Action run), so it's not a dead end — but for fresh data, run
+the GitHub Action first (a link is right there in the fallback message) or set up the
+Cloudflare proxy so this stops happening entirely.
 
-**GitHub Action run shows unmatched entries in its log**  
+**A sync (either option) shows unmatched entries in its log/toast**  
 → An FPL manager's registered name (or FPL team name) doesn't match anyone in `TEAMS`. See
-"Team & player names" above — check spelling/edit the `fplName` field for that team.
+"Team & player names" above — check spelling/edit the `fplName` field for that team (in both
+`index.html` and `.github/workflows/fpl-sync.yml` if you're using the GitHub Action).
 
 **Fixtures/results loaded but a gameweek looks like it "hasn't happened" when it clearly has**  
-→ Check **Back Office → FPL Settings → "Hold back last N GWs"**. It should be `0` for a live
+→ Check **Back Office → FPL Sync → "Hold back last N GWs"**. It should be `0` for a live
 season — anything above 0 deliberately hides the most recent real gameweeks (a testing
 feature, see Step 6).
+
+**Gameweeks/bets look wrong, made up, or like a fake "week 2" out of nowhere**  
+→ Someone (probably you, while testing) clicked **Back Office → 🧪 Test tools → "Load test
+gameweeks & odds"**. It seeds fake settled/open/in-play gameweeks with fake bets for trying
+the app out — harmless, but easy to mistake for real synced data. Fix: **Back Office → 🧪
+Test tools → "🧹 Clear test data"** — wipes gameweeks/bets/promos/rewards only, leaves your
+FPL sync setup, settings and teams untouched. Do this once before a real season starts.
+
+**I can't find the "Gameweek Loader" tab any more**  
+→ Removed from the main nav — the FPL sync now stages gameweeks automatically (Step 6), so
+manually picking fixtures from dropdowns isn't needed for the normal weekly flow any more.
+It's still there as an emergency fallback (if FPL data ever won't sync) via **Back Office →
+FPL Sync → ⚙️ Advanced → "Manual fixture entry."**
 
 **Someone forgot their PIN**  
 → Admin goes to Back Office → All PINs, reads it out to them. Or click Reset to generate a new one.

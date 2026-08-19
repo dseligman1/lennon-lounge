@@ -638,7 +638,7 @@ function freshState() {
     teams: TEAMS.map(t => ({id:t.id, name:t.name, owner:t.owner, fplName:t.fplName, admin:t.admin})),
     stats: Object.fromEntries(TEAMS.map(t => [t.id, {base:t.base}])),
     gameweeks: [], bets: [], promos: [], chat: [], audit: [],
-    fpl: {leagueId:'', entryMap:{}, events:{}, lastSync:null},
+    fpl: {leagueId:'', entryMap:{}, events:{}, lastSync:null, proxyUrl:''},
     history: [], fplFixtures: {},
     sim: {holdback:5, events:{}},
     // Batch 17: promotions/rewards system. Distinct from `promos` above (that's the older
@@ -702,7 +702,8 @@ function migrate(s) {
   Object.keys(s.rewards).forEach(tid => { s.rewards[tid] = Array.isArray(s.rewards[tid]) ? s.rewards[tid] : Object.values(s.rewards[tid]||{}); });
   if (!s.rewardRules) s.rewardRules = [];
   if (!s.rewardGrants) s.rewardGrants = [];
-  if (!s.fpl) s.fpl = {leagueId:'', entryMap:{}, events:{}, lastSync:null};
+  if (!s.fpl) s.fpl = {leagueId:'', entryMap:{}, events:{}, lastSync:null, proxyUrl:''};
+  if (s.fpl && s.fpl.proxyUrl == null) s.fpl.proxyUrl = '';
   if (!s.fplFixtures) s.fplFixtures = {};
   if (!s.sim) s.sim = {holdback:5, events:{}};
   if (s.settings && s.settings.algoEdgePct == null) s.settings.algoEdgePct = 20;
@@ -1646,7 +1647,6 @@ function navTabs(){
   ];
   if(me.admin) tabs.push(
     {id:'review',label:'🏠 Bet Review',house:true,badge:reviewCount()},
-    {id:'loader',label:'📥 GW Loader',house:true},
     {id:'odds',label:'🎯 Odds Setter',house:true},
     {id:'settler',label:'⚖️ Settler',house:true},
     {id:'promos',label:'🎁 Promotions',house:true},
@@ -1903,13 +1903,14 @@ function vBuilder(){
     <div class="sub">Pick your spots, stack your legs, back yourself.</div>
     <div class="sectabs">
       <button class="${builderSec==='pre'?'active':''}" onclick="builderSec='pre';render()">📅 Pre-match<span class="cnt">${pre.length}</span></button>
-      <button class="${builderSec==='inplay'?'active':''}" onclick="builderSec='inplay';render()">🔴 In-Play<span class="cnt">${inplay.length}</span>${inplay.length?'<span class="dotflag"></span>':''}</button>
+      <button class="${builderSec==='inplay'?'active':''}" onclick="builderSec='inplay';render()">🔴 In-Play</button>
     </div>
-    ${vAlgoZone()}
-    ${builderSec==='inplay'?`<div class="card inplay-soon-banner"><b>🚧 In-play betting — Coming soon</b><div class="muted small" style="margin-top:4px">Live boards below are shown for reference — odds and scores keep updating, but placing new in-play bets isn't available yet.</div></div>`:''}
-    ${list.length===0?`<div class="card"><h3>😴 Nothing ${builderSec==='pre'?'open for pre-match betting':'live in-play right now'}</h3><p class="muted">${builderSec==='inplay'?'In-play opens at first kick-off and runs until the house closes the window.':'The house has not published a board yet.'}</p>${me.admin?`<button class="btn small gold" style="margin-top:10px" onclick="seedTestData()">🧪 Load test gameweeks & odds</button>`:''}</div>`:''}
-    ${builderSec==='pre'&&paused.length?paused.map(g=>`<div class="card"><h3>⏸ ${esc(g.name)}</h3><p class="muted">Cutoff passed — betting is paused until first kick-off${g.kickoff?' ('+fmtDT(g.kickoff)+')':''}, then In-Play opens.</p></div>`).join(''):''}
+    ${builderSec==='pre'?vAlgoZone():''}
+    ${builderSec==='inplay'?`<div class="card inplay-soon-banner"><b>🚧 In-play betting — Coming soon</b><div class="muted small" style="margin-top:4px">Nothing to see here yet — check back once this is live.</div></div>`:`
+    ${list.length===0?`<div class="card"><h3>😴 Nothing open for pre-match betting</h3><p class="muted">The house has not published a board yet.</p>${me.admin?`<button class="btn small gold" style="margin-top:10px" onclick="seedTestData()">🧪 Load test gameweeks & odds</button>`:''}</div>`:''}
+    ${paused.length?paused.map(g=>`<div class="card"><h3>⏸ ${esc(g.name)}</h3><p class="muted">Cutoff passed — betting is paused until first kick-off${g.kickoff?' ('+fmtDT(g.kickoff)+')':''}, then In-Play opens.</p></div>`).join(''):''}
     ${list.slice().reverse().map((g,idx)=>vGwBoard(g,idx===0,builderSec)).join('')}
+    `}
   </div>
   <div class="slip">${vSlip()}</div></div>`;
 }
@@ -3257,14 +3258,14 @@ function vLoader(){
   const cutoff=ko?ko-90*60000:(d.fplDeadline||null);
   const now=Date.now();
   const fplEvents=Object.keys(S.fplFixtures).map(Number).sort((a,b)=>a-b).slice(0,4);
-  return `<h2>Gameweek Loader</h2><div class="sub">Get fixtures in, in under a minute. All times UK.</div>
-  <div class="card glow">
-    <h3>🔗 One-click import from FPL</h3>
-    <p class="muted small">Synced ${S.fpl.lastSync?fmtDT(S.fpl.lastSync):'never'} · fixtures, cutoffs and form straight from the draft API.</p>
-    ${fplEvents.length?fplEvents.map(ev=>`<button class="btn small" style="margin:0 8px 8px 0" onclick="importFplEvent(${ev})">⬇ Import GW ${ev}${S.fpl.events[ev]&&S.fpl.events[ev].deadline?' · cutoff '+fmtDT(S.fpl.events[ev].deadline):''}</button>`).join(''):'<p class="muted small">No upcoming FPL fixtures — run a sync first in Back Office.</p>'}
-  </div>
-  <details ${fplEvents.length?'':'open'} style="margin:12px 0">
-    <summary style="cursor:pointer;font-weight:800;padding:6px 0">✏️ Manual entry (fallback) — only needed if FPL import isn't available</summary>
+  return `<h2>Manual Fixture Entry</h2><div class="sub">Emergency fallback only — Back Office → FPL Sync → "Sync & stage next gameweek" is the normal way to get a gameweek loaded. Use this if FPL data ever won't sync and you need to key a week in by hand. All times UK.</div>
+  ${fplEvents.length?`<div class="card">
+    <h3>🔗 Import a specific synced gameweek</h3>
+    <p class="muted small">Synced ${S.fpl.lastSync?fmtDT(S.fpl.lastSync):'never'}. Only needed if you want a gameweek other than the next one Back Office would stage.</p>
+    ${fplEvents.map(ev=>`<button class="btn small" style="margin:0 8px 8px 0" onclick="importFplEvent(${ev})">⬇ Import GW ${ev}${S.fpl.events[ev]&&S.fpl.events[ev].deadline?' · cutoff '+fmtDT(S.fpl.events[ev].deadline):''}</button>`).join('')}
+  </div>`:''}
+  <details open style="margin:12px 0">
+    <summary style="cursor:pointer;font-weight:800;padding:6px 0">✏️ Manual entry — type fixtures in by hand</summary>
     <div class="card">
       <h3>📛 Name & fixtures</h3>
       <div class="formrow"><div><label>Gameweek name</label><input value="${esc(d.name)}" onchange="loaderDraft.name=this.value" style="width:180px"></div></div>
@@ -3294,10 +3295,9 @@ function vLoader(){
     ${cutoff&&cutoff<=now?`<div class="warnbox red" style="margin-top:8px">⚠ Cutoff has already passed.</div>`:''}
   </div>
   <div class="actions" style="margin:16px 0">
-    <button class="btn big" onclick="saveLoader()">💾 Load gameweek → Odd Setter</button>
+    <button class="btn big" onclick="saveLoader()">💾 Load gameweek → Odds Setter</button>
     <button class="btn secondary" onclick="loaderDraft=blankLoader();dtPickState['loaderKo']={day:null,time:null};render()">Reset</button>
-  </div>
-  ${specialMarketBuilderCard()}`;
+  </div>`;
 }
 function matchTeamName(str){
   const s=str.toLowerCase().trim(); if(!s) return null;
@@ -3353,7 +3353,7 @@ function saveLoader(){
   S.gameweeks.push(g);
   audit('gameweek loaded',g.name+' · cutoff '+fmtDT(deadline));
   save(); loaderDraft=null; dtPickState['loaderKo']={day:null,time:null};
-  toast(g.name+' loaded — review in Odd Setter 🎯');
+  toast(g.name+' loaded — review in Odds Setter 🎯');
   go('odds');
 }
 
@@ -3363,10 +3363,11 @@ function saveLoader(){
 function vOddSetter(){
   const drafts=S.gameweeks.filter(g=>g.status==='draft');
   const open=S.gameweeks.filter(g=>g.status==='open');
-  return `<h2>Odd Setter</h2><div class="sub">Recommended prices come from team form. Tweak, then publish.</div>
-  ${drafts.length===0&&open.length===0?'<div class="card"><p class="muted">Nothing loaded. Use the Gameweek Loader first.</p></div>':''}
+  return `<h2>Odds Setter</h2><div class="sub">Recommended prices come from team form. Tweak, then publish.</div>
+  ${drafts.length===0&&open.length===0?'<div class="card"><p class="muted">Nothing loaded yet. Back Office → FPL Sync → "Sync & stage next gameweek".</p></div>':''}
   ${drafts.map(g=>oddsCard(g,true)).join('')}
   ${open.map(g=>oddsCard(g,false)).join('')}
+  ${(drafts.length||open.length)?specialMarketBuilderCard():''}
   <div class="card"><details><summary>📊 Team form data</summary>
     <div class="statgrid">${S.teams.map(t=>`<div class="codecard"><b>${esc(t.name)}</b><br>
       <span class="muted small">Baseline</span> <input type="number" value="${S.stats[t.id]?S.stats[t.id].base:50}" style="width:64px;padding:4px 7px" onchange="if(!S.stats['${t.id}'])S.stats['${t.id}']={};S.stats['${t.id}'].base=parseFloat(this.value)||50;save()">
@@ -3837,34 +3838,37 @@ function vOffice(){
   </div>
   <div class="card glow">
     <h3>🔗 FPL Sync</h3>
-    <p class="muted small">Pulls fixtures, results and form from draft.premierleague.com. <b>Finding your league ID:</b> log in, open your league — the number in the URL is the ID (draft.premierleague.com/league/<b>123456</b>/standings).</p>
-    <div class="helpbox" style="margin-bottom:10px">
-      <b>Run the real sync here:</b> the browser can't reach the FPL API directly (CORS), so
-      clicking "Sync now" below will always show a CORS message — that's expected, not a bug.
-      The actual sync runs on GitHub, server-side. Click through and hit
-      <b>Run workflow</b> on GitHub's page, then <b>Run workflow</b> again to confirm:
-      <div style="margin-top:8px"><a class="btn small" style="text-decoration:none;display:inline-block" href="https://github.com/dseligman1/lennon-lounge/actions/workflows/fpl-sync.yml" target="_blank">↗ Open FPL Data Sync on GitHub</a></div>
-      It only runs when you trigger it — no automatic 30-min refresh — so settle bets whenever
-      you like, safe in the knowledge nothing changes underneath you until you next click it.
-    </div>
+    <p class="muted small">Pulls fixtures, results and standings from draft.premierleague.com, then stages whichever gameweek is next for you to review in Odds Setter. Nothing runs on a schedule — only when you click.</p>
     <div class="formrow">
       <div><label>Draft league ID</label><input id="fplLeagueId" value="${esc(S.fpl.leagueId||'')}" style="width:140px" placeholder="e.g. 12345"></div>
       <div>
-        <label>Hold back last N GWs</label>
+        <label>Hold back last N GWs <span class="muted small">(testing only — keep 0 live)</span></label>
         <div style="display:flex;gap:6px;align-items:center">
           <input id="fplHoldback" type="number" min="0" max="10" value="${S.sim.holdback}" style="width:80px">
           <button class="btn secondary small" onclick="saveHoldback()">Save</button>
         </div>
       </div>
-      <button class="btn" onclick="fplSync()">⟳ Sync now (browser — will show CORS)</button>
-      <span class="muted small" style="padding-bottom:8px">Last sync: ${S.fpl.lastSync?fmtDT(S.fpl.lastSync):'never'} · ${S.history.length} result(s) in form model</span>
     </div>
+    <div class="actions" style="margin:10px 0">
+      <button class="btn big gold" onclick="syncAndStage()">⟳ Sync &amp; stage next gameweek</button>
+    </div>
+    <span class="muted small">Last sync: ${S.fpl.lastSync?fmtDT(S.fpl.lastSync):'never'} · ${S.history.length} result(s) in form model · ${Object.keys(S.fplFixtures).length} gameweek(s) with fixtures pulled</span>
     <div id="fplFallback" style="display:none">
       <hr class="hr">
-      <p class="muted small">Browser blocked the direct call (CORS — normal for a local file or GitHub Pages). Use the GitHub link above instead — it fetches server-side and isn't affected by this. Last-resort manual fallback: open your <a style="color:var(--cyan)" href="https://draft.premierleague.com/api/league/${esc(S.fpl.leagueId||'YOUR_ID')}/details" target="_blank">league details JSON</a>, copy all, paste here:</p>
+      <p class="muted small">Your browser can't reach the FPL API directly (CORS) and no proxy is set below, so this staged from whatever was already synced. For fresher data first: <a style="color:var(--cyan)" href="https://github.com/dseligman1/lennon-lounge/actions/workflows/fpl-sync.yml" target="_blank">run the GitHub Action</a> (Run workflow → confirm), then click Sync &amp; stage again — or set up the proxy below so this button does the whole thing itself. Last-resort manual fallback: open your <a style="color:var(--cyan)" href="https://draft.premierleague.com/api/league/${esc(S.fpl.leagueId||'YOUR_ID')}/details" target="_blank">league details JSON</a>, copy all, paste here:</p>
       <textarea id="fplPasteBox" placeholder='{"league":{...},"league_entries":[...],"matches":[...]}'></textarea>
       <button class="btn small" style="margin-top:8px" onclick="fplPaste()">Ingest pasted JSON</button>
     </div>
+    <details style="margin-top:12px">
+      <summary style="cursor:pointer;font-weight:800;padding:6px 0">⚙️ Advanced</summary>
+      <div class="formrow" style="margin-top:8px">
+        <div style="flex:1;min-width:220px"><label>Proxy URL <span class="muted small">(optional — see SETUP.md)</span></label>
+          <input id="fplProxyUrl" value="${esc(S.fpl.proxyUrl||'')}" style="width:100%" placeholder="https://your-worker.workers.dev/api"></div>
+        <button class="btn secondary small" onclick="S.fpl.proxyUrl=document.getElementById('fplProxyUrl').value.trim();save();toast('Proxy URL saved')">Save</button>
+      </div>
+      <p class="muted small">Removes the CORS block entirely so Sync &amp; stage always fetches live, no GitHub tab needed. One-time ~3 min setup, see SETUP.md.</p>
+      <button class="btn secondary small" style="margin-top:6px" onclick="go('loader')">✏️ Manual fixture entry (emergency fallback)</button>
+    </details>
   </div>
   <div class="card">
     <h3>💳 P&L breakdown</h3>
@@ -3876,6 +3880,8 @@ function vOffice(){
     <h3>🧪 Test tools</h3>
     <button class="btn gold" onclick="seedTestData()">Load test gameweeks & odds</button>
     <span class="muted small"> Adds a settled GW, live pre-match GW and in-play GW.</span>
+    <div style="margin-top:8px"><button class="btn secondary" onclick="clearTestData()">🧹 Clear test data</button>
+    <span class="muted small"> Removes gameweeks/bets/promos/rewards only — keeps FPL sync, settings and teams. Run this before a real season starts.</span></div>
   </div>
   <div class="card"><details><summary>📜 Audit log (${S.audit.length})</summary>
     <div style="overflow-x:auto"><table style="margin-top:10px"><tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th></tr>
@@ -3902,19 +3908,35 @@ function saveSettings(){
    FPL SYNC
    ================================================================ */
 async function fplFetch(url){ const r=await fetch(url); if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
+// Tries a direct browser fetch first (works if the FPL API's CORS policy ever loosens, or if
+// this is ever run somewhere CORS doesn't apply), then falls back to S.fpl.proxyUrl if the
+// admin has set one (Back Office → FPL Sync → "Proxy URL") — a small self-hosted passthrough
+// (see SETUP.md) that adds the CORS headers the browser needs. Without a proxy configured,
+// this just throws, same as before, and callers fall back to the GitHub Action / paste box.
+async function fplFetchAny(path){
+  const direct='https://draft.premierleague.com/api/'+path;
+  try{ return await fplFetch(direct); }
+  catch(e){
+    if(S.fpl.proxyUrl){
+      const proxied=S.fpl.proxyUrl.replace(/\/$/,'')+'/'+path;
+      return await fplFetch(proxied);
+    }
+    throw e;
+  }
+}
 async function fplSync(){
   const inp=document.getElementById('fplLeagueId');
   const id=((inp?inp.value:'')||S.fpl.leagueId||'').trim();
   if(!id){ toast('Enter your draft league ID',true); return; }
   S.fpl.leagueId=id; save(); toast('Syncing from FPL…');
   try{
-    const det=await fplFetch('https://draft.premierleague.com/api/league/'+id+'/details');
+    const det=await fplFetchAny('league/'+id+'/details');
     let boot=null;
-    try{ boot=await fplFetch('https://draft.premierleague.com/api/bootstrap-static'); }catch(e){}
+    try{ boot=await fplFetchAny('bootstrap-static'); }catch(e){}
     ingestFpl(det,boot);
   }catch(e){
     const fb=document.getElementById('fplFallback'); if(fb) fb.style.display='block';
-    toast('Direct fetch blocked (CORS) — GitHub Action handles this automatically. Use paste fallback below.',true);
+    toast((S.fpl.proxyUrl?'Direct + proxy fetch both blocked.':'Direct fetch blocked (CORS).')+' Use the GitHub Action link above, or the paste fallback below.',true);
   }
 }
 function fplPaste(){
@@ -3931,7 +3953,7 @@ function saveHoldback(){
   save(); toast('Holdback saved: '+S.sim.holdback);
 }
 function ingestFpl(det,boot){
-  if(!det||!det.league_entries||!det.matches){ toast('Does not look like league details JSON',true); return; }
+  if(!det||!det.league_entries||!det.matches){ toast('Does not look like league details JSON',true); return false; }
   const hbInp=document.getElementById('fplHoldback');
   if(hbInp) S.sim.holdback=Math.max(0,parseInt(hbInp.value)||0);
   const unmatched=[];
@@ -3968,6 +3990,63 @@ function ingestFpl(det,boot){
   audit('FPL sync','league '+S.fpl.leagueId+': '+S.history.length+' results'+(unmatched.length?' · UNMATCHED: '+unmatched.join(', '):''));
   save(); render();
   toast('✅ FPL synced — '+S.history.length+' results powering the odds'+(unmatched.length?' · unmatched: '+unmatched.join(', '):''));
+  return true;
+}
+// Builds and stages (as a draft, for Odds Setter review) the earliest gameweek that has FPL
+// fixtures pulled in but no gameweek object yet — i.e. the next one that actually needs
+// betting on. Deliberately doesn't auto-publish: publishing (opening betting) stays a manual
+// admin action in Odds Setter, same safety checkpoint as before. Pure read of already-synced
+// state — no network call — so it works immediately after any sync, in-app or via GitHub.
+function stageNextGameweek(){
+  const loaded=new Set(S.gameweeks.map(g=>g.event).filter(Boolean));
+  const nextEv=Object.keys(S.fplFixtures).map(Number).filter(ev=>!loaded.has(ev)).sort((a,b)=>a-b)[0];
+  if(nextEv==null){ toast('No new gameweek to stage — you\'re caught up'); return; }
+  const fixtures=(S.fplFixtures[nextEv]||[]).filter(f=>f.home&&f.away);
+  if(!fixtures.length){ toast('GW '+nextEv+' has no matched fixtures yet — check FPL Sync for unmatched entries',true); return; }
+  const maxFixtures=Math.max(1,Math.floor(S.teams.length/2));
+  if(fixtures.length<maxFixtures){
+    toast('⚠ GW '+nextEv+' only has '+fixtures.length+'/'+maxFixtures+' fixtures matched — staged anyway, but double-check before publishing',true);
+  }
+  const info=S.fpl.events[nextEv];
+  const deadline=info&&info.deadline?info.deadline:Date.now()+3*86400000;
+  const kickoff=deadline+90*60000;
+  const g={id:nid('gw'),name:'GW '+nextEv,deadline,kickoff,event:nextEv,status:'draft',
+    matches:fixtures.map(f=>({id:nid('m'),home:f.home,away:f.away,odds:recOdds(S,f.home,f.away),result:null}))};
+  S.gameweeks.push(g);
+  audit('gameweek staged',g.name+' · cutoff '+fmtDT(deadline));
+  save();
+  toast(g.name+' staged — review in Odds Setter 🎯');
+  go('odds');
+}
+// The one button in Back Office: refreshes FPL data (fixtures/results/standings), then stages
+// whichever gameweek is next. If the browser can't reach FPL directly (CORS) and no proxy is
+// configured, it still stages from whatever's already in Firebase — e.g. from a GitHub Action
+// run — so this button is always useful, not just when the in-browser fetch happens to work.
+async function syncAndStage(){
+  const inp=document.getElementById('fplLeagueId');
+  const id=((inp?inp.value:'')||S.fpl.leagueId||'').trim();
+  if(!id){ toast('Enter your draft league ID first',true); return; }
+  S.fpl.leagueId=id; save();
+  toast('Syncing…');
+  try{
+    const det=await fplFetchAny('league/'+id+'/details');
+    let boot=null;
+    try{ boot=await fplFetchAny('bootstrap-static'); }catch(e){}
+    if(ingestFpl(det,boot)) stageNextGameweek();
+  }catch(e){
+    const fb=document.getElementById('fplFallback'); if(fb) fb.style.display='block';
+    toast((S.fpl.proxyUrl?'Direct + proxy fetch both blocked — s':'S')+'taging from last-synced data instead. Run the GitHub Action for fresher data first if you need it.',true);
+    stageNextGameweek();
+  }
+}
+// Undoes 🧪 Load test gameweeks & odds — clears gameweeks/bets/promos/rewards only. Leaves
+// FPL sync state, settings, teams and the audit log untouched (unlike Reset everything, which
+// wipes the whole database including your FPL league mapping).
+function clearTestData(){
+  if(!confirm('Clear all gameweeks, bets, promos and reward ledgers? FPL sync data, settings and teams are kept.')) return;
+  S.gameweeks=[]; S.bets=[]; S.promos=[]; S.rewardGrants=[]; S.rewards={};
+  audit('test data cleared','gameweeks/bets/promos/rewards wiped');
+  save(); render(); toast('Test data cleared');
 }
 function exportData(){
   const blob=new Blob([JSON.stringify(S,null,2)],{type:'application/json'});
