@@ -452,6 +452,35 @@ of delegated.
   warning styling, filter bar, bet rows with prior-override badges/history, and
   the full form all render cleanly with no overflow/clipping.
 
+**ROUND 4 — post-Round-3 bug report, 2026-08-19.** User reported the squad viewer showed
+"No squad data pulled yet" for every team. Root cause and fix done directly (small, contained,
+same-day turnaround), not delegated:
+
+- [x] 33. (done directly) Squads pull automatically with the weekly sync, not a separate step —
+  `S.fpl.squads`/`S.fpl.players` were only ever populated by a distinct manual action (Back
+  Office's "Pull squads in-app" button, or the GitHub Action) that nobody was actually running —
+  entirely separate from "⟳ Sync & stage gameweeks," the one button admins already click every
+  week. `syncAndStage()` now also calls `ingestFplSquads()` at the end of a successful sync,
+  reusing the `bootstrap-static` response already fetched for gameweek deadlines (confirmed via
+  the test harness's `fetchCalls` log — no duplicate network call) plus a fresh
+  `league/{id}/element-status` call for squad membership. Best-effort and silent on failure — a
+  squad-pull error doesn't block gameweek staging, the main point of the button. Also simplified
+  the requirement per the user: pre-lock, this only needs each manager's full 15-man roster, not
+  a starting-XI/bench split — `squadPlayers()` already treated missing lineup data as "put
+  everyone on the pitch" (`starter:null`), so no behavior change was needed there, verified
+  explicitly rather than assumed. FDR still can't be pulled in-browser at all (classic FPL API
+  has no CORS path) — opportunistically tries it, otherwise leaves whatever the GitHub Action
+  last wrote untouched; not something the user asked to fix this round. Updated the squad-viewer
+  empty state and Back Office FPL Sync card copy to describe the new automatic behavior. Verified
+  via brace/paren/bracket/backtick balance (clean) and a headless-Edge harness with Firebase AND
+  the FPL network layer both mocked (league/details, bootstrap-static, element-status stubbed;
+  classic-API fixtures call deliberately made to fail, simulating the real no-proxy case) —
+  calling only `syncAndStage()` (never `fplSyncSquads()` directly) correctly populated
+  entryMap/squads/players, confirmed via the actual squad modal rendering a full mock squad with
+  no bench section and every player's `starter===null`. 16/16 assertions passed, zero
+  `window.onerror` catches. Also visually verified via a mobile-width screenshot. Commit
+  `ba76c61`.
+
 - [ ] 0. Codebase structure map (research only, feeds all other batches)
 - [x] 1. Odds decimal formatting + remove number-input spinners everywhere — `fmtOdds` now `.toFixed(1)`; global CSS hides number-input spinners; odds input `step`/`min` bumped to 0.1/1.1 (Odds Setter fields, counter-offer field, `setOdds` clamp). Commit b6734bc.
 - [x] 2. Cutoff / in-play-close time fields → calendar+clock picker widget — extracted `calGrid`+time-chip UI from the Loader into a shared, key-based `dtPicker`/`dtPickerPanelInner` widget (state in `dtPickState`, backed by `parseDTLocal`/`ukWallToTs`); Loader kickoff picker refactored to use it inline, GW deadline and in-play cutoff fields in Odds Setter now use it as a popover (raw `datetime-local` inputs removed). Commit 615a020.
