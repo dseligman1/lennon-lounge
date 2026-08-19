@@ -262,20 +262,66 @@ polish and financial correctness get Opus 5, contained data/UI plumbing gets Son
   formPts 15; rowez: 5L, formPts 0; murov: 1W-2D-2L, formPts 5, correctly
   unmarked) plus the actual rendered board match-row HTML for all 3 hot/cold pairs
   showing the correct dot class + last-5 W/D/L tooltip string. Commit `f2faf2c`.
-- [ ] 31. (Sonnet) Limits & Edge: ACCA edge-by-legs table — replaces the current
-  `accaFactor(n,marginPct)` linear formula (`1-(marginPct/100)*n`, i.e. margin
-  scales WITH leg count) with an admin-edited lookup table, legs 1 through 10,
-  each its own flat % edge (matches the user's own worked example: a 3-fold at
-  raw combined odds 11 with a 10% edge on 3-fold specifically → 9.9, i.e. `raw *
-  (1 - edge%/100)`, no multiplication by leg count). New `S.settings.
-  accaEdgeByLegs` (array/object indexed 1-10, legs beyond 10 clamp to the 10-leg
-  rate), new 10-row input UI in the existing Limits & Edge settings card (~line
-  3849) alongside `maxStake`/`maxPayout`. Update `combinedOdds()`/`accaFactor()`
-  to look up by leg count instead of the linear formula. Confirm (and note in the
-  batch's PROGRESS.md entry) that this is inherently always-live — `combinedOdds`
-  is computed at bet-build time from current settings, so there's no separate
-  "deploy" step, but verify already-`accepted`/settled bets' frozen `effOdds`
-  are NOT retroactively recalculated when the table changes later.
+- [x] 31. (Sonnet) Limits & Edge: ACCA edge-by-legs table — replaced the old
+  `accaFactor(n,marginPct)` linear formula (`1-(marginPct/100)*n`, margin scaling
+  WITH leg count) with a straight per-leg-count table lookup: new
+  `S.settings.accaEdgeByLegs` (object indexed 1-10, `{1:0,2:4,3:7,...,10:20}`
+  sane increasing default curve, fully admin-editable), `DEFAULT_SETTINGS`
+  updated + `migrate()` backfills it for pre-batch-31 settings. `accaFactor(n,
+  settings)`/`combinedOdds(legOdds,settings)` now take the whole settings object
+  (was just `marginPct`) and look up `table[Math.min(n,10)]` (legs above 10
+  clamp to the 10-leg rate; n≤1 still short-circuits to no edge, matching old
+  behavior and `slipOdds()`'s pre-existing length===1 shortcut). All 4 call
+  sites updated (`settleBet`, `slipOdds`, `settleSeasonBet`, `seasonSlipOdds`).
+  New 10-row input UI (`setAccaEdge1`..`10`) added to the Back Office "📏 Limits
+  & edge" card in place of the old single "Acca edge %/leg" field (`accaMarginPct`
+  left in settings, harmlessly unused, rather than deleted — avoids migration
+  churn on live data); `saveSettings()` reads all 10 fields into
+  `S.settings.accaEdgeByLegs`. Always-live per the spec: `combinedOdds()` reads
+  `S.settings` at bet-build time, so saving the card **is** the release
+  mechanism — no separate deploy/publish step exists or is needed.
+  **Frozen-effOdds check (explicit ask): confirmed correct.** `bet.effOdds` is
+  set exactly twice in the whole codebase — once at placement in `submitBet()`,
+  and once when a counter-offer is accepted (`b.effOdds=b.offer.effOdds`, a
+  deliberate renegotiation, not a settings-driven recalc). No code path
+  re-derives an already-placed bet's `effOdds` from current settings. Verified
+  directly: placed a bet, then changed `accaEdgeByLegs[2]` from 5% to 90%
+  afterwards — `bet.effOdds` was provably unchanged. **One pre-existing nuance
+  flagged, not introduced by this batch and left as-is per instructions:**
+  `settleBet()`/`settleSeasonBet()`'s partial-void payout math (when a multi-leg
+  acca has one leg void and others win) recomputes `orig`/`recomputed` combined
+  odds via `state.settings` **at settle time**, then scales by
+  `ratio=bet.effOdds/orig` — this already read live `accaMarginPct` before this
+  batch (same pattern, just swapped to read `accaEdgeByLegs` now), so if the
+  edge table is edited between a bet's placement and its gameweek settling AND
+  that specific bet has a void leg, the proration ratio is computed off
+  today's table rather than the table in effect at placement. `bet.effOdds`
+  itself is never mutated by this — only the derived partial-void payout scaling
+  could drift. Full-win and full-loss payouts (the common case) are entirely
+  unaffected since `orig===recomputed` when no leg voided, collapsing the ratio
+  back to exactly `bet.effOdds`. Verified via a brace/paren/bracket/backtick
+  balance check on the full script (baseline HEAD `{`1878/1878 `(`4253/4253
+  `[`459/459 724 backticks — confirmed clean baseline via the same
+  `grep -o|wc -l` method first; after this batch `{`1888/1888 `(`4282/4282
+  `[`472/472 726 backticks, all balanced) and a headless Edge (`--dump-dom`) run
+  against a harness with both Firebase CDN `<script src>` tags replaced by a
+  stub (`firebase.initializeApp`/`.database().ref().on/once/set/push` all
+  no-ops, zero live network/DB contact) plus `save()`/`saveNow()`/
+  `startListener()` overridden — seeded a custom edge table
+  `{1:0,2:5,3:10,4:12,5:14,6:16,7:18,8:20,9:22,10:25}` and directly unit-tested
+  `combinedOdds()` at 2/3/5/10/12 legs (12 confirming the >10 clamp), each
+  checked against the expected `raw*(1-edge/100)` value AND (for 2-fold) against
+  what the OLD linear formula would have produced, to prove the new mechanism
+  is actually driving the result. **The user's exact worked example passed:
+  raw combined odds 11 (`[1.1,2,5]`), 10% edge set for 3-fold specifically →
+  9.9 exactly** (`fmtOdds(combinedOdds([1.1,2,5],settings))==='9.9'`). Also
+  exercised the real Back Office UI end-to-end: rendered the new 10 inputs and
+  confirmed correct values, edited all 10 via the DOM and called the real
+  `saveSettings()`, confirmed `S.settings.accaEdgeByLegs` persisted, re-rendered
+  and confirmed the UI reflects the saved values (admin enter → save →
+  re-render round trip). 15/15 assertions passed, `TESTOK:true`, zero
+  `window.onerror` catches. Copied to the Downloads sync file and diffed
+  identical. Commit `60d87c2`.
 - [ ] 32. (Opus 5) Admin override for settled bets/finances — deliberately last
   before the visual batch, since it's financially sensitive and benefits from a
   stable base. New Back Office "⚠️ Override" section, `requireAdmin()`-gated plus
