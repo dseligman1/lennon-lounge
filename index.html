@@ -175,6 +175,11 @@
   .st-won{background:var(--grad);color:#00210f}
   .st-lost{background:var(--gradHot);color:#fff}
   .st-void{background:#444;color:#ddd}
+  /* Batch 30: small in-form/out-of-form marker for vGwBoard match rows — deliberately just
+     a colored dot (not a text pill) so it stays unobtrusive next to a team name on mobile. */
+  .formdot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-left:5px;vertical-align:middle}
+  .formdot.hot{background:var(--teal);box-shadow:0 0 6px rgba(0,255,135,.7)}
+  .formdot.cold{background:var(--pink);box-shadow:0 0 6px rgba(255,45,120,.7)}
   .flag{display:inline-block;padding:2px 9px;border-radius:10px;font-size:10px;font-weight:800;margin-left:6px}
   .flag.late{background:var(--gradHot);color:#fff}
   .flag.limit{background:rgba(255,201,49,.2);color:var(--gold);border:1px solid rgba(255,201,49,.4)}
@@ -2031,7 +2036,7 @@ function vGwBoard(g,openByDefault,mode){
       };
       const liveScore=inplay&&m.result?`<span class="livechip" style="animation:none">${m.result.homePts??0}–${m.result.awayPts??0}</span>`:'';
       return `<div class="match${inplay||upcoming?' soon':''}">
-        <div class="names">${esc(team(m.home).name)}<span class="vs">v</span>${esc(team(m.away).name)} ${liveScore}</div>
+        <div class="names">${esc(team(m.home).name)}${formDot(m.home)}<span class="vs">v</span>${esc(team(m.away).name)}${formDot(m.away)} ${liveScore}</div>
         <div class="oddsbtns">${btn('home','HOME')}${btn('draw','DRAW')}${btn('away','AWAY')}</div>
       </div>`;
     }).join('')||'<p class="muted">Fixtures coming soon.</p>'}
@@ -2578,6 +2583,78 @@ function teamOutcomeCorrelation(){
   const byLosses=rows.slice().sort((a,b)=>b.losses-a.losses);
   return {rows, topWins:byWins[0]||null, topLosses:byLosses[0]||null};
 }
+
+/* ================================================================
+   Batch 30: recent form guide — purely computed from S.history + gw.matches[].result,
+   no new FPL pull. Mirrors vStandings()'s pattern of merging S.history (for events not
+   yet covered by a local gameweek's own results) with S.gameweeks results, but scoped
+   to one team and kept sorted by event so "most recent N" is well-defined.
+   ================================================================ */
+function teamForm(state, teamId, n=5){
+  const localEvents=new Set(state.gameweeks.filter(g=>g.event&&g.matches.some(m=>m.result)).map(g=>g.event));
+  const games=[];
+  (state.history||[]).forEach(h=>{
+    if(localEvents.has(h.event)) return;
+    if(h.a===teamId) games.push({event:h.event,pts:h.ap,oppPts:h.bp,oppId:h.b});
+    else if(h.b===teamId) games.push({event:h.event,pts:h.bp,oppPts:h.ap,oppId:h.a});
+  });
+  state.gameweeks.forEach(g=>g.matches.forEach(m=>{
+    if(!m.result||!m.home||!m.away) return;
+    if(m.home===teamId) games.push({event:g.event||0,pts:m.result.homePts,oppPts:m.result.awayPts,oppId:m.away});
+    else if(m.away===teamId) games.push({event:g.event||0,pts:m.result.awayPts,oppPts:m.result.homePts,oppId:m.home});
+  }));
+  games.sort((a,b)=>a.event-b.event);
+  games.forEach(gm=>{ gm.res = gm.pts>gm.oppPts?'W':(gm.pts<gm.oppPts?'L':'D'); });
+  const recent=games.slice(-n);
+  const record={w:0,d:0,l:0};
+  recent.forEach(gm=>{ if(gm.res==='W')record.w++; else if(gm.res==='D')record.d++; else record.l++; });
+  // Same 3/1/0 scoring the FPL League table (vStandings) already uses, so "hottest" reads
+  // as "who'd top the table if you only counted their last N gameweeks".
+  const formPts=recent.reduce((s,gm)=>s+(gm.res==='W'?3:gm.res==='D'?1:0),0);
+  const seasonAvg=games.length?games.reduce((s,gm)=>s+gm.pts,0)/games.length:0;
+  const recentAvg=recent.length?recent.reduce((s,gm)=>s+gm.pts,0)/recent.length:0;
+  const trendDiff=recent.length?recentAvg-seasonAvg:0;
+  const trend = recent.length<2 ? 'flat' : (trendDiff>3?'up':(trendDiff<-3?'down':'flat'));
+  return {teamId, games:recent, record, formPts, seasonAvg, recentAvg, trendDiff, trend, played:games.length};
+}
+// Shared hot/cold classification (3+ of the last 5 results the same way) driving both the
+// Insights form-guide card and the small dot marker on the gameweek board, so the two
+// surfaces never disagree with each other. Needs at least 3 games played to call it either
+// way — early season, nobody gets marked.
+function formIndicator(f){
+  if(f.played<3) return null;
+  if(f.record.w>=3&&f.record.w>f.record.l) return 'hot';
+  if(f.record.l>=3&&f.record.l>f.record.w) return 'cold';
+  return null;
+}
+// Small colored-dot marker for vGwBoard match rows (batch 30 spec: "some sort of marker...
+// who's in form and who's not", kept small/unobtrusive — a dot, not a redesigned row).
+function formDot(teamId){
+  const f=teamForm(S,teamId,5);
+  const ind=formIndicator(f);
+  if(!ind) return '';
+  const strip=f.games.map(g=>g.res).join('');
+  return `<span class="formdot ${ind}" title="${ind==='hot'?'🔥 In form':'❄️ Out of form'} — last ${f.games.length}: ${strip}"></span>`;
+}
+function formGuideCard(n=5){
+  const rows=S.teams.map(t=>({t,f:teamForm(S,t.id,n)})).filter(r=>r.f.played>0)
+    .sort((a,b)=>b.f.formPts-a.f.formPts||b.f.trendDiff-a.f.trendDiff);
+  if(!rows.length) return '';
+  return `<div class="card"><h3>📈 Form guide</h3>
+    <p class="muted small">Last ${n} results per team (oldest → most recent), ranked hottest to coldest, plus how their scoring lately compares to their own season average.</p>
+    <div style="overflow-x:auto"><table><tr><th>Team</th><th>Form</th><th style="text-align:right">Trend</th></tr>
+    ${rows.map(r=>{
+      const ind=formIndicator(r.f);
+      const strip=r.f.games.map(gm=>`<span class="pill ${gm.res==='W'?'st-won':gm.res==='L'?'st-lost':'st-void'}" style="padding:2px 8px;font-size:9px;margin-right:2px">${gm.res}</span>`).join('');
+      const trendTxt=r.f.games.length<2?'—':(r.f.trendDiff>=0?'+':'')+r.f.trendDiff.toFixed(1)+' pts';
+      const trendCls=r.f.trendDiff>3?'pos':r.f.trendDiff<-3?'neg':'';
+      return `<tr><td><b>${esc(r.t.name)}</b>${ind?`<span class="formdot ${ind}" title="${ind==='hot'?'In form':'Out of form'}"></span>`:''}</td>
+      <td>${strip}</td>
+      <td style="text-align:right" class="mono ${trendCls}">${trendTxt}</td></tr>`;
+    }).join('')}
+    </table></div>
+  </div>`;
+}
 function vInsights(){
   if(!S.bets.length) return `<h2>📊 Insights</h2><div class="sub">League-wide betting analysis — the numbers behind the noise.</div>
     <div class="card"><p class="muted">Nothing to analyse yet — no bets placed. Check back once the book's got some action. 👻</p></div>`;
@@ -2591,6 +2668,7 @@ function vInsights(){
     <div class="kpi"><div class="l">Biggest single win</div><div class="v mono" style="color:var(--teal)">${big?GBP(big.profit):'—'}</div><div class="muted small">${big?esc(team(big.b.teamId)?.name||'?'):''}</div></div>
     <div class="kpi"><div class="l">Most common market</div><div class="v">${markets[0]?esc(markets[0].label):'—'}</div><div class="muted small">${markets[0]?markets[0].n+' legs':''}</div></div>
   </div>
+  ${formGuideCard()}
   <div class="homegrid">
     <div class="card"><h3>🎯 Team-backing breakdown</h3>
       <div style="overflow-x:auto"><table><tr><th>Team</th><th style="text-align:right">Legs backed</th></tr>
