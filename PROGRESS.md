@@ -654,6 +654,72 @@ per-batch below rather than claimed. Worth a real walkthrough on the live site o
 
 ---
 
+## ROUND 6 — post-Round-5 bug report, 2026-08-20
+
+User reported 3 issues after Round 5 went live: Settler tab showed nothing on click, Algo/Spin
+was still generating special-market legs (e.g. "haul" props on random-seeming players) despite
+batch 35, and a request to keep a gameweek's bets visible/editable in Odds Setter. This round
+did NOT rely on guesswork — the claude-in-chrome browser extension still wasn't connected, so
+instead: (a) fetched the live GitHub Pages `index.html` directly and diffed it byte-for-byte
+against the local commit to rule out a stale deploy (identical, ruled out); (b) read the live
+Firebase Realtime DB directly via its own public REST endpoint (same no-auth access pattern the
+client app itself already uses — read-only, nothing written) to get REAL production data; (c)
+built a local test harness (Firebase stubbed, zero live writes) seeded with that real data and
+drove every admin tab through headless Edge, catching `window.onerror` — this is what actually
+found the root cause below, not speculation.
+
+- [x] 41. **Settler tab crash, real root cause found and fixed.** Real production `S.sim` was
+  `{holdback:0}` — no `events` key. `migrate()`'s backfill only ran `if (!s.sim) s.sim =
+  {holdback:5, events:{}}`, which does nothing when `s.sim` already exists as an object missing
+  its `events` sub-field (exactly this shape) — an inconsistency with how `migrate()` already
+  (correctly) backfills `s.fpl`'s sub-keys individually just above it. Every real
+  `S.sim.events[...]` read site (`fplScoresReady()`, `importFplEvent()`, `syncAndStage()`)
+  assumed it always existed; `vSettler()`'s normal per-gameweek render calls `fplScoresReady()`
+  for any FPL-linked gameweek, so the moment a real gameweek (GW1, `event:1`) went live, the
+  Settler tab threw `TypeError: Cannot read properties of undefined (reading '1')` on every
+  render — blank tab, confirmed via the headless-Edge harness against the real downloaded data
+  (reproduced the exact crash first, then verified it gone after the fix). Fix: `migrate()` now
+  also backfills `s.sim.events` independently (`if (!s.sim.events) s.sim.events = {}`), same
+  defensive pattern as `s.fpl`'s sub-keys. Verified: re-ran the same real-data harness after the
+  fix — Settler (and every other admin tab) renders clean, zero `window.onerror` catches.
+- [x] 42. **Algo/Spin tightened: match odds only, no special markets at all, 2-10 fold.** Real
+  production data showed exactly why the user's follow-up ask was needed: GW1 had 12
+  `specialMarkets` (one "BIG HAUL 65+ pts" per team) left over from testing the Loader's
+  special-markets feature — technically admin-published per batch 35's rule, but not something
+  the admin actually wanted the Algo treating as fair game; they read as "random players" to a
+  player. Per explicit instruction, `genAlgoBet()` no longer has a special-market leg maker at
+  all — its only leg source is real match win/draw/away odds (`m.odds`, still composed with
+  `promoPrice`/`weekBoostPrice` exactly as before). Fold count changed from the old
+  1-4-leg-weighted-toward-1 distribution to a 2-10-leg-weighted-toward-2 one
+  (`rnd([2,2,2,2,3,3,3,4,4,5,6,7,8,9,10])`), never offering a single-leg bet
+  (`if(legs.length<2) return null`) — capped in practice by how many distinct real fixtures
+  exist in the one gameweek Algo draws from (`Math.min(fixtures.length, n)`), same constraint
+  that already existed for match-leg dedup; a 12-team league's usual 6 fixtures/week means a
+  literal 10-fold is architecturally only possible if a future batch lets one bet span multiple
+  gameweeks (out of scope here, flagged not attempted — bets are still all single-`gwId`).
+  Verified via the real-data harness: 200 `genAlgoBet()` calls against real GW1 data (12 real
+  specialMarkets present, as a live temptation the code must correctly ignore) — 0 non-match
+  legs generated across all 200, leg counts ranged 2-6 (GW1's actual fixture count), 0 total
+  failures to generate.
+- [x] 43. **Odds Setter: bets on a gameweek now visible and actionable while setting odds.**
+  New `gwBetsPanel(g)` — a collapsed `<details>` on every non-draft `oddsCard()` showing every
+  bet tied to that gameweek (count, accepted count, total staked, in-negotiation count in the
+  summary line) and, expanded, the full `betCard(b,'house')` for each — same accept/reject/
+  counter-offer/cancel actions already available in Bet Review, now a glance away while tweaking
+  a price mid-week. Stays visible for exactly as long as the gameweek itself does: `oddsCard()`
+  only ever renders non-settled gameweeks, so once `settleGw()`/the new bulk settle (batch 40)
+  runs and the gw drops out of `vOddSetter()` entirely, its bets stop appearing here too — no
+  separate "until settled" condition needed, that's already the card's whole lifetime. Verified
+  via the real-data harness with a seeded accepted bet on real GW1: panel renders, shows "1
+  accepted", the seeded bet's leg label appears, zero errors.
+
+All three verified together in one final real-data harness run (real GW1/teams/settings/
+seasonMarkets/promos/stats/sim, zero live Firebase writes) — every admin tab clean, 0 JS errors.
+Commit and push follow immediately per the user's "please fix this" (batch-by-batch push
+already established as the approach for this app).
+
+---
+
 - [ ] 0. Codebase structure map (research only, feeds all other batches)
 - [x] 1. Odds decimal formatting + remove number-input spinners everywhere — `fmtOdds` now `.toFixed(1)`; global CSS hides number-input spinners; odds input `step`/`min` bumped to 0.1/1.1 (Odds Setter fields, counter-offer field, `setOdds` clamp). Commit b6734bc.
 - [x] 2. Cutoff / in-play-close time fields → calendar+clock picker widget — extracted `calGrid`+time-chip UI from the Loader into a shared, key-based `dtPicker`/`dtPickerPanelInner` widget (state in `dtPickState`, backed by `parseDTLocal`/`ukWallToTs`); Loader kickoff picker refactored to use it inline, GW deadline and in-play cutoff fields in Odds Setter now use it as a popover (raw `datetime-local` inputs removed). Commit 615a020.

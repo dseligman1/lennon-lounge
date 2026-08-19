@@ -908,7 +908,18 @@ function migrate(s) {
   if (s.fpl.squadEvent === undefined) s.fpl.squadEvent = null;
   if (s.fpl.squadSync === undefined) s.fpl.squadSync = null;
   if (!s.fplFixtures) s.fplFixtures = {};
+  // Bugfix: this only ever checked `!s.sim` (the whole object missing), not whether `s.sim`
+  // existed but was missing its `events` sub-field — which is exactly the shape real production
+  // data had (`{holdback:0}`, no `events` key, likely from some path that wrote `sim.holdback`
+  // via a full-object assignment rather than a single-field one). Every real S.sim.events[...]
+  // read site (fplScoresReady, importFplEvent, syncAndStage) assumed it always existed, so this
+  // threw "Cannot read properties of undefined" the moment any of them ran — including
+  // fplScoresReady() inside vSettler()'s normal per-gameweek render, which crashed the ENTIRE
+  // Settler tab blank for any admin as soon as a real FPL-linked gameweek went live. Backfill the
+  // sub-field independently now, same defensive pattern migrate() already uses for s.fpl's
+  // sub-keys just above.
   if (!s.sim) s.sim = {holdback:5, events:{}};
+  if (!s.sim.events) s.sim.events = {};
   if (s.settings && s.settings.algoEdgePct == null) s.settings.algoEdgePct = 20;
   // Batch 31: backfill accaEdgeByLegs for settings saved before this batch, and normalise
   // Firebase's object-key stringification (accaEdgeByLegs[3] still works fine against string
@@ -1517,57 +1528,48 @@ function computeMaxExposure(bets){
 /* ================================================================
    THE ALGO — random bet generator (copied verbatim from prototype)
    ================================================================ */
-// Batch 35: every leg the Algo generates must trace back to odds the house has actually
-// published (m.odds, admin-set; or gw.specialMarkets[], admin-published via the Loader) —
-// never a fresh line/price invented on the fly from teamAvg()/edgedOdds()/phi(). The Algo's
-// own "edge" (algoEdgePct) is still applied as a fixed discount formula on top of the
-// published board price, same as it always did for match-winner legs — that's not
-// hallucination, it's a house-cut formula on a real price. What changed: the special-market
-// makers below now pick an already-offered gw.specialMarkets[] entry instead of rolling
-// their own team_pts/haul/match_total/top_score line and probability model.
+// Batch 35, tightened post-launch (2026-08-20): every leg the Algo generates must trace back
+// to a match win/draw/away price the house has actually set (m.odds) — never a fresh line/
+// price invented on the fly, and — per explicit follow-up feedback — never a special market
+// either, even a published one. Real production data showed why: a batch of "BIG HAUL 65+ pts"
+// special markets (one per team, added while testing the Loader's special-markets feature)
+// were technically "published" but not something the admin actually wanted the Algo treating
+// as fair game — they read as "random players" to a player seeing them in a generated acca.
+// So the Algo's pool is now match win/draw/away odds ONLY, full stop. The Algo's own "edge"
+// (algoEdgePct) is still applied as a fixed discount formula on top of the published board
+// price — that's not hallucination, it's a house-cut formula on a real price.
+// Fold count: always a 2-10 leg acca (never a single straight bet) — capped in practice by
+// how many distinct real fixtures exist in the one gameweek Algo draws from (typically 6 for
+// a 12-team league), same as any acca can only use a given match once.
 function genAlgoBet(state, myTeamId){
   // In-play betting is coming soon (batch 4) — Algo only generates pre-match bets for now.
   const gws=state.gameweeks.filter(g=>bettableNow(g)==='pre');
   if(gws.length===0) return null;
   const g=gws[gws.length-1];
   const fixtures=g.matches.filter(m=>m.home&&m.away);
-  const offeredSpecials=g.specialMarkets||[];
-  if(fixtures.length===0 && offeredSpecials.length===0) return null;
+  if(fixtures.length===0) return null;
   const edge=state.settings.algoEdgePct;
   const rnd=a=>a[Math.floor(Math.random()*a.length)];
   const priceFromBoard=board=>Math.max(1.05, Math.round(board*(1-edge/100)*100)/100);
-  const makers=[];
-  if(fixtures.length){
-    makers.push(()=>{
-      const m=rnd(fixtures);
-      const picks=['home','home','away','away','draw'];
-      const pick=rnd(picks);
-      const label= pick==='draw' ? `Draw — ${team(m.home).name} v ${team(m.away).name}` : `${team(pick==='home'?m.home:m.away).name} to WIN v ${team(pick==='home'?m.away:m.home).name}`;
-      const board=promoPrice(g.id,m.id,pick) ?? weekBoostPrice(g,m,pick) ?? m.odds[pick];
-      return {type:'match', gwId:g.id, matchId:m.id, pick, odds:priceFromBoard(board), label};
-    });
-  }
-  if(offeredSpecials.length){
-    makers.push(()=>{
-      const m=rnd(offeredSpecials);
-      const leg={type:'special', gwId:g.id, marketId:m.id, kind:m.kind, teamId:m.teamId||undefined, matchId:m.matchId||undefined, line:m.line, dir:m.dir, odds:priceFromBoard(m.odds), label:m.label};
-      return leg;
-    });
-  }
-  const n=rnd([1,1,1,2,2,2,2,3,3,4]);
-  const legs=[]; const seen=new Set(); let guard=0;
+  const makeMatchLeg=()=>{
+    const m=rnd(fixtures);
+    const picks=['home','home','away','away','draw'];
+    const pick=rnd(picks);
+    const label= pick==='draw' ? `Draw — ${team(m.home).name} v ${team(m.away).name}` : `${team(pick==='home'?m.home:m.away).name} to WIN v ${team(pick==='home'?m.away:m.home).name}`;
+    const board=promoPrice(g.id,m.id,pick) ?? weekBoostPrice(g,m,pick) ?? m.odds[pick];
+    return {type:'match', gwId:g.id, matchId:m.id, pick, odds:priceFromBoard(board), label};
+  };
+  const n=Math.min(fixtures.length, rnd([2,2,2,2,3,3,3,4,4,5,6,7,8,9,10]));
+  const legs=[]; let guard=0;
   while(legs.length<n && guard++<40){
-    const leg=rnd(makers)();
-    const key=leg.type==='special'?leg.marketId:leg.label;
-    if(seen.has(key)) continue;
-    if(leg.type==='match' && legs.some(l=>l.type==='match'&&l.matchId===leg.matchId)) continue;
-    if(leg.type==='special' && legs.some(l=>l.type==='special'&&l.marketId===leg.marketId)) continue;
+    const leg=makeMatchLeg();
+    if(legs.some(l=>l.matchId===leg.matchId)) continue;
     // Anti-match-fixing: never generate a leg against the integrity rule for the acting player's own team
     if(myTeamId && slipViolatesIntegrity([leg], myTeamId)) continue;
-    seen.add(key); legs.push(leg);
+    legs.push(leg);
   }
-  if(legs.length===0) return null;
-  const odds=legs.length===1? legs[0].odds : Math.max(1.05, Math.round(legs.reduce((a,l)=>a*l.odds,1)*100)/100);
+  if(legs.length<2) return null; // never offer a single-leg Algo bet
+  const odds=Math.max(1.05, Math.round(legs.reduce((a,l)=>a*l.odds,1)*100)/100);
   return {gwId:g.id, legs, odds, n:legs.length};
 }
 
@@ -4739,6 +4741,25 @@ function vOddSetter(){
       <span class="muted small">→ avg <b class="mono">${teamAvg(S,t.id).toFixed(1)}</b></span></div>`).join('')}</div>
   </details></div>`;
 }
+// Bugfix (post-launch feedback, 2026-08-20): the admin wants every bet riding on a gameweek
+// visible AND actionable right there in Odds Setter while tweaking prices — not just the odds
+// table — so exposure is a glance away when reacting to news mid-week, without a separate trip
+// to Bet Review. Stays visible for as long as the gameweek itself does: oddsCard() already only
+// ever shows non-settled (open/draft) gameweeks, so once settleGw() runs and the gw drops out of
+// vOddSetter() entirely, its bets naturally stop appearing here too — no separate "until
+// settled" check needed, that's already exactly how long this gameweek's card exists at all.
+function gwBetsPanel(g){
+  const bets=S.bets.filter(b=>b.gwId===g.id).sort((a,b)=>b.placedAt-a.placedAt);
+  if(!bets.length) return `<div class="muted small" style="margin-top:10px">🧾 No bets on this gameweek yet.</div>`;
+  const accepted=bets.filter(b=>b.status==='accepted');
+  const negotiating=bets.filter(b=>['pending','counter_house','counter_user'].includes(b.status));
+  const staked=accepted.reduce((s,b)=>s+b.stake,0);
+  return `<div style="margin-top:14px">
+    <details><summary class="muted small" style="cursor:pointer">🧾 Bets on this gameweek (${bets.length}) — ${accepted.length} accepted · ${GBP(staked)} staked${negotiating.length?` · ${negotiating.length} in negotiation`:''}</summary>
+      <div style="margin-top:8px">${bets.map(b=>betCard(b,'house')).join('')}</div>
+    </details>
+  </div>`;
+}
 function oddsCard(g,isDraft){
   // Batch 36: leader is whoever's currently top of the league table — the only team eligible
   // for the +0.1 favourite boost this gameweek.
@@ -4777,6 +4798,7 @@ function oddsCard(g,isDraft){
         <td><button class="x" onclick="rerecommendMarket('${g.id}','${m.id}')" title="Reset to suggested">↺</button></td></tr>`;
       }).join('')}</table></div>
     </div>`:''}
+    ${!isDraft?gwBetsPanel(g):''}
     <div class="formrow" style="margin-top:12px">
       <div><label>Edit cutoff (UK)</label>${dtPicker('gwDeadline_'+g.id, g.deadline, {label:'Set cutoff', onConfirm:`dtPickConfirm('gwDeadline_${g.id}',v=>setGwDeadline('${g.id}',v))`})}</div>
       ${!isDraft?`<div><label>In-play closes (UK)</label>${dtPicker('inplayCutoff_'+g.id, g.inplayCutoff||null, {label:'Set in-play close', onConfirm:`dtPickConfirm('inplayCutoff_${g.id}',v=>setInplayCutoff('${g.id}',v))`})}</div>`:''}
