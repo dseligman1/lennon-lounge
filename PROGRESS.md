@@ -82,6 +82,120 @@ the equivalent research trail.
   table, PIN table) is intentional and unchanged — only page-level sideways scroll was in scope.
   This was the last outstanding item in the build. Commit c0f496a.
 
+**ROUND 3 — new feature build requested 2026-08-19.** 7 new batches (26-32), same
+convention as before: one dedicated agent per batch, verified, committed, boxes
+checked below as they land. User confirmed: weekly backup runs BOTH on a schedule
+AND via a manual button; each batch ships live (pushed to `main`) as soon as it's
+verified, not held back to the end. Sequencing below is deliberate: data-safety net
+first, small self-contained wins next, then the season-markets pair (28 depends on
+27), then the sensitive financial-override tool, then the large novel visual build
+last (biggest scope, so everything else is already safely shipped if it needs extra
+iteration). Model assigned per batch based on what the work actually needs — visual
+polish and financial correctness get Opus 5, contained data/UI plumbing gets Sonnet.
+
+- [ ] 26. (Sonnet) Weekly betting-data backup + restore failsafe — addresses the
+  standing fear that Back Office's "wipe betting data" button could lose season
+  standings. New `.github/workflows/backup.yml`: `schedule` (weekly, e.g. Monday
+  06:00 UTC) + `workflow_dispatch`, mirrors `fpl-sync.yml`'s Firebase REST auth
+  pattern, reads the full `ROOT` node, commits a dated snapshot to `backups/
+  YYYY-MM-DD.json` in the repo (new folder). In-app: Back Office gets a new "📦
+  Backups" card — (a) a "Run backup now →" link to the Action's Actions page
+  (same UX pattern as the existing FPL Sync Action link, since a browser can't
+  write to the repo directly), (b) keep/extend the existing `exportData()` local
+  JSON download as an instant offline copy, (c) NEW: "📤 Restore from backup file"
+  — file input + `FileReader` (reuse the JSON-parsing pattern already used by
+  `fplPaste`), parses the snapshot, shows a heavy confirmation (this OVERWRITES
+  current gameweeks/bets/promos/rewards/history/standings), `requireAdmin()`-gated,
+  writes via `saveFields()` with the snapshot's own keys, `audit()`-logged. Verify:
+  brace/paren/bracket balance check, headless load, confirm the Action YAML is
+  valid (a linter or careful manual review — no live secrets to test against
+  locally). Update SETUP.md with the new weekly-routine note once done.
+- [ ] 27. (Sonnet) Season-long / mid-season / bespoke special markets — new market
+  scope NOT tied to a gameweek. New `S.seasonMarkets[]` (separate from `gw.
+  specialMarkets[]`), each `{id,name,kind,scope:{type:'season'|'midseason'|'date',
+  settleAt},teamId?,line?,odds,status:'open'|'settled',result?,createdAt}`. New
+  templates: full-season winner, most points, most wins, most draws ("wins draft"
+  — confirm this means most-draws with the user if it renders ambiguously in
+  practice), plus a bespoke builder (admin types a custom name/description and
+  picks a settle-by date+time, e.g. "Top of the table — midnight 25 Dec") reusing
+  the existing `dtPicker` widget from batch 2. New admin section in `vLoader()`,
+  rendered as a clearly separate card BELOW the existing per-gameweek special-
+  markets card (own heading, e.g. "🏆 Season & bespoke markets") so the gameweek
+  flow stays clean. New lightweight settle action (admin marks a season market's
+  winner/result → grades any placed legs, adapts `settleBet`-style logic for a
+  leg that isn't tied to `gw.matches`). Verify same as batch 26.
+- [ ] 28. (Sonnet) Dedicated "Season Bets" card/page — depends on batch 27's `S.
+  seasonMarkets[]`. Adds a compact "🏆 Season Bets" summary card (open-market
+  count + link) to Home and Bet Builder, clicking through to a new `vSeasonBets()`
+  view listing all open/settled season markets separately from the gameweek
+  board — keeps the GW-by-GW Bet Builder view free of season-long noise. Bet
+  placement for a season-market leg reuses the existing slip/`submitBet()`
+  pipeline (new `addSeasonLeg()` mirroring batch 20's `addMarketLeg()`). Verify
+  same pattern as prior batches.
+- [ ] 29. (Opus 5) Squad viewer — visual pitch view + fixture-comparison popup.
+  Biggest/most novel batch, do last. New FPL data pull needed (this app currently
+  only fetches Draft league standings/fixtures + gameweek deadlines — no player-
+  level data exists yet): (a) classic FPL `bootstrap-static` `elements[]` (player
+  name/position/team/form/total_points) — cache into `S.fpl.players`; (b) per-
+  manager squad via the Draft API's entry/picks endpoint for the relevant event,
+  resolved through the existing `S.fpl.entryMap` (FPL entry id → our teamId); (c)
+  fixture difficulty (FDR) is a CLASSIC FPL concept (`fantasy.premierleague.com/
+  api/fixtures/`, `team_h_difficulty`/`team_a_difficulty` 1-5), NOT exposed by
+  draft.premierleague.com — flag to Dan that the existing Cloudflare proxy (SETUP.
+  md Step 6 Option B) only whitelists `draft.premierleague.com` today and will
+  need extending to also proxy `fantasy.premierleague.com`, OR pull this via the
+  GitHub Action (server-side, no CORS) into Firebase like fixtures already are —
+  agent should pick whichever is less invasive and document the choice. Build:
+  (1) squad-on-pitch component (GK/DEF/MID/FWD rows, dark-glass styling matching
+  the existing design system — CSS vars only, no new palette), player chips
+  colored green→red by form with high scorers visually called out; (2) `#squadModal`
+  popup (mirror the existing `#betModal`/`#betModalOverlay` open/close pattern
+  exactly) wired to every place a team name currently renders as plain text
+  (`vGwBoard`, `betCard`, `vStandings`, Bet Builder) so clicking any team opens
+  their squad without losing place; (3) from a specific gameweek match, a side-
+  by-side two-squad comparison popup showing both teams' fixtures + an FDR chip
+  per team (green 1-2, red 4-5, per the user's spec — implement generically off
+  the actual difficulty number, not hardcoded to any specific real-world team).
+  Verify: brace/paren/bracket balance, headless load with `save()`/`startListener()`
+  stubbed, and a visual check (screenshot) of the pitch view and comparison popup
+  at mobile width — this batch is explicitly quality-bar-sensitive, don't skip the
+  visual check.
+- [ ] 30. (Sonnet) Insights: team form guide — purely computed from data that
+  already exists (`S.history` + `gw.matches[].result`), no new FPL pull needed.
+  New pure fn (recent-N-gameweek W/D/L record + points trend per team) rendered
+  as a new "📈 Form guide" card in `vInsights()`, plus a small in-form/out-of-form
+  marker next to each team in `vGwBoard`'s match rows so it's visible where bets
+  actually get placed, not just buried in Insights.
+- [ ] 31. (Sonnet) Limits & Edge: ACCA edge-by-legs table — replaces the current
+  `accaFactor(n,marginPct)` linear formula (`1-(marginPct/100)*n`, i.e. margin
+  scales WITH leg count) with an admin-edited lookup table, legs 1 through 10,
+  each its own flat % edge (matches the user's own worked example: a 3-fold at
+  raw combined odds 11 with a 10% edge on 3-fold specifically → 9.9, i.e. `raw *
+  (1 - edge%/100)`, no multiplication by leg count). New `S.settings.
+  accaEdgeByLegs` (array/object indexed 1-10, legs beyond 10 clamp to the 10-leg
+  rate), new 10-row input UI in the existing Limits & Edge settings card (~line
+  3849) alongside `maxStake`/`maxPayout`. Update `combinedOdds()`/`accaFactor()`
+  to look up by leg count instead of the linear formula. Confirm (and note in the
+  batch's PROGRESS.md entry) that this is inherently always-live — `combinedOdds`
+  is computed at bet-build time from current settings, so there's no separate
+  "deploy" step, but verify already-`accepted`/settled bets' frozen `effOdds`
+  are NOT retroactively recalculated when the table changes later.
+- [ ] 32. (Opus 5) Admin override for settled bets/finances — deliberately last
+  before the visual batch, since it's financially sensitive and benefits from a
+  stable base. New Back Office "⚠️ Override" section, `requireAdmin()`-gated plus
+  a deliberately heavy type-to-confirm step (not just a plain `confirm()`) before
+  anything lands — this is a post-hoc failsafe for miscalculations/missed edge
+  cases, not a normal workflow. Lets an admin edit a bet's status/`settledPayout`/
+  leg results even after `status==='settled'`, with a mandatory reason field.
+  Every override appends to a new `bet.overrideHistory[]` (who/when/before/after/
+  reason) ON THE BET ITSELF — distinct from and in addition to the global 500-
+  entry `audit()` log, so the trail survives even if the audit log rolls over.
+  Confirm during build that `computePnl()`/standings derive live from `S.bets`
+  (so editing a bet's fields is sufficient with no separate cache to fix) —
+  flag to the user if that's not actually true anywhere. Must NOT reopen betting
+  or bypass `settleGw()`'s normal flow for anything except the specific bet being
+  corrected.
+
 - [ ] 0. Codebase structure map (research only, feeds all other batches)
 - [x] 1. Odds decimal formatting + remove number-input spinners everywhere — `fmtOdds` now `.toFixed(1)`; global CSS hides number-input spinners; odds input `step`/`min` bumped to 0.1/1.1 (Odds Setter fields, counter-offer field, `setOdds` clamp). Commit b6734bc.
 - [x] 2. Cutoff / in-play-close time fields → calendar+clock picker widget — extracted `calGrid`+time-chip UI from the Loader into a shared, key-based `dtPicker`/`dtPickerPanelInner` widget (state in `dtPickState`, backed by `parseDTLocal`/`ukWallToTs`); Loader kickoff picker refactored to use it inline, GW deadline and in-play cutoff fields in Odds Setter now use it as a popover (raw `datetime-local` inputs removed). Commit 615a020.
