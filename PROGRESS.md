@@ -509,11 +509,17 @@ same-day turnaround), not delegated:
 
 ---
 
-## ROUND 5 — pre-launch final changes, 2026-08-19
+## ROUND 5 — pre-launch final changes, 2026-08-19/20 — COMPLETE
 
 User request (final punch list before pushing live for real). Do NOT touch any odds/bets
-already live in production data. Done directly (not delegated) — every item here touches
-real money. Batch-by-batch: implement, verify, commit, push, move to next.
+already live in production data — confirmed nothing already-set was touched (all 6 batches
+below are new code paths/UI, none rewrite existing `m.odds`/`bet` values). Done directly (not
+delegated) — every item here touches real money. Batch-by-batch as the user explicitly
+chose: implement, verify, commit, push, move to next — each batch shipped live before the
+next one started. No browser extension was available in this session (checked at batch 37),
+so every batch's verification is a static trace (brace/paren/bracket/backtick balance +
+manual read-through of every call site touched) rather than a live click-through — flagged
+per-batch below rather than claimed. Worth a real walkthrough on the live site once convenient.
 
 - [x] 35. Odds-integrity guard on Algo/Spin — `genAlgoBet()`'s `special`-type leg makers
   used to invent their own line+odds via `teamAvg()`/`edgedOdds()`/`phi()` (a fresh random
@@ -619,11 +625,32 @@ real money. Batch-by-batch: implement, verify, commit, push, move to next.
   878 backticks) and a manual trace of every new function plus all three `isBespokeBet`
   integration points. No browser extension available this session to click through the
   request→accept→settle flow live — flagged plainly, worth a real walkthrough once live.
-- [ ] 40. Settler tab: one-click "settle everything" with admin approval gate — pulls FPL
-  scores for every gameweek that's ready and shows a computed win/loss/void result per bet
-  for the admin to eyeball/adjust, with a final explicit approve step before anything is
-  actually committed (no silent auto-settle — admin approval stays the gate, same principle
-  as batch 22/32).
+- [x] 40. Settler tab: one-click "settle everything" with admin approval gate — new
+  "⚡ Settle everything that's ready" button (`settleEverythingReady()`) at the top of the
+  Settler tab: sweeps every open, FPL-linked gameweek and auto-pulls scores (reuses the
+  existing `fillScoresFromFpl()`, same as the per-gameweek button, just across all of them in
+  one go), then finds every open gameweek with fully-complete scores and computes — via the
+  existing pure `settleBet()`, nothing mutated — what settling would do to every one of its
+  accepted bets. Opens a review panel (`settleReviewPanel()`, `vSettler()` now renders it
+  instead of the normal tab whenever `settleReview` is non-null) listing every gameweek's
+  accepted bets with their computed WON/LOST/VOID result and payout, each with a dropdown to
+  override the outcome before committing (`setSettleOverride()`) — an overridden multi-leg
+  acca falls back to the plain `stake*effOdds` formula rather than `settleBet()`'s partial-
+  void-prorated figure, flagged inline in the review with a note to check Back Office →
+  Override (batch 32) afterward if that matters for that bet specifically. Nothing is written
+  to any bet until the final `approveSettleReview()` (its own `confirm()`, states the exact
+  gameweek/bet counts) — which then does exactly what `settleGw()` already does per gameweek
+  (grade accepted bets, expire unaccepted ones, mark the gw settled, deactivate its promos,
+  sweep `evaluatePromoRules()`) across every reviewed gameweek in one `saveNow()`. The
+  existing single-gameweek SETTLE button/flow (`settleGw()`) is completely untouched — this
+  is an additive bulk path, not a replacement, matching the user's "everything needs to be
+  finally approved by the admin" requirement (no outcome is ever silently committed) and the
+  project's own established principle (batch 22/32: pulling/computing scores is never the
+  same step as committing them). Verified via brace/paren/bracket/backtick balance
+  (`{`2732/2732 `(`5832/5832 `[`552/552, 902 backticks) and a manual trace of the full
+  build-review → override → approve → commit path plus confirming `settleGw()`'s own body is
+  byte-for-byte unchanged. No browser extension available this session to click through
+  a real multi-gameweek settle live — flagged plainly, worth a real walkthrough once live.
 
 ---
 

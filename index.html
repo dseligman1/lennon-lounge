@@ -4955,7 +4955,110 @@ function settleBespokeBet(betId, outcome){
   evaluatePromoRules(b.teamId);
   saveNow(); render(); toast('Bespoke bet settled ⚖️');
 }
+// Batch 40: "Settle everything" — one button that pulls FPL scores for every open gameweek
+// that's ready, then shows the admin a single review of what settling would do to every
+// accepted bet (computed via the existing pure settleBet(), nothing mutated yet) before one
+// final approval commits it all. Still fully gated by explicit admin approval — this replaces
+// clicking SETTLE once per gameweek, not the approval step itself. Per-gameweek SETTLE below
+// is untouched and still works exactly as before for a single gameweek.
+let settleReview = null; // null = closed; else [{gwId,gwName,rows:[{betId,teamId,legsLabel,stake,effOdds,computed,payout,override}]}]
+function settleEverythingReady(){
+  if(!requireAdmin()) return;
+  // Auto-pull FPL scores for any open, FPL-linked gw that's ready on FPL but not fully filled
+  // locally yet — same fillScoresFromFpl() the per-gameweek card already offers, just swept
+  // across every open gameweek in one go instead of one click each.
+  S.gameweeks.filter(g=>g.status==='open'&&g.event).forEach(g=>{
+    const fs=fplScoresReady(g.id);
+    if(fs&&fs.ready&&fs.missingLocal>0) fillScoresFromFpl(g.id);
+  });
+  const ready=S.gameweeks.filter(g=>g.status==='open'&&g.matches.filter(m=>m.home&&m.away).every(m=>m.result&&m.result.homePts!=null&&m.result.awayPts!=null));
+  if(!ready.length){ toast('No gameweeks have complete scores yet', true); return; }
+  settleReview = ready.map(g=>({
+    gwId:g.id, gwName:g.name,
+    rows: S.bets.filter(b=>b.gwId===g.id&&b.status==='accepted').map(b=>{
+      const r=settleBet(b,S);
+      return {betId:b.id, teamId:b.teamId, legsLabel:b.legs.map(l=>l.label).join(' + '), stake:b.stake, effOdds:b.effOdds,
+        computed:r?r.outcome:'void', payout:r?r.payout:b.stake, override:null};
+    })
+  }));
+  render();
+  toast(`Reviewing ${ready.length} gameweek(s) — check results before approving`);
+}
+function setSettleOverride(gwId,betId,val){
+  const gwEntry=settleReview&&settleReview.find(x=>x.gwId===gwId); if(!gwEntry) return;
+  const row=gwEntry.rows.find(r=>r.betId===betId); if(!row) return;
+  row.override = val===''?null:val;
+  render();
+}
+function cancelSettleReview(){ settleReview=null; render(); toast('Review cancelled — nothing was settled'); }
+function approveSettleReview(){
+  if(!requireAdmin()||!settleReview) return;
+  const totalBets=settleReview.reduce((s,ge)=>s+ge.rows.length,0);
+  if(!confirm(`Approve and settle ${settleReview.length} gameweek(s), ${totalBets} accepted bet(s)? This locks the results in.`)) return;
+  let won=0,lost=0;
+  settleReview.forEach(gwEntry=>{
+    const g=gw(gwEntry.gwId); if(!g) return;
+    gwEntry.rows.forEach(row=>{
+      const b=getBet(row.betId); if(!b||b.status!=='accepted') return;
+      const outcome=row.override||row.computed;
+      // If not overridden, trust settleBet()'s own payout (correctly prorated for a partial-void
+      // acca). If overridden to a DIFFERENT outcome than computed, fall back to the plain
+      // stake*effOdds formula for a won override — matches the simple case; a multi-leg acca with
+      // a partial void that's also being overridden may need a manual payout correction
+      // afterward via Back Office → Override (batch 32), flagged in the review UI below.
+      const payout = outcome==='won' ? (row.override&&row.override!==row.computed ? Math.round(b.stake*b.effOdds*100)/100 : row.payout) : (outcome==='void'?b.stake:0);
+      b.status=outcome; b.settledPayout=payout; b.settledAt=Date.now();
+      outcome==='won'?won++:(outcome==='lost'?lost++:0);
+      const msg=outcome==='won'
+        ?`🎉 BET WON! £${payout.toFixed(2)} incoming · ${b.legs.length} leg(s) @ ${fmtOdds(b.effOdds)}`
+        :outcome==='void'
+        ?`↩️ Bet voided — stake of £${b.stake} returned`
+        :`❌ Bet lost · £${b.stake} · ${b.legs.length} leg(s) @ ${fmtOdds(b.effOdds)}`;
+      pushNotif(b.teamId,'bet_settled',msg);
+    });
+    S.bets.filter(b=>b.gwId===gwEntry.gwId&&['pending','counter_house','counter_user'].includes(b.status)).forEach(b=>{ b.status='expired'; });
+    g.status='settled';
+    S.promos.forEach(p=>{ if(p.gwId===gwEntry.gwId) p.active=false; });
+    audit('settled (bulk)', `${g.name}: via Settle Everything`);
+  });
+  S.teams.forEach(t=>evaluatePromoRules(t.id));
+  settleReview=null;
+  saveNow(); render();
+  toast(`Settled ${won} winner(s), ${lost} loser(s) across ${totalBets} bet(s) ⚖️`);
+}
+function settleReviewPanel(){
+  const totalBets=settleReview.reduce((s,ge)=>s+ge.rows.length,0);
+  return `<h2>Bet Settler</h2><div class="sub">Reviewing ${settleReview.length} gameweek(s), ${totalBets} accepted bet(s) — check the results below, override anything that looks wrong, then approve.</div>
+  ${settleReview.map(gwEntry=>`<div class="card">
+    <h3 style="margin:0 0 8px">📅 ${esc(gwEntry.gwName)}</h3>
+    ${gwEntry.rows.length===0?'<p class="muted small">No accepted bets in this gameweek.</p>':`
+    <div style="overflow-x:auto"><table><tr><th>Team</th><th>Bet</th><th>Stake</th><th>Odds</th><th>Result</th><th>Payout</th></tr>
+    ${gwEntry.rows.map(row=>{
+      const outcome=row.override||row.computed;
+      const overridden=!!(row.override&&row.override!==row.computed);
+      const payout=outcome==='won'?(overridden?Math.round(row.stake*row.effOdds*100)/100:row.payout):(outcome==='void'?row.stake:0);
+      return `<tr>
+      <td class="small">${esc(team(row.teamId)?team(row.teamId).name:'?')}</td>
+      <td class="small">${esc(row.legsLabel)}</td>
+      <td class="small">${GBP(row.stake)}</td>
+      <td class="small">${fmtOdds(row.effOdds)}</td>
+      <td><select onchange="setSettleOverride('${gwEntry.gwId}','${row.betId}',this.value)">
+        <option value="" ${!row.override?'selected':''}>${row.computed.toUpperCase()} (computed)</option>
+        <option value="won" ${row.override==='won'?'selected':''}>Override → WON</option>
+        <option value="lost" ${row.override==='lost'?'selected':''}>Override → LOST</option>
+        <option value="void" ${row.override==='void'?'selected':''}>Override → VOID</option>
+      </select>${overridden?'<div class="muted small" style="margin-top:2px;color:var(--gold)">⚠ overridden — check payout for multi-leg accas with a partial void</div>':''}</td>
+      <td class="small mono">${GBP(payout)}</td>
+      </tr>`;
+    }).join('')}</table></div>`}
+  </div>`).join('')}
+  <div class="actions" style="margin-top:12px">
+    <button class="btn big" onclick="approveSettleReview()">✅ Approve &amp; settle everything</button>
+    <button class="btn secondary" onclick="cancelSettleReview()">Cancel review</button>
+  </div>`;
+}
 function vSettler(){
+  if(settleReview) return settleReviewPanel();
   const open=S.gameweeks.filter(g=>g.status==='open');
   const done=S.gameweeks.filter(g=>g.status==='settled');
   const doneHtml=done.length?`<div class="card"><details><summary>Settled gameweeks — undo (${done.length})</summary>
@@ -4963,7 +5066,9 @@ function vSettler(){
       <button class="btn danger small" onclick="reopenGw('${g.id}')">♻ Re-open</button></div>`).join('')}</details></div>`:'';
   const bespokeHtml=bespokeSettleCard();
   if(!open.length) return `<h2>Bet Settler</h2><div class="sub">Scores in, bets graded, arguments settled.</div>${bespokeHtml}<div class="card"><p class="muted">No live gameweeks to settle.</p></div>${doneHtml}`;
+  const settleAllBtn=`<div class="card"><button class="btn big" style="width:100%" onclick="settleEverythingReady()">⚡ Settle everything that's ready</button><p class="muted small" style="margin:8px 0 0">Pulls FPL scores for any gameweek that's ready, then shows a review of every accepted bet's result — nothing is final until you approve it.</p></div>`;
   return `<h2>Bet Settler</h2><div class="sub">Pull scores from FPL, enter manually, or paste — every bet grades itself.</div>
+  ${settleAllBtn}
   ${bespokeHtml}
   ${open.map(g=>{
     const riding=S.bets.filter(b=>b.gwId===g.id&&b.status==='accepted').length;
