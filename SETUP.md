@@ -127,12 +127,15 @@ rest — fixtures, results, standings, live in-play scores — pulls in automati
 ## Step 6 — Load a gameweek: the one button you actually use week to week
 
 Everything lives in **Back Office → 🔗 FPL Sync**. There is one button:
-**"⟳ Sync & stage next gameweek."** Click it and it:
+**"⟳ Sync & stage gameweeks."** Click it and it:
 
 1. Pulls fixtures, results and standings from the FPL Draft API
-2. Works out which gameweek is next (the earliest one that has fixtures but no board yet)
-3. Builds that gameweek's board with recommended odds and drops you straight into **Odds
-   Setter** to review, tweak, and publish
+2. Builds a board (with recommended odds) for **every gameweek that isn't loaded yet** — not
+   just the next one — so players can see the whole run of upcoming fixtures under Bet
+   Builder's "Coming up" section, greyed out and unbettable until you publish each one
+3. Drops you into **Odds Setter**, which only shows the *nearest* unpublished gameweek for
+   full review (odds for a gameweek months out would be stale by the time it matters — the
+   rest sit staged, listed by name, until they become the nearest one)
 
 Nothing runs on a schedule — it only does anything when you click it. Repeat once a week,
 whenever you're ready to open the next gameweek for betting (see "Your weekly routine" below).
@@ -166,7 +169,7 @@ CORS doesn't apply, and writes straight to Firebase. Set it up once:
    | `FPL_LEAGUE_ID` | The numeric league ID from Step 5 |
 
 Then each week: GitHub repo → **Actions → FPL Data Sync → Run workflow** → confirm → wait
-~15 seconds → back in the app, click **Sync & stage next gameweek** (it'll now find the fresh
+~15 seconds → back in the app, click **Sync & stage gameweeks** (it'll now find the fresh
 data already sitting in Firebase and stage from it, CORS or not). Back Office → FPL Sync also
 has a direct link to the Actions page so you don't have to go hunting for it.
 
@@ -206,7 +209,7 @@ data itself with no GitHub tab, ever. No local tools needed — everything happe
 7. In the app: **Back Office → FPL Sync → ⚙️ Advanced → Proxy URL** → paste that URL (with
    `/api` on the end) → **Save**
 
-From then on, **Sync & stage next gameweek** fetches live data directly — no GitHub tab
+From then on, **Sync & stage gameweeks** fetches live data directly — no GitHub tab
 needed. This proxy only ever reads public FPL data; it doesn't touch your Firebase database
 or hold any of your secrets.
 
@@ -221,7 +224,7 @@ against what FPL has on file for them.
 ### Your weekly routine
 
 1. Wait until a gameweek's results are official/final on FPL's own standings page
-2. Back Office → FPL Sync → **Sync & stage next gameweek**
+2. Back Office → FPL Sync → **Sync & stage gameweeks**
 3. You land in Odds Setter with the new gameweek as a draft — tweak odds/cutoff/special
    markets if you want, then **Publish** to open it for betting
 4. Settler → settle the *previous* gameweek's bets once you're confident its results are final
@@ -230,7 +233,24 @@ There's no auto-refresh in between — nothing changes underneath you until you 
 
 ---
 
-## Step 7 — Lock down Firebase (when ready)
+## Betting cutoff — how it's calculated
+
+House rule: **betting closes 80 minutes before the first Premier League kickoff of that
+gameweek.** E.g. first game kicks off 12:30pm Saturday → cutoff is 11:10am Saturday.
+
+The app doesn't get real PL kickoff times directly — it gets FPL's own `deadline_time` for the
+gameweek, which (confirmed against real fixture data) is consistently **exactly 90 minutes
+before that same first kickoff**. So the app computes: true kickoff = FPL's deadline + 90 min,
+then house cutoff = that kickoff − 80 min, which nets out to **FPL's deadline + 10 minutes**.
+You'll see the cutoff time in Odds Setter/Bet Builder land 10 minutes *after* FPL's own posted
+deadline — that's this calculation working correctly, not a bug.
+
+If you ever manually set a kickoff time yourself (Manual Fixture Entry's date/time picker),
+the cutoff is calculated directly as that kickoff − 80 min, no FPL deadline involved.
+
+---
+
+## Step 7 — Lock down Firebase (when ready) — and a plain-language security note
 
 Once everything is working, go to Firebase Console → Realtime Database → **Rules** and replace with:
 
@@ -243,7 +263,20 @@ Once everything is working, go to Firebase Console → Realtime Database → **R
 }
 ```
 
-This is sufficient for a private league where all 12 members share the same portal. For tighter security, consult the Firebase docs on auth rules.
+**Be clear-eyed about what this means.** With these rules, *anyone* who has the app's URL can
+read and write the entire database directly — with or without a PIN, admin or not — by simply
+opening their browser's dev tools console (F12) and either calling one of the app's own
+functions (e.g. typing `resetAll()`) or sending a raw request to the database URL, which is
+sitting in plain sight in the page's source. The app adds a `requireAdmin()` check in front of
+its highest-risk actions (wiping data, accepting/rejecting/settling bets, publishing odds,
+changing settings) so the *app's own UI* won't let a non-admin session trigger them by
+accident — but that check runs in the browser, not on the server, so it stops casual/accidental
+misuse, not someone who deliberately goes looking. For a private group of 12 people who all
+trust each other, this is a reasonable, low-effort tradeoff (the same PIN-based trust model as
+before). It is **not** equivalent to real access control. If that ever matters more than
+convenience — e.g. real money at stake and you don't fully trust everyone with a PIN — the
+actual fix is Firebase Authentication with server-enforced security rules keyed to specific
+admin user IDs, which is a bigger change than tightening these rules alone and isn't done here.
 
 ---
 
@@ -267,7 +300,7 @@ This is sufficient for a private league where all 12 members share the same port
 **"Connecting to Lennon Lounge..." never goes away**  
 → Check your `FIREBASE_CONFIG` values in the HTML. The `databaseURL` is the most commonly wrong field.
 
-**"Sync & stage next gameweek" shows a CORS message**  
+**"Sync & stage gameweeks" shows a CORS message**  
 → Expected unless you've set up Option A or B in Step 6 — the FPL API blocks direct browser
 requests for everyone, not just this app. It still stages from whatever's already synced
 (e.g. from a previous GitHub Action run), so it's not a dead end — but for fresh data, run
@@ -284,12 +317,22 @@ Cloudflare proxy so this stops happening entirely.
 season — anything above 0 deliberately hides the most recent real gameweeks (a testing
 feature, see Step 6).
 
-**Gameweeks/bets look wrong, made up, or like a fake "week 2" out of nowhere**  
-→ Someone (probably you, while testing) clicked **Back Office → 🧪 Test tools → "Load test
-gameweeks & odds"**. It seeds fake settled/open/in-play gameweeks with fake bets for trying
-the app out — harmless, but easy to mistake for real synced data. Fix: **Back Office → 🧪
-Test tools → "🧹 Clear test data"** — wipes gameweeks/bets/promos/rewards only, leaves your
-FPL sync setup, settings and teams untouched. Do this once before a real season starts.
+**Gameweeks/bets look wrong or made up**  
+→ The old "Load test gameweeks & odds" button has been removed entirely — there's no way to
+generate fake data through the app any more, so this shouldn't happen going forward. If you
+still have leftover fake data from before it was removed: **Back Office → 🧹 Wipe betting
+data → "Clear all gameweeks, bets & promos"** — wipes gameweeks/bets/promos/rewards only,
+leaves your FPL sync setup, settings and teams untouched.
+
+**After clicking "Clear all gameweeks, bets & promos" or any Back Office action, FPL sync
+data (league ID, standings, holdback) reverts to old/empty values**  
+→ This was a real bug (fixed): if the browser tab had an old copy of the app's state in
+memory (e.g. left open across a GitHub Action sync), some actions used to save that whole
+stale copy back to the database, silently overwriting fresher data with old data. The
+highest-risk actions (clearing data, FPL sync, staging gameweeks) now write only the specific
+fields they change, so this can't happen from those any more. If you still see it happen
+elsewhere: refresh the page fully (not just reload the tab from cache) before clicking
+anything, so you're working from current data.
 
 **I can't find the "Gameweek Loader" tab any more**  
 → Removed from the main nav — the FPL sync now stages gameweeks automatically (Step 6), so

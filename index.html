@@ -1028,6 +1028,30 @@ function audit(action, detail){
   S.audit.push({at:Date.now(), by:me?me.id:'system', action, detail:String(detail||'')});
   if(S.audit.length>500) S.audit=S.audit.slice(-500);
 }
+// Client-side-only gate: stops the app's own UI from calling an admin action for a non-admin
+// session (e.g. a stray button reachable by URL/state manipulation). This is NOT real
+// security — Firebase rules are wide open (.read/.write: true, see SETUP.md Step 7) and every
+// function here is a plain global, so anyone with devtools open can call it directly or write
+// to the database with a raw HTTP request regardless of this check. It only raises the bar
+// for accidental/casual misuse, not a deliberate one. Real protection needs Firebase Auth +
+// server-enforced rules keyed to specific admin UIDs — out of scope for this pass; flagged to
+// the user rather than silently treated as solved.
+function requireAdmin(){
+  if(me&&me.admin) return true;
+  toast('Admins only',true);
+  return false;
+}
+// Writes ONLY the given top-level keys straight to Firebase (a partial update, not a full
+// S overwrite) and updates local S to match. Safer than the debounced save() for anything
+// where the local S might be stale (e.g. a tab left open/backgrounded across an external
+// change like a GitHub Action sync) — save() re-serializes the WHOLE state tree, so a stale
+// local copy silently clobbers fields it never touched. This can't, because unlisted keys
+// are never sent.
+function saveFields(obj){
+  Object.assign(S, obj);
+  clearTimeout(_saveTimer); _saveTimer=null;
+  return db.ref(ROOT).update(obj).catch(e=>{ console.error('Save failed:', e); throw e; });
+}
 
 /* ================================================================
    PRICING & SETTLEMENT ENGINE (pure functions — copied verbatim)
@@ -1898,6 +1922,10 @@ function vBuilder(){
   const inplay=open.filter(g=>bettableNow(g)==='inplay');
   const paused=open.filter(g=>!bettableNow(g));
   const list=builderSec==='pre'?pre:inplay;
+  // Draft gameweeks (synced but not yet published) — shown read-only so players can see
+  // what's coming, per the house's request. Sorted earliest-first since that's the order
+  // they'll actually get published in.
+  const upcoming=builderSec==='pre'?S.gameweeks.filter(g=>g.status==='draft').sort((a,b)=>(a.event||0)-(b.event||0)):[];
   return `<div class="grid2"><div>
     <h2>Bet Builder</h2>
     <div class="sub">Pick your spots, stack your legs, back yourself.</div>
@@ -1907,9 +1935,10 @@ function vBuilder(){
     </div>
     ${builderSec==='pre'?vAlgoZone():''}
     ${builderSec==='inplay'?`<div class="card inplay-soon-banner"><b>🚧 In-play betting — Coming soon</b><div class="muted small" style="margin-top:4px">Nothing to see here yet — check back once this is live.</div></div>`:`
-    ${list.length===0?`<div class="card"><h3>😴 Nothing open for pre-match betting</h3><p class="muted">The house has not published a board yet.</p>${me.admin?`<button class="btn small gold" style="margin-top:10px" onclick="seedTestData()">🧪 Load test gameweeks & odds</button>`:''}</div>`:''}
+    ${list.length===0?`<div class="card"><h3>😴 Nothing open for pre-match betting</h3><p class="muted">The house has not published a board yet.</p></div>`:''}
     ${paused.length?paused.map(g=>`<div class="card"><h3>⏸ ${esc(g.name)}</h3><p class="muted">Cutoff passed — betting is paused until first kick-off${g.kickoff?' ('+fmtDT(g.kickoff)+')':''}, then In-Play opens.</p></div>`).join(''):''}
     ${list.slice().reverse().map((g,idx)=>vGwBoard(g,idx===0,builderSec)).join('')}
+    ${upcoming.length?`<h3 style="margin:18px 0 8px">📅 Coming up (${upcoming.length})</h3>${upcoming.map(g=>vGwBoard(g,false,'upcoming')).join('')}`:''}
     `}
   </div>
   <div class="slip">${vSlip()}</div></div>`;
@@ -1940,8 +1969,10 @@ function specialMarketsBoard(g, inplay){
 }
 function vGwBoard(g,openByDefault,mode){
   const inplay=mode==='inplay';
+  const upcoming=mode==='upcoming';
   const head=inplay
     ?`<span class="livechip">🔴 IN-PLAY${g.inplayCutoff?' · closes '+fmtDT(g.inplayCutoff):''}</span>`
+    :upcoming?`<span class="deadline muted">🔒 Not published yet</span>`
     :`<span class="deadline">⏱ Cutoff ${fmtDT(g.deadline)}</span>`;
   const inner=`
     <div class="gwhead">
@@ -1949,6 +1980,7 @@ function vGwBoard(g,openByDefault,mode){
       ${head}
     </div>
     ${inplay?'<p class="muted small" style="margin-bottom:10px">🚧 <b>In-play betting is coming soon.</b> Odds and scores below keep updating live for reference, but new in-play bets can\'t be placed yet.</p>':''}
+    ${upcoming?'<p class="muted small" style="margin-bottom:10px">Fixtures confirmed — odds shown are provisional. The house hasn\'t published this gameweek yet, so nothing below is bettable.</p>':''}
     ${g.matches.filter(m=>m.home&&m.away).map(m=>{
       const myWinPick = m.home===me.id ? 'home' : (m.away===me.id ? 'away' : null);
       const btn=(pick,lab)=>{
@@ -1957,6 +1989,9 @@ function vGwBoard(g,openByDefault,mode){
         if(inplay){
           return `<button class="oddbtn locked" disabled title="🚧 In-play betting is coming soon">${lab}<b>${fmtOdds(price)}</b></button>`;
         }
+        if(upcoming){
+          return `<button class="oddbtn locked" disabled title="🔒 Not published yet">${lab}<b>${fmtOdds(price)}</b></button>`;
+        }
         if(myWinPick && pick!==myWinPick){
           return `<button class="oddbtn locked" disabled title="🔒 Anti-match-fixing: this match involves your team — you can only back your own team to WIN, or take a top-scorer special">🔒 ${lab}<b>${fmtOdds(price)}</b></button>`;
         }
@@ -1964,12 +1999,12 @@ function vGwBoard(g,openByDefault,mode){
         return `<button class="oddbtn ${sel} ${boosted?'boost':''}" onclick="addMatchLeg('${g.id}','${m.id}','${pick}')">${boosted?'<span class="fire">🔥</span>':''}${lab}<b>${boosted?`<span class="was">${fmtOdds(m.odds[pick])}</span>`:''}${fmtOdds(price)}</b></button>`;
       };
       const liveScore=inplay&&m.result?`<span class="livechip" style="animation:none">${m.result.homePts??0}–${m.result.awayPts??0}</span>`:'';
-      return `<div class="match${inplay?' soon':''}">
+      return `<div class="match${inplay||upcoming?' soon':''}">
         <div class="names">${esc(team(m.home).name)}<span class="vs">v</span>${esc(team(m.away).name)} ${liveScore}</div>
         <div class="oddsbtns">${btn('home','HOME')}${btn('draw','DRAW')}${btn('away','AWAY')}</div>
       </div>`;
     }).join('')||'<p class="muted">Fixtures coming soon.</p>'}
-    ${g.specialMarkets&&g.specialMarkets.length?specialMarketsBoard(g,inplay):''}`;
+    ${g.specialMarkets&&g.specialMarkets.length&&!upcoming?specialMarketsBoard(g,inplay):''}`;
   return openByDefault?`<div class="card">${inner}</div>`
     :`<div class="card"><details><summary>📅 ${esc(g.name)} — view board</summary><div style="margin-top:12px">${inner}</div></details></div>`;
 }
@@ -2800,38 +2835,6 @@ function doChangePin(){
   changePin(nw).then(()=>toast('PIN updated 🔑')).catch(()=>toast('Failed to update PIN',true));
 }
 
-/* ---- Test data seeder ---- */
-function seedTestData(){
-  const ids=S.teams.map(t=>t.id);
-  const shuffle=arr=>{const a=[...arr];for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;};
-  const pair=()=>{const a=shuffle(ids);const f=[];for(let i=0;i<12;i+=2)f.push({home:a[i],away:a[i+1]});return f;};
-  const mk=(name,deadline,kickoff,extra={})=>({id:nid('gw'),name,deadline,kickoff,status:'open',event:null,
-    matches:pair().map(f=>({id:nid('m'),home:f.home,away:f.away,odds:recOdds(S,f.home,f.away),result:null})),...extra});
-  const now=Date.now();
-  const g1=mk('GW Test 1 · settled',now-3*864e5,now-3*864e5+90*60000);
-  S.gameweeks.push(g1);
-  ['murov','fride','dunny','kapil','henry'].forEach((tid,i)=>{
-    const m=g1.matches[i%6]; const pick=['home','away','draw'][i%3];
-    const odds=m.odds[pick];
-    const label=pick==='draw'?`Draw — ${team(m.home).name} v ${team(m.away).name}`:`${team(pick==='home'?m.home:m.away).name} to WIN`;
-    const stake=[20,50,10,100,25][i];
-    S.bets.push({id:nid('bet'),teamId:tid,gwId:g1.id,legs:[{type:'match',gwId:g1.id,matchId:m.id,pick,odds,label}],
-      stake,effOdds:odds,status:'accepted',placedAt:now-3.2*864e5,inplay:false,afterCutoff:false,limitFlags:[],
-      history:[{by:tid,role:'player',action:'placed',stake,odds,at:now-3.2*864e5}]});
-  });
-  g1.matches.forEach(m=>m.result={homePts:35+Math.floor(Math.random()*50),awayPts:35+Math.floor(Math.random()*50)});
-  S.bets.filter(b=>b.gwId===g1.id).forEach(b=>{ const r=settleBet(b,S); if(r){b.status=r.outcome;b.settledPayout=r.payout;b.settledAt=now-2.8*864e5;} });
-  g1.status='settled';
-  const g2=mk('GW Test 2 · open',now+24*36e5,now+25.5*36e5);
-  S.gameweeks.push(g2); createPromoForGw(g2);
-  const m2=g2.matches[0];
-  S.bets.push({id:nid('bet'),teamId:'blank',gwId:g2.id,legs:[{type:'match',gwId:g2.id,matchId:m2.id,pick:'home',odds:m2.odds.home,label:`${team(m2.home).name} to WIN`}],
-    stake:30,effOdds:m2.odds.home,status:'pending',placedAt:now-36e5,inplay:false,afterCutoff:false,limitFlags:[],
-    history:[{by:'blank',role:'player',action:'placed',stake:30,odds:m2.odds.home,at:now-36e5}]});
-  save(); toast('Test data loaded 🧪'); render();
-}
-
-
 // ── PART 4: Admin Views + Render + Init ──────────────────────────────
 /* ================================================================
    PART 4 — Admin Views, Render, Init
@@ -2978,6 +2981,7 @@ function vReview(){
   </details></div>`:''}`;
 }
 function houseAccept(id){
+  if(!requireAdmin()) return;
   // Defensive: act on every bet sharing this id, not just the first .find() hit — belt-and-braces
   // against any leftover duplicate from the now-fixed dual-write bug (see migrate()'s dedupe pass,
   // which should mean this is normally a group of exactly one by the time this runs).
@@ -2994,6 +2998,7 @@ function houseAccept(id){
   saveNow(); render(); toast('Bet accepted ✓');
 }
 function houseReject(id){
+  if(!requireAdmin()) return;
   const matches=S.bets.filter(x=>x.id===id);
   if(!matches.length) return;
   matches.forEach(b=>{
@@ -3006,6 +3011,7 @@ function houseReject(id){
   saveNow(); render(); toast('Bet rejected');
 }
 function houseCancel(id){
+  if(!requireAdmin()) return;
   const matches=S.bets.filter(x=>x.id===id);
   if(!matches.length) return;
   const b0=matches[0];
@@ -3255,10 +3261,10 @@ function vLoader(){
   const kst=dtPickState['loaderKo'];
   let ko=null;
   if(kst.day&&kst.time){ ko=ukWallToTs(kst.day.y,kst.day.m,kst.day.d,...kst.time.split(':').map(Number)); }
-  const cutoff=ko?ko-90*60000:(d.fplDeadline||null);
+  const cutoff=ko?ko-80*60000:(d.fplDeadline?d.fplDeadline+10*60000:null);
   const now=Date.now();
   const fplEvents=Object.keys(S.fplFixtures).map(Number).sort((a,b)=>a-b).slice(0,4);
-  return `<h2>Manual Fixture Entry</h2><div class="sub">Emergency fallback only — Back Office → FPL Sync → "Sync & stage next gameweek" is the normal way to get a gameweek loaded. Use this if FPL data ever won't sync and you need to key a week in by hand. All times UK.</div>
+  return `<h2>Manual Fixture Entry</h2><div class="sub">Emergency fallback only — Back Office → FPL Sync → "Sync & stage gameweeks" is the normal way to get gameweeks loaded. Use this if FPL data ever won't sync and you need to key a week in by hand. All times UK.</div>
   ${fplEvents.length?`<div class="card">
     <h3>🔗 Import a specific synced gameweek</h3>
     <p class="muted small">Synced ${S.fpl.lastSync?fmtDT(S.fpl.lastSync):'never'}. Only needed if you want a gameweek other than the next one Back Office would stage.</p>
@@ -3289,7 +3295,7 @@ function vLoader(){
   </details>
   <div class="card">
     <h3>⏱ First kick-off → automatic cutoff <span class="muted small">(UK time)</span></h3>
-    ${d.fplDeadline?`<p class="muted small">Cutoff pulled from FPL — or override below.</p>`:'<p class="muted small">Tap the day, tap the time. Cutoff = 90 min before kick-off.</p>'}
+    ${d.fplDeadline?`<p class="muted small">Cutoff computed from FPL's kickoff time — or override below.</p>`:'<p class="muted small">Tap the day, tap the time. Cutoff = 80 min before kick-off.</p>'}
     ${dtPickerPanelInner('loaderKo')}
     ${cutoff?`<div class="deadline" style="display:inline-block;margin-top:8px">⏱ Betting cutoff: ${fmtDT(cutoff)} UK</div>`:'<div class="muted small" style="margin-top:8px">Pick a day and time…</div>'}
     ${cutoff&&cutoff<=now?`<div class="warnbox red" style="margin-top:8px">⚠ Cutoff has already passed.</div>`:''}
@@ -3338,6 +3344,7 @@ function attachShot(input,which){
   r.readAsDataURL(f);
 }
 function saveLoader(){
+  if(!requireAdmin()) return;
   const d=loaderDraft;
   const fixtures=d.fixtures.filter(f=>f.home&&f.away);
   if(!fixtures.length){ toast('Pick at least one fixture',true); return; }
@@ -3345,8 +3352,8 @@ function saveLoader(){
   let ko=null;
   if(kst&&kst.day&&kst.time){ ko=ukWallToTs(kst.day.y,kst.day.m,kst.day.d,...kst.time.split(':').map(Number)); }
   let deadline,kickoff;
-  if(ko){ deadline=ko-90*60000; kickoff=ko; }
-  else if(d.fplDeadline){ deadline=d.fplDeadline; kickoff=d.fplDeadline+90*60000; }
+  if(ko){ deadline=ko-80*60000; kickoff=ko; }
+  else if(d.fplDeadline){ deadline=d.fplDeadline+10*60000; kickoff=d.fplDeadline+90*60000; }
   else { toast('Set the first kick-off time',true); return; }
   const g={id:nid('gw'),name:d.name||('GW '+(S.gameweeks.length+1)),deadline,kickoff,event:d.event||null,status:'draft',
     matches:fixtures.map(f=>({id:nid('m'),home:f.home,away:f.away,odds:recOdds(S,f.home,f.away),result:null}))};
@@ -3361,13 +3368,20 @@ function saveLoader(){
    HOUSE · ODD SETTER
    ================================================================ */
 function vOddSetter(){
-  const drafts=S.gameweeks.filter(g=>g.status==='draft');
+  // Odds computed for a gameweek months out are stale by the time it's actually due — only
+  // the nearest draft gets a full editable review card. The rest are staged (so their
+  // fixtures show to players under "Coming up") but not worth reviewing yet; re-sync closer
+  // to each one to refresh its odds before it becomes the nearest draft.
+  const draftsSorted=S.gameweeks.filter(g=>g.status==='draft').sort((a,b)=>(a.event||0)-(b.event||0));
+  const nextDraft=draftsSorted[0];
+  const laterDrafts=draftsSorted.slice(1);
   const open=S.gameweeks.filter(g=>g.status==='open');
   return `<h2>Odds Setter</h2><div class="sub">Recommended prices come from team form. Tweak, then publish.</div>
-  ${drafts.length===0&&open.length===0?'<div class="card"><p class="muted">Nothing loaded yet. Back Office → FPL Sync → "Sync & stage next gameweek".</p></div>':''}
-  ${drafts.map(g=>oddsCard(g,true)).join('')}
+  ${!nextDraft&&open.length===0?'<div class="card"><p class="muted">Nothing loaded yet. Back Office → FPL Sync → "Sync & stage gameweeks".</p></div>':''}
+  ${nextDraft?oddsCard(nextDraft,true):''}
   ${open.map(g=>oddsCard(g,false)).join('')}
-  ${(drafts.length||open.length)?specialMarketBuilderCard():''}
+  ${laterDrafts.length?`<div class="card"><p class="muted small">+${laterDrafts.length} more gameweek(s) staged and visible to players under "Coming up" (${laterDrafts.map(g=>esc(g.name)).join(', ')}) — not shown here for review yet since their odds are based on today's form and will be stale by the time they're due. They'll appear here for review once ${esc(nextDraft?nextDraft.name:'the current one')} is published.</p></div>`:''}
+  ${(nextDraft||open.length)?specialMarketBuilderCard():''}
   <div class="card"><details><summary>📊 Team form data</summary>
     <div class="statgrid">${S.teams.map(t=>`<div class="codecard"><b>${esc(t.name)}</b><br>
       <span class="muted small">Baseline</span> <input type="number" value="${S.stats[t.id]?S.stats[t.id].base:50}" style="width:64px;padding:4px 7px" onchange="if(!S.stats['${t.id}'])S.stats['${t.id}']={};S.stats['${t.id}'].base=parseFloat(this.value)||50;save()">
@@ -3422,11 +3436,13 @@ function setOdds(gwId,mId,k,val){
   audit('odds edit',`${g.name}: ${k} → ${fmtOdds(m.odds[k])}`); save();
 }
 function setGwDeadline(gwId,val){
+  if(!requireAdmin()) return;
   const ts=parseDTLocal(val); if(!ts){ toast('Bad date',true); return; }
-  const g=gw(gwId); g.deadline=ts; if(!g.kickoff||g.kickoff<ts) g.kickoff=ts+90*60000;
+  const g=gw(gwId); g.deadline=ts; if(!g.kickoff||g.kickoff<ts) g.kickoff=ts+80*60000;
   audit('cutoff edit',g.name+': '+fmtDT(ts)); save(); render(); toast('Cutoff updated '+fmtDT(ts));
 }
 function setInplayCutoff(gwId,val){
+  if(!requireAdmin()) return;
   const ts=parseDTLocal(val); if(!ts){ toast('Bad date',true); return; }
   const g=gw(gwId); g.inplayCutoff=ts;
   audit('in-play cutoff',g.name+': '+fmtDT(ts)); save(); render(); toast('In-play window set');
@@ -3472,6 +3488,7 @@ function delGw(gwId){
   save(); render();
 }
 function publishGw(gwId){
+  if(!requireAdmin()) return;
   // draft → open is already the "odds go live" transition (confirmed against batch 21's brief) —
   // this already flips status and notifies every non-admin player. What was missing (added below/
   // in releaseOdds()) was (a) a stamped oddsReleasedAt so the home page can show a "new odds" banner,
@@ -3589,6 +3606,7 @@ function parseBulkScores(gwId){
   save(); render(); toast(n+' score(s) filled');
 }
 function settleGw(gwId){
+  if(!requireAdmin()) return;
   const g=gw(gwId);
   const incomplete=g.matches.filter(m=>m.home&&m.away&&(!m.result||m.result.homePts===null||m.result.awayPts===null));
   if(incomplete.length){ toast(incomplete.length+' score(s) missing',true); return; }
@@ -3838,7 +3856,7 @@ function vOffice(){
   </div>
   <div class="card glow">
     <h3>🔗 FPL Sync</h3>
-    <p class="muted small">Pulls fixtures, results and standings from draft.premierleague.com, then stages whichever gameweek is next for you to review in Odds Setter. Nothing runs on a schedule — only when you click.</p>
+    <p class="muted small">Pulls fixtures, results and standings from draft.premierleague.com, then stages every gameweek that isn't loaded yet — players see all of them under Bet Builder's "Coming up" as greyed-out previews, and the nearest one lands in Odds Setter for you to review and publish. Nothing runs on a schedule — only when you click.</p>
     <div class="formrow">
       <div><label>Draft league ID</label><input id="fplLeagueId" value="${esc(S.fpl.leagueId||'')}" style="width:140px" placeholder="e.g. 12345"></div>
       <div>
@@ -3850,7 +3868,7 @@ function vOffice(){
       </div>
     </div>
     <div class="actions" style="margin:10px 0">
-      <button class="btn big gold" onclick="syncAndStage()">⟳ Sync &amp; stage next gameweek</button>
+      <button class="btn big gold" onclick="syncAndStage()">⟳ Sync &amp; stage gameweeks</button>
     </div>
     <span class="muted small">Last sync: ${S.fpl.lastSync?fmtDT(S.fpl.lastSync):'never'} · ${S.history.length} result(s) in form model · ${Object.keys(S.fplFixtures).length} gameweek(s) with fixtures pulled</span>
     <div id="fplFallback" style="display:none">
@@ -3864,7 +3882,7 @@ function vOffice(){
       <div class="formrow" style="margin-top:8px">
         <div style="flex:1;min-width:220px"><label>Proxy URL <span class="muted small">(optional — see SETUP.md)</span></label>
           <input id="fplProxyUrl" value="${esc(S.fpl.proxyUrl||'')}" style="width:100%" placeholder="https://your-worker.workers.dev/api"></div>
-        <button class="btn secondary small" onclick="S.fpl.proxyUrl=document.getElementById('fplProxyUrl').value.trim();save();toast('Proxy URL saved')">Save</button>
+        <button class="btn secondary small" onclick="saveProxyUrl()">Save</button>
       </div>
       <p class="muted small">Removes the CORS block entirely so Sync &amp; stage always fetches live, no GitHub tab needed. One-time ~3 min setup, see SETUP.md.</p>
       <button class="btn secondary small" style="margin-top:6px" onclick="go('loader')">✏️ Manual fixture entry (emergency fallback)</button>
@@ -3877,11 +3895,9 @@ function vOffice(){
     <tr><td></td><td><b>🏠 The House</b></td><td style="text-align:right" class="mono ${house>0?'pos':house<0?'neg':''}">${GBP(house)}</td></tr></table></div>
   </div>
   <div class="card">
-    <h3>🧪 Test tools</h3>
-    <button class="btn gold" onclick="seedTestData()">Load test gameweeks & odds</button>
-    <span class="muted small"> Adds a settled GW, live pre-match GW and in-play GW.</span>
-    <div style="margin-top:8px"><button class="btn secondary" onclick="clearTestData()">🧹 Clear test data</button>
-    <span class="muted small"> Removes gameweeks/bets/promos/rewards only — keeps FPL sync, settings and teams. Run this before a real season starts.</span></div>
+    <h3>🧹 Wipe betting data</h3>
+    <button class="btn danger" onclick="clearTestData()">Clear all gameweeks, bets & promos</button>
+    <span class="muted small"> Keeps FPL sync, settings and teams. Use if you need a clean slate mid-season without losing your league setup.</span>
   </div>
   <div class="card"><details><summary>📜 Audit log (${S.audit.length})</summary>
     <div style="overflow-x:auto"><table style="margin-top:10px"><tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th></tr>
@@ -3896,6 +3912,7 @@ function vOffice(){
   </div>`;
 }
 function saveSettings(){
+  if(!requireAdmin()) return;
   S.settings.maxStake=parseFloat(document.getElementById('setMaxStake').value)||300;
   S.settings.maxPayout=parseFloat(document.getElementById('setMaxPayout').value)||10000;
   S.settings.accaMarginPct=parseFloat(document.getElementById('setMargin').value)||10;
@@ -3925,10 +3942,11 @@ async function fplFetchAny(path){
   }
 }
 async function fplSync(){
+  if(!requireAdmin()) return;
   const inp=document.getElementById('fplLeagueId');
   const id=((inp?inp.value:'')||S.fpl.leagueId||'').trim();
   if(!id){ toast('Enter your draft league ID',true); return; }
-  S.fpl.leagueId=id; save(); toast('Syncing from FPL…');
+  S.fpl.leagueId=id; saveFields({fpl:S.fpl}); toast('Syncing from FPL…');
   try{
     const det=await fplFetchAny('league/'+id+'/details');
     let boot=null;
@@ -3940,6 +3958,7 @@ async function fplSync(){
   }
 }
 function fplPaste(){
+  if(!requireAdmin()) return;
   try{ ingestFpl(JSON.parse(document.getElementById('fplPasteBox').value),null); }
   catch(e){ toast('Could not parse JSON',true); }
 }
@@ -3947,12 +3966,23 @@ function saveHoldback(){
   // Standalone save so this setting doesn't require a successful FPL sync to persist — on
   // GitHub Pages the in-app sync button always CORS-fails, so gating this on ingestFpl()
   // running meant it could never actually be changed from here in practice.
+  if(!requireAdmin()) return;
   const inp=document.getElementById('fplHoldback');
   S.sim.holdback=Math.max(0,parseInt(inp.value)||0);
   audit('settings','Hold back last N GWs → '+S.sim.holdback);
-  save(); toast('Holdback saved: '+S.sim.holdback);
+  saveFields({sim:S.sim, audit:S.audit}); toast('Holdback saved: '+S.sim.holdback);
 }
+function saveProxyUrl(){
+  if(!requireAdmin()) return;
+  S.fpl.proxyUrl=document.getElementById('fplProxyUrl').value.trim();
+  saveFields({fpl:S.fpl}); toast('Proxy URL saved');
+}
+// Writes only fpl/history/fplFixtures/sim/audit — never the rest of S — for the same
+// stale-tab-clobbering reason saveFields() exists (see its comment). This is the function
+// that owns the FPL-derived fields, so it's the most important one to harden: a blanket
+// save() here is exactly what silently wiped a prior sync's entryMap/holdback once already.
 function ingestFpl(det,boot){
+  if(!requireAdmin()) return false;
   if(!det||!det.league_entries||!det.matches){ toast('Does not look like league details JSON',true); return false; }
   const hbInp=document.getElementById('fplHoldback');
   if(hbInp) S.sim.holdback=Math.max(0,parseInt(hbInp.value)||0);
@@ -3988,65 +4018,82 @@ function ingestFpl(det,boot){
   evList.forEach(ev=>{ S.fpl.events[ev.id]={deadline:ev.deadline_time?new Date(ev.deadline_time).getTime():null,name:ev.name}; });
   S.fpl.lastSync=Date.now();
   audit('FPL sync','league '+S.fpl.leagueId+': '+S.history.length+' results'+(unmatched.length?' · UNMATCHED: '+unmatched.join(', '):''));
-  save(); render();
+  saveFields({history:S.history, fplFixtures:S.fplFixtures, sim:S.sim, fpl:S.fpl, audit:S.audit});
+  render();
   toast('✅ FPL synced — '+S.history.length+' results powering the odds'+(unmatched.length?' · unmatched: '+unmatched.join(', '):''));
   return true;
 }
-// Builds and stages (as a draft, for Odds Setter review) the earliest gameweek that has FPL
-// fixtures pulled in but no gameweek object yet — i.e. the next one that actually needs
-// betting on. Deliberately doesn't auto-publish: publishing (opening betting) stays a manual
-// admin action in Odds Setter, same safety checkpoint as before. Pure read of already-synced
-// state — no network call — so it works immediately after any sync, in-app or via GitHub.
-function stageNextGameweek(){
+// Builds and stages (as drafts, for Odds Setter review) every gameweek that has FPL fixtures
+// pulled in but no gameweek object yet — the whole remaining fixture list, not just the next
+// one, so players can see what's coming. Deliberately doesn't auto-publish any of them:
+// publishing (opening betting) stays a manual admin action in Odds Setter. Odds on far-future
+// drafts are whatever recOdds() says today — they're locked/unbettable until published, and
+// Odds Setter only surfaces the nearest one for review, so stale-by-then odds on a GW that's
+// months away is expected, not a bug (re-run this closer to the time to refresh them).
+// Pure read of already-synced state — no network call — so it's useful even when a fetch
+// failed and this is running off whatever a prior GitHub Action run already wrote.
+function stageAllGameweeks(){
+  if(!requireAdmin()) return 0;
   const loaded=new Set(S.gameweeks.map(g=>g.event).filter(Boolean));
-  const nextEv=Object.keys(S.fplFixtures).map(Number).filter(ev=>!loaded.has(ev)).sort((a,b)=>a-b)[0];
-  if(nextEv==null){ toast('No new gameweek to stage — you\'re caught up'); return; }
-  const fixtures=(S.fplFixtures[nextEv]||[]).filter(f=>f.home&&f.away);
-  if(!fixtures.length){ toast('GW '+nextEv+' has no matched fixtures yet — check FPL Sync for unmatched entries',true); return; }
+  const evs=Object.keys(S.fplFixtures).map(Number).filter(ev=>!loaded.has(ev)).sort((a,b)=>a-b);
+  if(!evs.length) return 0;
   const maxFixtures=Math.max(1,Math.floor(S.teams.length/2));
-  if(fixtures.length<maxFixtures){
-    toast('⚠ GW '+nextEv+' only has '+fixtures.length+'/'+maxFixtures+' fixtures matched — staged anyway, but double-check before publishing',true);
-  }
-  const info=S.fpl.events[nextEv];
-  const deadline=info&&info.deadline?info.deadline:Date.now()+3*86400000;
-  const kickoff=deadline+90*60000;
-  const g={id:nid('gw'),name:'GW '+nextEv,deadline,kickoff,event:nextEv,status:'draft',
-    matches:fixtures.map(f=>({id:nid('m'),home:f.home,away:f.away,odds:recOdds(S,f.home,f.away),result:null}))};
-  S.gameweeks.push(g);
-  audit('gameweek staged',g.name+' · cutoff '+fmtDT(deadline));
-  save();
-  toast(g.name+' staged — review in Odds Setter 🎯');
-  go('odds');
+  const short=[];
+  evs.forEach(ev=>{
+    const fixtures=(S.fplFixtures[ev]||[]).filter(f=>f.home&&f.away);
+    if(!fixtures.length) return;
+    if(fixtures.length<maxFixtures) short.push(ev);
+    const info=S.fpl.events[ev];
+    // FPL's own deadline_time is (by convention, confirmed against real fixture kickoff
+    // times) exactly 90 min before the gameweek's first kickoff — so true kickoff =
+    // deadline_time + 90min. This house's cutoff rule is 80 min before that same kickoff,
+    // i.e. deadline_time + 10min. If FPL hasn't published a deadline yet, fall back to a
+    // holding value far enough out that it won't accidentally cut betting off early.
+    const kickoff=info&&info.deadline?info.deadline+90*60000:Date.now()+3*86400000+80*60000;
+    const deadline=kickoff-80*60000;
+    const g={id:nid('gw'),name:'GW '+ev,deadline,kickoff,event:ev,status:'draft',
+      matches:fixtures.map(f=>({id:nid('m'),home:f.home,away:f.away,odds:recOdds(S,f.home,f.away),result:null}))};
+    S.gameweeks.push(g);
+  });
+  if(short.length) toast('⚠ GW '+short.join(', ')+' had fewer fixtures than expected — check FPL Sync for unmatched entries',true);
+  audit('gameweeks staged',evs.length+' gameweek(s): GW'+evs[0]+'–GW'+evs[evs.length-1]);
+  saveFields({gameweeks:S.gameweeks, audit:S.audit});
+  return evs.length;
 }
 // The one button in Back Office: refreshes FPL data (fixtures/results/standings), then stages
-// whichever gameweek is next. If the browser can't reach FPL directly (CORS) and no proxy is
-// configured, it still stages from whatever's already in Firebase — e.g. from a GitHub Action
-// run — so this button is always useful, not just when the in-browser fetch happens to work.
+// every gameweek that isn't loaded yet. If the browser can't reach FPL directly (CORS) and no
+// proxy is configured, it still stages from whatever's already in Firebase — e.g. from a
+// GitHub Action run — so this button is always useful, not just when the fetch works.
 async function syncAndStage(){
+  if(!requireAdmin()) return;
   const inp=document.getElementById('fplLeagueId');
   const id=((inp?inp.value:'')||S.fpl.leagueId||'').trim();
   if(!id){ toast('Enter your draft league ID first',true); return; }
-  S.fpl.leagueId=id; save();
+  S.fpl.leagueId=id; saveFields({fpl:S.fpl});
   toast('Syncing…');
+  const finish=(n,prefix)=>{ render(); toast((prefix?prefix+' ':'')+(n?n+' gameweek(s) staged — review the next one in Odds Setter 🎯':'No new gameweeks to stage — you\'re caught up'),!!prefix); if(n) go('odds'); };
   try{
     const det=await fplFetchAny('league/'+id+'/details');
     let boot=null;
     try{ boot=await fplFetchAny('bootstrap-static'); }catch(e){}
-    if(ingestFpl(det,boot)) stageNextGameweek();
+    if(ingestFpl(det,boot)) finish(stageAllGameweeks());
   }catch(e){
     const fb=document.getElementById('fplFallback'); if(fb) fb.style.display='block';
-    toast((S.fpl.proxyUrl?'Direct + proxy fetch both blocked — s':'S')+'taging from last-synced data instead. Run the GitHub Action for fresher data first if you need it.',true);
-    stageNextGameweek();
+    finish(stageAllGameweeks(),(S.fpl.proxyUrl?'Direct + proxy fetch both blocked — staged from last-synced data instead.':'Direct fetch blocked (CORS) — staged from last-synced data instead.'));
   }
 }
-// Undoes 🧪 Load test gameweeks & odds — clears gameweeks/bets/promos/rewards only. Leaves
-// FPL sync state, settings, teams and the audit log untouched (unlike Reset everything, which
-// wipes the whole database including your FPL league mapping).
+// Clears gameweeks/bets/promos/rewards only. Leaves FPL sync state, settings, teams and the
+// audit log untouched (unlike Reset everything, which wipes the whole database). Uses
+// saveFields() rather than the debounced save() — a plain save() re-serializes the WHOLE
+// local S, so if this tab's copy of S.fpl/S.sim was ever stale (e.g. a GitHub Action sync
+// landed while this tab sat idle), clicking this would silently overwrite that fresh data
+// with the stale copy. saveFields() only ever touches the keys listed here.
 function clearTestData(){
+  if(!requireAdmin()) return;
   if(!confirm('Clear all gameweeks, bets, promos and reward ledgers? FPL sync data, settings and teams are kept.')) return;
-  S.gameweeks=[]; S.bets=[]; S.promos=[]; S.rewardGrants=[]; S.rewards={};
-  audit('test data cleared','gameweeks/bets/promos/rewards wiped');
-  save(); render(); toast('Test data cleared');
+  audit('data cleared','gameweeks/bets/promos/rewards wiped');
+  saveFields({gameweeks:[], bets:[], promos:[], rewardGrants:[], rewards:{}, audit:S.audit});
+  render(); toast('Cleared');
 }
 function exportData(){
   const blob=new Blob([JSON.stringify(S,null,2)],{type:'application/json'});
@@ -4056,45 +4103,9 @@ function exportData(){
   a.click();
 }
 function resetAll(){
+  if(!requireAdmin()) return;
   if(!confirm('Wipe ALL gameweeks, bets, promos and settings?')) return;
   db.ref(ROOT).remove().then(()=>{ S=freshState(); save(); render(); toast('Fresh start'); });
-}
-
-/* ================================================================
-   TEST DATA
-   ================================================================ */
-function seedTestData(){
-  const ids=S.teams.map(t=>t.id);
-  const shuffle=arr=>{const a=[...arr];for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;};
-  const pair=()=>{const a=shuffle(ids);const f=[];for(let i=0;i<12;i+=2)f.push({home:a[i],away:a[i+1]});return f;};
-  const mk=(name,deadline,kickoff,extra)=>({id:nid('gw'),name,deadline,kickoff,status:'open',event:null,
-    matches:pair().map(f=>({id:nid('m'),home:f.home,away:f.away,odds:recOdds(S,f.home,f.away),result:null})),...extra});
-  const now=Date.now();
-  const g1=mk('GW T1 · settled',now-3*864e5,now-3*864e5+90*60000);
-  S.gameweeks.push(g1);
-  ['murov','fride','dunny','kapil','henry'].forEach((tid,i)=>{
-    const m=g1.matches[i%6]; const pick=['home','away','draw'][i%3];
-    const odds=m.odds[pick];
-    const label=pick==='draw'?`Draw — ${team(m.home).name} v ${team(m.away).name}`:`${team(pick==='home'?m.home:m.away).name} to WIN`;
-    S.bets.push({id:nid('bet'),teamId:tid,gwId:g1.id,legs:[{type:'match',gwId:g1.id,matchId:m.id,pick,odds,label}],
-      stake:[20,50,10,100,25][i],effOdds:odds,status:'accepted',placedAt:now-3.2*864e5,inplay:false,afterCutoff:false,limitFlags:[],
-      history:[{by:tid,role:'player',action:'placed',stake:[20,50,10,100,25][i],odds,at:now-3.2*864e5}]});
-  });
-  g1.matches.forEach(m=>m.result={homePts:35+Math.floor(Math.random()*50),awayPts:35+Math.floor(Math.random()*50)});
-  S.bets.filter(b=>b.gwId===g1.id).forEach(b=>{const r=settleBet(b,S);if(r){b.status=r.outcome;b.settledPayout=r.payout;b.settledAt=now-2.8*864e5;}});
-  g1.status='settled';
-  const g2=mk('GW T2 · open',now+24*36e5,now+25.5*36e5);
-  S.gameweeks.push(g2); createPromoForGw(g2);
-  const m2=g2.matches[0];
-  S.bets.push({id:nid('bet'),teamId:'blank',gwId:g2.id,legs:[{type:'match',gwId:g2.id,matchId:m2.id,pick:'home',odds:m2.odds.home,label:`${team(m2.home).name} to WIN`}],
-    stake:30,effOdds:m2.odds.home,status:'pending',placedAt:now-36e5,inplay:false,afterCutoff:false,limitFlags:[],
-    history:[{by:'blank',role:'player',action:'placed',stake:30,odds:m2.odds.home,at:now-36e5}]});
-  const g3=mk('GW T3 · in-play',now-3*36e5,now-90*60000,{inplayCutoff:now+30*36e5});
-  g3.matches.slice(0,3).forEach(m=>m.result={homePts:10+Math.floor(Math.random()*40),awayPts:10+Math.floor(Math.random()*40)});
-  S.gameweeks.push(g3);
-  audit('test data','loaded GW T1 (settled), GW T2 (open), GW T3 (in-play)');
-  save(); render();
-  toast('🧪 Test gameweeks loaded — pre-match, live in-play, settled with graded bets');
 }
 
 /* ================================================================
