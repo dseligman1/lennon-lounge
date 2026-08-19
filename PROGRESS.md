@@ -93,23 +93,19 @@ last (biggest scope, so everything else is already safely shipped if it needs ex
 iteration). Model assigned per batch based on what the work actually needs — visual
 polish and financial correctness get Opus 5, contained data/UI plumbing gets Sonnet.
 
-- [ ] 26. (Sonnet) Weekly betting-data backup + restore failsafe — addresses the
-  standing fear that Back Office's "wipe betting data" button could lose season
-  standings. New `.github/workflows/backup.yml`: `schedule` (weekly, e.g. Monday
-  06:00 UTC) + `workflow_dispatch`, mirrors `fpl-sync.yml`'s Firebase REST auth
-  pattern, reads the full `ROOT` node, commits a dated snapshot to `backups/
-  YYYY-MM-DD.json` in the repo (new folder). In-app: Back Office gets a new "📦
-  Backups" card — (a) a "Run backup now →" link to the Action's Actions page
-  (same UX pattern as the existing FPL Sync Action link, since a browser can't
-  write to the repo directly), (b) keep/extend the existing `exportData()` local
-  JSON download as an instant offline copy, (c) NEW: "📤 Restore from backup file"
-  — file input + `FileReader` (reuse the JSON-parsing pattern already used by
-  `fplPaste`), parses the snapshot, shows a heavy confirmation (this OVERWRITES
-  current gameweeks/bets/promos/rewards/history/standings), `requireAdmin()`-gated,
-  writes via `saveFields()` with the snapshot's own keys, `audit()`-logged. Verify:
-  brace/paren/bracket balance check, headless load, confirm the Action YAML is
-  valid (a linter or careful manual review — no live secrets to test against
-  locally). Update SETUP.md with the new weekly-routine note once done.
+- [x] 26. (Sonnet) Weekly betting-data backup + restore failsafe — new `.github/workflows/
+  backup.yml` (schedule Monday 06:00 UTC + `workflow_dispatch`, mirrors `fpl-sync.yml`'s
+  Firebase auth, commits a dated `backups/YYYY-MM-DD.json` bot commit via `permissions:
+  contents: write`); Back Office's new "📦 Backups" card (next to "🧹 Wipe betting data")
+  links to the Action, surfaces `exportData()`, and adds `restoreBackupPick()` — file
+  upload → `FileReader` → `migrate()` (needed since a raw Action/REST dump hasn't been
+  through `startListener()`'s array-vs-object normalisation the way live `S` has) →
+  heavy `confirm()` → `requireAdmin()` → `saveFields()` → `audit()`-logged, preserving the
+  restored snapshot's own audit history with the restore event appended on top. Verified
+  via whole-script brace/paren/bracket/backtick balance count (all balanced) and a headless
+  Edge run exercising the actual restore pipeline end-to-end with a fake backup file
+  (FileReader → migrate → confirm → saveFields all fired correctly, zero console errors).
+  Commit 3884313.
 - [ ] 27. (Sonnet) Season-long / mid-season / bespoke special markets — new market
   scope NOT tied to a gameweek. New `S.seasonMarkets[]` (separate from `gw.
   specialMarkets[]`), each `{id,name,kind,scope:{type:'season'|'midseason'|'date',
