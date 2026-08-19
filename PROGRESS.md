@@ -587,11 +587,38 @@ real money. Batch-by-batch: implement, verify, commit, push, move to next.
   `vSlip()` output ever lands in the returned HTML. No browser extension available this
   session to visually confirm at a real phone width — flagged plainly, worth a quick look
   once live.
-- [ ] 39. Player-requested bespoke bets + Settler support — new player-facing "request a
-  bespoke bet" flow (free-text description + their proposed odds), landing with the house
-  for review/recalculation (reuse the existing counter-offer negotiation pattern) before
-  it's accepted and live; Settler tab needs a way to manually settle (won/lost/void) a
-  bespoke bet, since it can't be auto-graded from FPL data.
+- [x] 39. Player-requested bespoke bets + Settler support — new `submitBet()` branch
+  (`isBespoke`, mirrors batch 28's `isSeason` branch exactly): a bet with exactly one
+  `type:'bespoke'` leg (`{description, odds, label}`, free text + the player's own proposed
+  price) skips the gw/`bettableNow` gate, has `gwId:null`, and lands `status:'pending'` —
+  meaning it goes through the *existing* accept/reject/counter-offer pipeline (Bet Review)
+  completely unchanged; "the house recalculates the odds" is just the counter-offer feature
+  that was already built, no new negotiation UI needed. New `isBespokeBet(b)` helper (mirrors
+  `isSeasonBet`) threads through the same 3 spots batch 28 had to fix for season bets:
+  `betCard()`'s `passed`/gw-label logic (a bespoke bet is never "cutoff passed" on its own —
+  cancel-ability is already fully gated by `b.status`) and `cancelBet()`'s lock check (would
+  otherwise crash calling `gwDeadlinePassed(gw(null))`, same bug class batch 28 hit).
+  `legLiveInfo()`/`computeMaxExposure()` needed no changes — both already treat an
+  unrecognised leg type as "can't grade yet" / "non-match, assume worst/best case" generically.
+  Player-facing: new "🎯 Request a bet" card (`bespokeRequestCard()`) in Bet Builder's
+  pre-match section — description textarea + odds/stake inputs, partial-DOM-update potential-
+  return (same batch-37 pattern, not a full render on input) — deliberately doesn't say
+  "bespoke" in the visible copy since that word already means something else to players
+  (batch 27's admin-authored season markets). House-facing: new "🎯 Bespoke bets awaiting
+  settlement" card (`bespokeSettleCard()`) at the top of the Settler tab — shown whenever any
+  bespoke bet is `status:'accepted'` (even with zero open gameweeks), Won/Lost/Void buttons
+  calling `settleBespokeBet()`, which requires a `confirm()` naming the exact bet before
+  mutating `status`/`settledPayout`/`settledAt`, logs both `pushHist()` and `audit()`, and
+  runs `evaluatePromoRules()` for that team same as `settleGw()` does. Never touched by
+  `settleGw()`'s sweep (bespoke bets carry `gwId:null`, so the `b.gwId===gwId` filter always
+  excludes them) — this settle card is the only path. `computePnl()` needed no changes — it
+  already reads `status`/`settledPayout` generically off every bet. All free-text fields
+  (`description`) already flow through the codebase's existing store-raw/`esc()`-at-render
+  convention (Settler card, `betCard()` leg labels, notifications) — no new injection surface.
+  Verified via brace/paren/bracket/backtick balance (`{`2681/2681 `(`5723/5723 `[`549/549,
+  878 backticks) and a manual trace of every new function plus all three `isBespokeBet`
+  integration points. No browser extension available this session to click through the
+  request→accept→settle flow live — flagged plainly, worth a real walkthrough once live.
 - [ ] 40. Settler tab: one-click "settle everything" with admin approval gate — pulls FPL
   scores for every gameweek that's ready and shows a computed win/loss/void result per bet
   for the admin to eyeball/adjust, with a final explicit approve step before anything is

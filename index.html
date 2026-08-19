@@ -793,6 +793,9 @@ let mktBuilder = {gwId:'', templateId:'', teamId:'', matchId:'', line:'', odds:'
 // has its inline settle panel expanded (null = none).
 let seasonMktBuilder = {mode:'template', templateId:'', teamId:'', scopeType:'season', odds:'', bespokeName:'', settleAt:null};
 let sznSettleMktId = null;
+// Batch 39: player-facing "request a bespoke bet" form state (Bet Builder card) — free-text
+// description + the player's own proposed odds/stake, cleared on successful submission.
+let bespokeReq = {description:'', odds:'', stake:''};
 // Batch 28: player-facing bet slip for season/bespoke markets — deliberately separate from the
 // gameweek `slip` array (season legs aren't tied to any gwId, and batch 27's settleSeasonBet()
 // assumes a season bet's legs are ALL type:'season', so we never let the two mix within one bet).
@@ -2136,11 +2139,22 @@ function submitBet({gwId, legs, effOdds, stake, viaAlgo, boostPct, freeBetAmount
   // just re-checks that every referenced market is still open (belt-and-braces — vSeasonBets()
   // already only offers open markets as clickable buttons).
   const isSeason = !!(legs && legs.length && legs.every(l=>l.type==='season'));
+  // Batch 39: a player-requested bespoke bet — free-text description + their own proposed
+  // odds, always exactly one leg (never mixed into an acca — see isBespokeBet()). Like a
+  // season bet it has no gwId and skips the gw/bettableNow gate, but it's never auto-gradable
+  // (evalLeg/legLiveInfo have no idea what the free text means) so it stays 'pending' until
+  // the house accepts/counters it like any other bet, then sits 'accepted' until an admin
+  // manually settles it via the Settler tab (settleBespokeBet()) — it's never touched by
+  // settleGw()'s sweep since that only ever looks at bets with a matching gwId.
+  const isBespoke = !!(legs && legs.length===1 && legs[0].type==='bespoke');
   let g=null, mode='pre';
   if(isSeason){
     if(legs.some(l=>{ const m=(S.seasonMarkets||[]).find(x=>x.id===l.marketId); return !m||m.status!=='open'; })){
       toast('One or more of these season markets is no longer open', true); render(); return false;
     }
+  } else if(isBespoke){
+    if(!legs[0].description||!legs[0].description.trim()){ toast('Describe the bet you want', true); render(); return false; }
+    if(!(effOdds>=1.1)){ toast('Enter proposed odds of at least 1.1', true); render(); return false; }
   } else {
     g=gw(gwId); mode=bettableNow(g);
     if(!mode){ toast('Betting is closed for '+g.name+' right now', true); render(); return false; }
@@ -2155,12 +2169,14 @@ function submitBet({gwId, legs, effOdds, stake, viaAlgo, boostPct, freeBetAmount
   }
   const now=Date.now();
   const bet={
-    id:nid('bet'), teamId:me.id, gwId: isSeason?null:gwId, legs, stake, effOdds,
-    status:'pending', placedAt:now, inplay: isSeason?false:mode==='inplay', afterCutoff:false,
+    id:nid('bet'), teamId:me.id, gwId: (isSeason||isBespoke)?null:gwId, legs, stake, effOdds,
+    status:'pending', placedAt:now, inplay: (isSeason||isBespoke)?false:mode==='inplay', afterCutoff:false,
     algo:!!viaAlgo, boostPct:boostPct||0,
     // Batch 28: explicit marker (also derivable via isSeasonBet(bet) from legs alone — kept as a
     // real field too for cheap filtering/debugging without re-walking legs every time).
     seasonBet: isSeason,
+    // Batch 39: same idea for a bespoke bet request (also derivable via isBespokeBet(bet)).
+    bespokeBet: isBespoke,
     // Batch 17: amount of this bet's stake that was covered by an auto-applied free-bet reward
     // (0 for a normal bet). It's the player's OWN money at risk that's reduced by this amount —
     // see computePnl()'s stakeCredit handling for exactly how that plays out on win/loss.
@@ -2248,6 +2264,7 @@ function vBuilder(){
       <button class="${builderSec==='inplay'?'active':''}" onclick="builderSec='inplay';render()">🔴 In-Play</button>
     </div>
     ${seasonBetsSummaryCard()}
+    ${builderSec==='pre'?bespokeRequestCard():''}
     ${builderSec==='pre'?vAlgoZone():''}
     ${builderSec==='inplay'?`<div class="card inplay-soon-banner"><b>🚧 In-play betting — Coming soon</b><div class="muted small" style="margin-top:4px">Nothing to see here yet — check back once this is live.</div></div>`:`
     ${list.length===0?`<div class="card"><h3>😴 Nothing open for pre-match betting</h3><p class="muted">The house has not published a board yet.</p></div>`:''}
@@ -2570,11 +2587,15 @@ function filterBar(){
 function betCard(b,perspective){
   const g=gw(b.gwId);
   const seasonBet=isSeasonBet(b);
+  const bespokeBet=isBespokeBet(b);
   // Batch 28: a season bet has no gw deadline to check — "locked in, can't cancel" instead means
   // at least one of its referenced season markets has already been settled (its outcome is fixed).
   // Non-season bets keep the exact prior gwDeadlinePassed() behavior, untouched.
+  // Batch 39: a bespoke bet has no gw and nothing else to check either — it's never "passed" on
+  // its own, cancel-ability is already fully gated by the b.status whitelist just below.
   const passed=seasonBet
     ? b.legs.some(l=>{ const m=(S.seasonMarkets||[]).find(x=>x.id===l.marketId); return !m||m.status!=='open'; })
+    : bespokeBet ? false
     : (g?gwDeadlinePassed(g):true);
   const offer=b.offer;
   const stLabel={pending:'Pending review',accepted:'Accepted ✓',rejected:'Rejected',cancelled:'Cancelled',
@@ -2605,7 +2626,7 @@ function betCard(b,perspective){
     ?`<span class="muted">Raw odds<b class="mono">${fmtOdds(b.legs.reduce((a,l)=>a*l.odds,1))}</b></span>`:'';
   return `<div class="bet ${needsMe?'needsme':''}">
     <div class="top">
-      <div><b>${teamLink(b.teamId, team(b.teamId)?team(b.teamId).name:'?')}</b> <span class="muted small">· ${esc(seasonBet?'🏆 Season':(g?g.name:'?'))} · ${b.legs.length===1?'Single':b.legs.length+'-leg Acca'}${b.algo?' · ⚡Algo':''}</span>
+      <div><b>${teamLink(b.teamId, team(b.teamId)?team(b.teamId).name:'?')}</b> <span class="muted small">· ${esc(seasonBet?'🏆 Season':bespokeBet?'📝 Bespoke':(g?g.name:'?'))} · ${b.legs.length===1?'Single':b.legs.length+'-leg Acca'}${b.algo?' · ⚡Algo':''}</span>
         ${b.inplay?'<span class="flag late">🔴 IN-PLAY</span>':''}
         ${b.afterCutoff?'<span class="flag late">AFTER CUTOFF</span>':''}
         ${b.boostPct?`<span class="flag limit">🚀 +${b.boostPct}% BOOST</span>`:''}
@@ -2685,6 +2706,9 @@ function cancelBet(id){
     if(b.legs.some(l=>{ const m=(S.seasonMarkets||[]).find(x=>x.id===l.marketId); return !m||m.status!=='open'; })){
       toast('One of this bet\'s season markets has already settled — locked in',true); return;
     }
+  } else if(isBespokeBet(b)){
+    // Batch 39: no gw, nothing to check — cancel-ability is already fully gated by the status
+    // whitelist in vMyBets()/betCard()'s action buttons, so just fall through.
   } else if(gwDeadlinePassed(gw(b.gwId))){ toast('Cutoff passed — locked in',true); return; }
   b.status='cancelled'; b.offer=null; pushHist(b,'cancelled'); save(); render(); toast('Bet cancelled');
 }
@@ -4387,6 +4411,9 @@ function seasonMarketBuilderCard(){
 // the explicit `seasonBet` field existed (none do yet — season placement is new this batch — but
 // this keeps the check correct by construction rather than relying solely on the flag).
 function isSeasonBet(b){ return !!(b&&b.legs&&b.legs.length&&b.legs.every(l=>l.type==='season')); }
+// Batch 39: a player-requested bespoke bet — always exactly one free-text leg, never combined
+// into an acca with anything else (see submitBet()'s isBespoke check).
+function isBespokeBet(b){ return !!(b&&b.legs&&b.legs.length===1&&b.legs[0].type==='bespoke'); }
 
 // Mirrors batch 20's addMarketLeg() exactly, just targeting S.seasonMarkets[]/seasonSlip instead
 // of gw.specialMarkets[]/slip. Toggles off if already staged. No slipViolatesIntegrity() check —
@@ -4524,6 +4551,44 @@ function seasonBetsSummaryCard(){
   </div>`;
 }
 
+// Batch 39: player-facing "request a bet" card — free text + the player's own proposed odds,
+// landing as a normal pending bet (via submitBet()'s isBespoke branch) for the house to
+// review/accept/reject/counter-offer exactly like any other bet. Deliberately doesn't say
+// "bespoke" in the visible copy — that word is already used for batch 27's admin-authored
+// season markets (a different feature); internally both use the word, but a player shouldn't
+// have to tell them apart.
+function bespokeRequestCard(){
+  const stakeN=parseFloat(bespokeReq.stake)||0, oddsN=parseFloat(bespokeReq.odds)||0;
+  const potential=stakeN*oddsN;
+  return `<div class="card" style="margin-bottom:14px">
+    <h3 style="margin:0 0 4px">🎯 Request a bet</h3>
+    <p class="muted small" style="margin:0 0 10px">Not on the board? Describe exactly what you want to bet on and the odds you're after — the house will review it, counter if needed, and get back to you before it's on.</p>
+    <textarea id="bespokeDesc" placeholder="e.g. Huxle to score 60+ points in GW9…" style="min-height:56px;margin-bottom:8px" oninput="bespokeReq.description=this.value">${esc(bespokeReq.description)}</textarea>
+    <div class="formrow">
+      <div><label>Your odds</label><input type="number" step="0.1" min="1.1" value="${bespokeReq.odds}" style="width:90px" oninput="bespokeReq.odds=this.value;updateBespokeReqUI()"></div>
+      <div><label>Stake £</label><input type="number" min="1" step="1" value="${bespokeReq.stake}" style="width:90px" oninput="bespokeReq.stake=this.value;updateBespokeReqUI()"></div>
+      <div class="small muted">Potential return<br><b class="mono" id="bespokeReqPotential" style="font-size:16px;color:var(--teal)">${GBP(potential)}</b></div>
+    </div>
+    <button class="btn big" style="width:100%;margin-top:10px" onclick="submitBespokeRequest()">Send request to the house</button>
+  </div>`;
+}
+function updateBespokeReqUI(){
+  const el=document.getElementById('bespokeReqPotential'); if(!el) return;
+  el.textContent=GBP((parseFloat(bespokeReq.stake)||0)*(parseFloat(bespokeReq.odds)||0));
+}
+function submitBespokeRequest(){
+  const descEl=document.getElementById('bespokeDesc');
+  const description=(descEl?descEl.value:bespokeReq.description||'').trim();
+  const odds=parseFloat(bespokeReq.odds), stake=parseFloat(bespokeReq.stake);
+  if(!description){ toast('Describe the bet you want', true); return; }
+  if(!(odds>=1.1)){ toast('Enter proposed odds of at least 1.1', true); return; }
+  if(!stake||stake<S.settings.minStake){ toast('Enter a stake', true); return; }
+  const leg={type:'bespoke', description, odds, label:'📝 '+description};
+  if(submitBet({gwId:null, legs:[leg], effOdds:odds, stake})){
+    bespokeReq={description:'', odds:'', stake:''};
+    toast('Bet request sent to the house 📨');
+  }
+}
 function importFplEvent(ev){
   const fx=S.fplFixtures[ev]||[];
   const isSim=!!S.sim.events[ev];
@@ -4846,14 +4911,60 @@ function reopenGw(gwId){
   });
   g.status='open'; audit('re-opened',g.name); saveNow(); render(); toast(g.name+' re-opened');
 }
+// Batch 39: bespoke bets (player-requested, free-text) can never grade themselves from FPL or
+// gw scores — evalLeg()/legLiveInfo() have no idea what the description means, and settleGw()
+// never even sees them (they carry gwId:null). This is the one manual-settle surface for them.
+function bespokeSettleCard(){
+  const bets=S.bets.filter(b=>isBespokeBet(b)&&b.status==='accepted');
+  if(!bets.length) return '';
+  return `<div class="card">
+    <h3 style="margin:0 0 4px">🎯 Bespoke bets awaiting settlement</h3>
+    <p class="muted small" style="margin:0 0 10px">Can't auto-grade from FPL data — pick the outcome for each.</p>
+    ${bets.map(b=>`<div class="bet" style="margin-bottom:10px">
+      <div class="top"><div><b>${teamLink(b.teamId, team(b.teamId)?team(b.teamId).name:'?')}</b> <span class="muted small">· 📝 ${esc(b.legs[0].description)}</span></div></div>
+      <div class="nums">
+        <span>Stake<b class="mono">${GBP(b.stake)}</b></span>
+        <span>Odds<b class="mono">${fmtOdds(b.effOdds)}</b></span>
+        <span>Returns<b class="mono" style="color:var(--teal)">${GBP(b.stake*b.effOdds)}</b></span>
+        <span>Placed<b>${fmtDT(b.placedAt)}</b></span>
+      </div>
+      <div class="actions" style="margin-top:8px">
+        <button class="btn small" onclick="settleBespokeBet('${b.id}','won')">✅ Won</button>
+        <button class="btn danger small" onclick="settleBespokeBet('${b.id}','lost')">❌ Lost</button>
+        <button class="btn secondary small" onclick="settleBespokeBet('${b.id}','void')">↩️ Void</button>
+      </div>
+    </div>`).join('')}
+  </div>`;
+}
+function settleBespokeBet(betId, outcome){
+  if(!requireAdmin()) return;
+  const b=getBet(betId);
+  if(!b||!isBespokeBet(b)) return;
+  if(b.status!=='accepted'){ toast('Only accepted bespoke bets can be settled here',true); return; }
+  if(!confirm(`Settle as ${outcome.toUpperCase()}?\n\n${b.legs[0].description}\n${team(b.teamId)?team(b.teamId).name:'?'} · ${GBP(b.stake)} @ ${fmtOdds(b.effOdds)}`)) return;
+  const payout = outcome==='won' ? b.stake*b.effOdds : (outcome==='void' ? b.stake : 0);
+  b.status=outcome; b.settledPayout=payout; b.settledAt=Date.now();
+  pushHist(b,'bespoke settled: '+outcome);
+  const msg = outcome==='won'
+    ? `🎉 BET WON! £${payout.toFixed(2)} incoming · ${b.legs[0].description}`
+    : outcome==='void'
+    ? `↩️ Bet voided — stake of £${b.stake} returned · ${b.legs[0].description}`
+    : `❌ Bet lost · £${b.stake} · ${b.legs[0].description}`;
+  pushNotif(b.teamId,'bet_settled',msg);
+  audit('bespoke settled', `${team(b.teamId)?team(b.teamId).name:'?'}: ${outcome} — ${b.legs[0].description}`);
+  evaluatePromoRules(b.teamId);
+  saveNow(); render(); toast('Bespoke bet settled ⚖️');
+}
 function vSettler(){
   const open=S.gameweeks.filter(g=>g.status==='open');
   const done=S.gameweeks.filter(g=>g.status==='settled');
   const doneHtml=done.length?`<div class="card"><details><summary>Settled gameweeks — undo (${done.length})</summary>
     ${done.map(g=>`<div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><b>📅 ${esc(g.name)}</b>
       <button class="btn danger small" onclick="reopenGw('${g.id}')">♻ Re-open</button></div>`).join('')}</details></div>`:'';
-  if(!open.length) return `<h2>Bet Settler</h2><div class="sub">Scores in, bets graded, arguments settled.</div><div class="card"><p class="muted">No live gameweeks to settle.</p></div>${doneHtml}`;
+  const bespokeHtml=bespokeSettleCard();
+  if(!open.length) return `<h2>Bet Settler</h2><div class="sub">Scores in, bets graded, arguments settled.</div>${bespokeHtml}<div class="card"><p class="muted">No live gameweeks to settle.</p></div>${doneHtml}`;
   return `<h2>Bet Settler</h2><div class="sub">Pull scores from FPL, enter manually, or paste — every bet grades itself.</div>
+  ${bespokeHtml}
   ${open.map(g=>{
     const riding=S.bets.filter(b=>b.gwId===g.id&&b.status==='accepted').length;
     const negotiating=S.bets.filter(b=>b.gwId===g.id&&['pending','counter_house','counter_user'].includes(b.status)).length;
