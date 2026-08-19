@@ -547,9 +547,25 @@ real money. Batch-by-batch: implement, verify, commit, push, move to next.
   backtick balance (`{`2612/2612 `(`5522/5522 `[`537/537, 846 backticks — even/clean) and a
   manual trace of all three `weekBoostPrice` call sites plus the cap/eligibility guards in
   `toggleDrawBoost`/`setFavBoost`.
-- [ ] 37. Bet-slip stake-input typing bug — `#stakeInput`/`#seasonStakeInput` use
-  `oninput="render()"`, which replaces the whole `#view` DOM on every keystroke and drops
-  input focus. Fix: partial DOM update on stake input instead of a full re-render.
+- [x] 37. Bet-slip stake-input typing bug — root cause confirmed: `#stakeInput`/
+  `#seasonStakeInput` both ran `oninput="render()"`, which rebuilds the entire `#view` DOM
+  (via `innerHTML`) on every keystroke, destroying and recreating the `<input>` element and
+  dropping focus/cursor — exactly "type 1, then have to click back in before 0 shows up."
+  The algo-stake input (`#algoStake`) and counter-offer stake/odds inputs (`updCounterRet`)
+  were already doing a targeted partial update, not a full render — untouched, not part of
+  the bug. Fix: new `updateSlipStakeUI()`/`updateSeasonSlipStakeUI()` read the stake value
+  and patch only the specific nodes that actually depend on it — potential-return text
+  (`#slipPotential`/`#seasonSlipPotential`), the free-bet-credit preview line
+  (`#slipFreeLine`/`#seasonSlipFreeLine`), limit-flag warnings (`#slipWarnings`/
+  `#seasonSlipWarnings`), and the place button's disabled state + label
+  (`#slipPlaceBtn`/`#seasonSlipPlaceBtn`) — the `<input>` itself is never touched, so focus/
+  cursor position survives every keystroke. `vSlip()`/`vSeasonSlip()` still compute the same
+  values on a full render (leg add/remove, etc.) — only the oninput path changed. Verified
+  via brace/paren/bracket/backtick balance (`{`2621/2621 `(`5581/5581 `[`537/537, 858
+  backticks) and a manual trace confirming no other `oninput="render()"` full-rebuild pattern
+  remains anywhere in the file. No browser extension available in this session to visually
+  confirm keystroke-by-keystroke — flagged plainly rather than claiming a visual check that
+  didn't happen; worth a quick manual look once live.
 - [ ] 38. Mobile bet-slip placement — on mobile, the slip currently renders at the very
   bottom of the page below every gameweek board, forcing a long scroll after adding a leg.
   Move it to render directly under the current/open gameweek's board on mobile.

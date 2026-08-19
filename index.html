@@ -2363,20 +2363,18 @@ function vSlip(){
     html+=`<div class="muted small" style="font-weight:800;text-transform:uppercase;letter-spacing:.6px;margin-top:6px">Your build · ${slip.length===1?'Single':slip.length+'-leg Acca'}</div>
     ${slip.map((l,i)=>`<div class="slipleg"><span>${esc(l.label)}</span><span style="display:flex;gap:6px;align-items:center"><b class="mono">${fmtOdds(l.odds)}</b><button class="x" onclick="slipDuplicateOf=null;slip.splice(${i},1);render()">×</button></span></div>`).join('')}
     ${boostTok?`<div class="small" style="color:var(--gold);margin:10px 0 2px">🎁 Reward auto-applied: +${boostTok.pct}% odds boost</div>`:''}
-    ${freeTok?`<div class="small" style="color:var(--teal);margin:2px 0 2px">🎟️ Free bet credit ${GBP(Math.min(freeTok.amount,stake))} auto-applied — that much of your stake is on the house</div>`:''}
+    <div id="slipFreeLine">${freeTok?`<div class="small" style="color:var(--teal);margin:2px 0 2px">🎟️ Free bet credit ${GBP(Math.min(freeTok.amount,stake))} auto-applied — that much of your stake is on the house</div>`:''}</div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px">
       <span class="muted small">Total odds${boostTok?' (boosted 🚀)':''}</span>
       <span class="bigodds gradtxt mono">${fmtOdds(eff)}</span>
     </div>
     <div class="formrow" style="margin-top:8px">
-      <div><label>Stake £</label><input id="stakeInput" type="number" min="1" step="1" value="${stake||''}" style="width:110px;font-size:16px;font-weight:800" oninput="render()"></div>
-      <div class="small muted">Potential return<br><b class="mono" style="font-size:19px;color:var(--teal)">${GBP(potential)}</b></div>
+      <div><label>Stake £</label><input id="stakeInput" type="number" min="1" step="1" value="${stake||''}" style="width:110px;font-size:16px;font-weight:800" oninput="updateSlipStakeUI()"></div>
+      <div class="small muted">Potential return<br><b class="mono" id="slipPotential" style="font-size:19px;color:var(--teal)">${GBP(potential)}</b></div>
     </div>
-    ${flags.map(f=>`<div class="small" style="color:var(--gold);margin-bottom:6px">⚠ ${f} — submit anyway and the house will review.</div>`).join('')}
-    ${ctx.ok&&ctx.mode==='inplay'?`<div class="small" style="color:var(--pink);margin-bottom:6px">🚧 In-play betting is coming soon — this slip can't be placed right now.</div>`:''}
-    ${!ctx.ok&&ctx.reason!=='empty'?`<div class="small" style="color:var(--pink);margin-bottom:6px">⚠ ${ctx.reason}</div>`:''}
+    <div id="slipWarnings">${flags.map(f=>`<div class="small" style="color:var(--gold);margin-bottom:6px">⚠ ${f} — submit anyway and the house will review.</div>`).join('')}${ctx.ok&&ctx.mode==='inplay'?`<div class="small" style="color:var(--pink);margin-bottom:6px">🚧 In-play betting is coming soon — this slip can't be placed right now.</div>`:''}${!ctx.ok&&ctx.reason!=='empty'?`<div class="small" style="color:var(--pink);margin-bottom:6px">⚠ ${ctx.reason}</div>`:''}</div>
     <textarea id="betMsg" placeholder="Optional message to the house…" style="min-height:48px;margin:8px 0"></textarea>
-    <button class="btn big" style="width:100%" onclick="placeBet()" ${stake>0&&ctx.ok&&ctx.mode!=='inplay'?'':'disabled'}>PLACE BET · ${GBP(stake)}</button>`;
+    <button id="slipPlaceBtn" class="btn big" style="width:100%" onclick="placeBet()" ${stake>0&&ctx.ok&&ctx.mode!=='inplay'?'':'disabled'}>PLACE BET · ${GBP(stake)}</button>`;
   }
   slipBundles.forEach((bd,bi)=>{
     const g=gw(bd.gwId); const mode=bettableNow(g);
@@ -2393,6 +2391,32 @@ function vSlip(){
     </div>`;
   });
   return html+'</div>';
+}
+
+// Batch 37: #stakeInput used to run oninput="render()", which rebuilds the whole #view DOM on
+// every keystroke and drops input focus — typing "10" required clicking back into the field
+// after each digit. Everything the stake number actually drives (potential return, limit-flag
+// warnings, the free-bet-credit preview, and the place button's enabled state/label) gets a
+// stable id in vSlip() so this can patch just those nodes instead of a full re-render.
+function updateSlipStakeUI(){
+  if(!slip.length) return;
+  const stakeEl=document.getElementById('stakeInput'); if(!stakeEl) return;
+  const stake=parseFloat(stakeEl.value)||0;
+  const eff=slipOddsFinal();
+  const potential=stake*eff;
+  const flags=betLimitFlags(stake,potential,S.settings);
+  const ctx=slipContext();
+  const freeTok=autoFreeBetToken(me.id, stake);
+  const freeEl=document.getElementById('slipFreeLine');
+  if(freeEl) freeEl.innerHTML=freeTok?`<div class="small" style="color:var(--teal);margin:2px 0 2px">🎟️ Free bet credit ${GBP(Math.min(freeTok.amount,stake))} auto-applied — that much of your stake is on the house</div>`:'';
+  const potEl=document.getElementById('slipPotential');
+  if(potEl) potEl.textContent=GBP(potential);
+  const warnEl=document.getElementById('slipWarnings');
+  if(warnEl) warnEl.innerHTML=flags.map(f=>`<div class="small" style="color:var(--gold);margin-bottom:6px">⚠ ${f} — submit anyway and the house will review.</div>`).join('')
+    +(ctx.ok&&ctx.mode==='inplay'?`<div class="small" style="color:var(--pink);margin-bottom:6px">🚧 In-play betting is coming soon — this slip can't be placed right now.</div>`:'')
+    +(!ctx.ok&&ctx.reason!=='empty'?`<div class="small" style="color:var(--pink);margin-bottom:6px">⚠ ${ctx.reason}</div>`:'');
+  const btn=document.getElementById('slipPlaceBtn');
+  if(btn){ btn.disabled=!(stake>0&&ctx.ok&&ctx.mode!=='inplay'); btn.textContent='PLACE BET · '+GBP(stake); }
 }
 
 function placeBet(){
@@ -4364,19 +4388,37 @@ function vSeasonSlip(){
   <div class="muted small" style="font-weight:800;text-transform:uppercase;letter-spacing:.6px;margin-top:6px">Your build · ${seasonSlip.length===1?'Single':seasonSlip.length+'-leg Acca'}</div>
   ${seasonSlip.map((l,i)=>`<div class="slipleg"><span>${esc(l.label)}</span><span style="display:flex;gap:6px;align-items:center"><b class="mono">${fmtOdds(l.odds)}</b><button class="x" onclick="removeSeasonSlipLeg(${i})">×</button></span></div>`).join('')}
   ${boostTok?`<div class="small" style="color:var(--gold);margin:10px 0 2px">🎁 Reward auto-applied: +${boostTok.pct}% odds boost</div>`:''}
-  ${freeTok?`<div class="small" style="color:var(--teal);margin:2px 0 2px">🎟️ Free bet credit ${GBP(Math.min(freeTok.amount,stake))} auto-applied — that much of your stake is on the house</div>`:''}
+  <div id="seasonSlipFreeLine">${freeTok?`<div class="small" style="color:var(--teal);margin:2px 0 2px">🎟️ Free bet credit ${GBP(Math.min(freeTok.amount,stake))} auto-applied — that much of your stake is on the house</div>`:''}</div>
   <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px">
     <span class="muted small">Total odds${boostTok?' (boosted 🚀)':''}</span>
     <span class="bigodds gradtxt mono">${fmtOdds(eff)}</span>
   </div>
   <div class="formrow" style="margin-top:8px">
-    <div><label>Stake £</label><input id="seasonStakeInput" type="number" min="1" step="1" value="${stake||''}" style="width:110px;font-size:16px;font-weight:800" oninput="render()"></div>
-    <div class="small muted">Potential return<br><b class="mono" style="font-size:19px;color:var(--teal)">${GBP(potential)}</b></div>
+    <div><label>Stake £</label><input id="seasonStakeInput" type="number" min="1" step="1" value="${stake||''}" style="width:110px;font-size:16px;font-weight:800" oninput="updateSeasonSlipStakeUI()"></div>
+    <div class="small muted">Potential return<br><b class="mono" id="seasonSlipPotential" style="font-size:19px;color:var(--teal)">${GBP(potential)}</b></div>
   </div>
-  ${flags.map(f=>`<div class="small" style="color:var(--gold);margin-bottom:6px">⚠ ${f} — submit anyway and the house will review.</div>`).join('')}
+  <div id="seasonSlipWarnings">${flags.map(f=>`<div class="small" style="color:var(--gold);margin-bottom:6px">⚠ ${f} — submit anyway and the house will review.</div>`).join('')}</div>
   <textarea id="seasonBetMsg" placeholder="Optional message to the house…" style="min-height:48px;margin:8px 0"></textarea>
-  <button class="btn big" style="width:100%" onclick="placeSeasonBet()" ${stake>0?'':'disabled'}>PLACE BET · ${GBP(stake)}</button>
+  <button id="seasonSlipPlaceBtn" class="btn big" style="width:100%" onclick="placeSeasonBet()" ${stake>0?'':'disabled'}>PLACE BET · ${GBP(stake)}</button>
   </div>`;
+}
+// Batch 37: same fix as updateSlipStakeUI() above, for the season slip's stake input.
+function updateSeasonSlipStakeUI(){
+  if(!seasonSlip.length) return;
+  const stakeEl=document.getElementById('seasonStakeInput'); if(!stakeEl) return;
+  const stake=parseFloat(stakeEl.value)||0;
+  const eff=seasonSlipOddsFinal();
+  const potential=stake*eff;
+  const flags=betLimitFlags(stake,potential,S.settings);
+  const freeTok=autoFreeBetToken(me.id, stake);
+  const freeEl=document.getElementById('seasonSlipFreeLine');
+  if(freeEl) freeEl.innerHTML=freeTok?`<div class="small" style="color:var(--teal);margin:2px 0 2px">🎟️ Free bet credit ${GBP(Math.min(freeTok.amount,stake))} auto-applied — that much of your stake is on the house</div>`:'';
+  const potEl=document.getElementById('seasonSlipPotential');
+  if(potEl) potEl.textContent=GBP(potential);
+  const warnEl=document.getElementById('seasonSlipWarnings');
+  if(warnEl) warnEl.innerHTML=flags.map(f=>`<div class="small" style="color:var(--gold);margin-bottom:6px">⚠ ${f} — submit anyway and the house will review.</div>`).join('');
+  const btn=document.getElementById('seasonSlipPlaceBtn');
+  if(btn){ btn.disabled=!(stake>0); btn.textContent='PLACE BET · '+GBP(stake); }
 }
 function placeSeasonBet(){
   const stakeEl=document.getElementById('seasonStakeInput');
