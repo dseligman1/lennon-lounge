@@ -143,14 +143,58 @@ polish and financial correctness get Opus 5, contained data/UI plumbing gets Son
   and all 3 seeded markets present in the rendered `#view` DOM, correct suggested
   odds/scope-label/status-pill/settle-hint text all rendered as expected. Commit
   `e139f11`.
-- [ ] 28. (Sonnet) Dedicated "Season Bets" card/page — depends on batch 27's `S.
-  seasonMarkets[]`. Adds a compact "🏆 Season Bets" summary card (open-market
-  count + link) to Home and Bet Builder, clicking through to a new `vSeasonBets()`
-  view listing all open/settled season markets separately from the gameweek
-  board — keeps the GW-by-GW Bet Builder view free of season-long noise. Bet
-  placement for a season-market leg reuses the existing slip/`submitBet()`
-  pipeline (new `addSeasonLeg()` mirroring batch 20's `addMarketLeg()`). Verify
-  same pattern as prior batches.
+- [x] 28. (Sonnet) Dedicated "Season Bets" card/page — compact "🏆 Season Bets"
+  summary card (`seasonBetsSummaryCard()`, open-market count + click-through only,
+  renders '' until at least one season market exists) added to `vHome()` (in
+  `.homegrid`, right after the rewards tracker widget) and `vBuilder()` (above the
+  section tabs' content, visible regardless of Pre-match/In-Play sub-tab). Per the
+  user's "doesn't overwhelm the home page... a clean little card" ask, this is
+  deliberately NOT a new top-level nav tab — `navTabs()`/the `tabs` array are
+  unchanged; the new `vSeasonBets()` view is reached only via the card or the
+  bet-detail modal's duplicate-bet flow, following the same click-through-only
+  precedent `navTabs()` already sets for `'loader'` (confirmed by grepping — Loader
+  isn't in `navTabs()` either, only reachable via a link inside another view).
+  Wired into `render()`'s `views` dispatch map as `seasonbets:vSeasonBets`, and
+  added to the mobile-dock "More" active-state check alongside `'loader'`.
+  `vSeasonBets()` lists every open/settled season/bespoke market (own player-facing
+  odds buttons via new `seasonOddBtn()`) plus a "My season bets" section reusing
+  `betCard()`. New `addSeasonLeg()`/`seasonSlip` (mirrors batch 20's
+  `addMarketLeg()`/`slip` exactly, but kept as its own separate array — a season
+  leg has no `gwId`, and batch 27's `settleSeasonBet()` requires a season bet's
+  legs to be ALL `type:'season'`, never mixed with gw-tied legs on the same bet) +
+  `placeSeasonBet()`, funnelled through the existing `submitBet()`/rewards
+  pipeline: `submitBet()` gained an `isSeason` branch that skips the gw/
+  `bettableNow` gate entirely and instead re-checks every referenced market is
+  still open, stamping `bet.gwId=null` and a new `bet.seasonBet` flag. New
+  `isSeasonBet(bet)` helper made the rest of the shared bet lifecycle season-aware:
+  `legLiveInfo()` grades season legs via `evalSeasonLeg()` instead of
+  `evalLeg()`/`g.matches`; `betCard()` shows "🏆 Season" instead of "?" for the gw
+  label and locks Cancel once ANY referenced market has already settled (mirrored
+  into `cancelBet()`/`houseCancel()`, which previously would have thrown calling
+  `gwDeadlinePassed(gw(null))` — a real crash risk once season bets started
+  existing, now fixed); the bet-detail modal and `duplicateBet()` got the same
+  treatment (duplicating a season bet re-stages its still-open legs into
+  `seasonSlip` and opens `vSeasonBets()` instead of the gw builder). Deliberate
+  design call, flagged here: season legs are NOT subject to batch 3's anti-
+  match-fixing rule (`slipViolatesIntegrity` already returns false/allowed for any
+  `leg.type` it doesn't recognise, left unchanged) — a season-long proposition
+  isn't something one player can realistically fix by underperforming in a single
+  gameweek, unlike a single match/special leg; the user didn't ask for this
+  extension and it wasn't in batch 27's spec either. Verified via a brace/paren/
+  bracket/backtick balance check on the full script (all balanced: `{` 1844/1844,
+  `(` 4180/4180, `[` 456/456, 714 backticks — no node/python available, counted
+  raw character occurrences same as prior batches) and a headless Edge
+  (`--dump-dom`) run against a harness stubbing `firebase.initializeApp`/
+  `database()` entirely (zero live network/DB contact) plus
+  `save()`/`saveNow()`/`startListener()`, seeding 6 season markets and exercising
+  the full place → settle → grade loop end-to-end: single-leg won, single-leg
+  lost, single-leg void, a 2-leg season acca settled leg-by-leg (confirmed it
+  stays `pending` with only one of two legs settled AND that cancelling is
+  correctly blocked at that point, then grades `won` once both settle), normal
+  cancel on a never-settled-market bet, `betCard()` rendering correctly across My
+  Bets/Bet Review/Bet Feed, and the duplicate-bet flow — 36/36 checks passed, zero
+  `window.onerror` catches. Copied to the Downloads sync file and diffed identical.
+  Commit `f928ebc`.
 - [ ] 29. (Opus 5) Squad viewer — visual pitch view + fixture-comparison popup.
   Biggest/most novel batch, do last. New FPL data pull needed (this app currently
   only fetches Draft league standings/fixtures + gameweek deadlines — no player-
