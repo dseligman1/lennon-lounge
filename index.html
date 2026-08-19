@@ -281,6 +281,10 @@
   .codecard{background:rgba(0,0,0,.3);border:1px solid var(--line);border-radius:12px;padding:12px;font-size:13px}
   .statgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:9px}
   .helpbox{background:rgba(0,217,255,.06);border:1px solid rgba(0,217,255,.22);border-radius:14px;padding:14px;font-size:13px;margin-bottom:16px;color:var(--muted)}
+  /* Batch 32: same shape as .helpbox but in the danger palette — reserved for the one place in
+     the app that lets an admin edit financial history after the fact (post-settlement override). */
+  .dangerbox{background:rgba(255,77,109,.08);border:1px solid rgba(255,77,109,.35);border-radius:14px;padding:14px;font-size:13px;margin-bottom:16px;color:var(--text)}
+  .dangerbox b{color:var(--danger)}
   .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px}
   .kpi{background:var(--card2);border:1px solid var(--line);border-radius:16px;padding:14px}
   .kpi .v{font-size:22px;font-weight:900;margin-top:4px}
@@ -762,6 +766,7 @@ let editingRuleId = null, promoFormTriggerKind = 'stake_rolling', promoFormRewar
 let manualGrantKind = 'boost'; // last-selected reward kind in the Promotions tab's manual-grant form
 let reviewFilter = 'all';
 let closedBetsOpen = false;
+let overrideListOpen = false;
 let betFilters = {teamId:'', minStake:'', maxStake:'', status:''};
 const BET_STATUS_OPTS = ['pending','accepted','rejected','cancelled','counter_house','counter_user','won','lost','void','expired'];
 // Batch 14: id of the bet currently shown in the click-into-bet detail modal (null = closed).
@@ -847,6 +852,7 @@ function migrate(s) {
     if (b && b.history) b.history = toArr(b.history);
     if (b && b.chat) b.chat = toArr(b.chat);
     if (b && b.flags) b.flags = toArr(b.flags);
+    if (b && b.overrideHistory) b.overrideHistory = toArr(b.overrideHistory);
   });
   // De-dupe bets sharing an id. These are leftovers from a since-removed redundant Firebase
   // write in submitBet() that could create a second copy of a just-placed bet under a
@@ -3688,6 +3694,88 @@ function houseCancel(id){
 }
 
 /* ================================================================
+   HOUSE · OVERRIDE (Batch 32)
+   A deliberate, deep-warning-gated failsafe for editing a bet's status/payout by hand — the
+   only place in the app that can touch a bet AFTER it's already been settled/paid out. Every
+   other admin action (accept/reject/cancel/settle) works on live, unsettled bets; this one
+   exists specifically for "we settled wrong, or missed something" post-hoc corrections. Two
+   things make it safe to leave lying around in Back Office rather than a bug waiting to
+   happen: (1) it only ever mutates the ONE targeted bet — it never reopens a gameweek, re-runs
+   settleGw(), or touches any other bet, so it can't cascade; (2) computePnl()/vStandings()
+   read live off S.bets on every render (confirmed by reading both — no separate cached
+   standings/PnL object exists anywhere), so editing a bet's fields here is sufficient on its
+   own to correct every downstream view, with nothing else to keep in sync.
+   ================================================================ */
+function overrideBetRow(b){
+  const t=team(b.teamId);
+  const hist=b.overrideHistory||[];
+  return `<div class="bet" style="padding:12px 14px">
+    <div class="top">
+      <div><b>${t?esc(t.name):'?'}</b> <span class="muted small mono">#${esc(b.id.slice(-6))}</span> <span class="muted small">· ${esc(isSeasonBet(b)?'🏆 Season':(gw(b.gwId)?gw(b.gwId).name:'?'))} · ${GBP(b.stake)} @ ${fmtOdds(b.effOdds)} · placed ${fmtDT(b.placedAt)}${hist.length?` · <span style="color:var(--danger)">✏️ overridden ×${hist.length}</span>`:''}</span></div>
+      <span class="pill st-${b.status}">${esc(b.status)}</span>
+    </div>
+    ${hist.length?`<details class="small" style="margin-top:6px"><summary class="muted">Override history (${hist.length})</summary>
+      <div class="chat">${hist.map(h=>`<div class="msg"><span class="who">${fmtDT(h.at)} · ${esc(team(h.by)?team(h.by).owner:h.by)}</span><div>${esc(h.before.status)}${h.before.status==='won'?' (£'+Number(h.before.settledPayout||0).toFixed(2)+')':''} → <b>${esc(h.after.status)}</b>${h.after.status==='won'?' (£'+Number(h.after.settledPayout||0).toFixed(2)+')':''} — "${esc(h.reason)}"</div></div>`).join('')}</div>
+    </details>`:''}
+    <div class="actions" style="margin-top:8px"><button class="btn ghost small" onclick="toggleBox('ov_${b.id}')">⚠️ Override this bet</button></div>
+    <div class="counterbox" id="ov_${b.id}">
+      <div class="formrow">
+        <div><label>New status</label><select id="ovStatus_${b.id}">
+          ${['pending','accepted','counter_house','counter_user','rejected','cancelled','expired','won','lost','void'].map(s=>`<option value="${s}" ${s===b.status?'selected':''}>${s}</option>`).join('')}
+        </select></div>
+        <div><label>Settled payout £ <span class="muted small">(used only if status = won)</span></label>
+          <input type="number" step="0.01" min="0" id="ovPayout_${b.id}" value="${(b.status==='won'?b.settledPayout:b.stake*b.effOdds).toFixed(2)}" style="width:120px"></div>
+      </div>
+      <div><label class="small muted" style="display:block;margin-bottom:4px">Reason (required — goes in the permanent audit trail)</label>
+        <textarea id="ovReason_${b.id}" placeholder="e.g. GW3 result was re-synced after a wrong FPL score, this bet was settled on the old figure" style="width:100%;min-height:56px"></textarea>
+      </div>
+      <div style="margin-top:8px"><label class="small muted" style="display:block;margin-bottom:4px">Type <b class="mono">OVERRIDE</b> to confirm</label>
+        <input id="ovConfirm_${b.id}" placeholder="OVERRIDE" style="width:160px">
+      </div>
+      <div class="actions" style="margin-top:10px">
+        <button class="btn danger small" onclick="applyOverride('${b.id}')">Apply override</button>
+        <button class="btn secondary small" onclick="toggleBox('ov_${b.id}')">Cancel</button>
+      </div>
+    </div>
+  </div>`;
+}
+function applyOverride(betId){
+  if(!requireAdmin()) return;
+  const b=S.bets.find(x=>x.id===betId);
+  if(!b){ toast('Bet not found',true); return; }
+  const statusEl=document.getElementById('ovStatus_'+betId);
+  const payoutEl=document.getElementById('ovPayout_'+betId);
+  const reasonEl=document.getElementById('ovReason_'+betId);
+  const confirmEl=document.getElementById('ovConfirm_'+betId);
+  if(!statusEl||!payoutEl||!reasonEl||!confirmEl) return;
+  const newStatus=statusEl.value;
+  const reason=(reasonEl.value||'').trim();
+  if(!reason){ toast('A reason is required for an override',true); return; }
+  if((confirmEl.value||'').trim()!=='OVERRIDE'){ toast('Type OVERRIDE exactly (all caps) to confirm',true); return; }
+  const before={status:b.status,settledPayout:b.settledPayout!=null?b.settledPayout:null};
+  const teamName=team(b.teamId)?team(b.teamId).name:'?';
+  let newPayout=before.settledPayout;
+  if(newStatus==='won') newPayout=Math.max(0,parseFloat(payoutEl.value)||0);
+  else if(newStatus==='void') newPayout=b.stake;
+  else if(newStatus==='lost') newPayout=0;
+  const warn='⚠️ OVERRIDE BET — AFTER-THE-FACT FINANCIAL EDIT\n\n'
+    +'Team: '+teamName+'\n'
+    +'Current: '+before.status+(before.status==='won'?' · paid £'+Number(before.settledPayout||0).toFixed(2):'')+'\n'
+    +'New: '+newStatus+(newStatus==='won'?' · pay £'+newPayout.toFixed(2):newStatus==='void'?' · stake £'+newPayout.toFixed(2)+' returned':'')+'\n\n'
+    +'This immediately changes this player\'s P&L and the house standings, retroactively, everywhere they\'re shown. There is no automatic undo except applying another override or restoring an older backup (Back Office → Backups). This does NOT reopen betting or touch any other bet.\n\n'
+    +'Reason being logged: "'+reason+'"\n\n'
+    +'This should only ever be used to correct a genuine mistake — continue?';
+  if(!confirm(warn)) return;
+  b.status=newStatus;
+  if(['won','lost','void'].includes(newStatus)){ b.settledPayout=newPayout; if(!b.settledAt) b.settledAt=Date.now(); }
+  if(!b.overrideHistory) b.overrideHistory=[];
+  b.overrideHistory.push({by:me.id,at:Date.now(),before,after:{status:b.status,settledPayout:b.settledPayout},reason});
+  audit('bet override', b.id+' ('+teamName+'): '+before.status+' → '+b.status+(newStatus==='won'?' · £'+newPayout.toFixed(2):'')+' — "'+reason+'"');
+  toggleBox('ov_'+betId);
+  saveNow(); render(); toast('Override applied ⚠️');
+}
+
+/* ================================================================
    HOUSE · GAMEWEEK LOADER
    ================================================================ */
 let loaderDraft=null;
@@ -4998,6 +5086,18 @@ function vOffice(){
     <p><b>📤 Restore from backup file</b></p>
     <p class="muted small">Accepts either an "Export JSON" download or a <code>backups/YYYY-MM-DD.json</code> file from the Action — same shape either way. <b>This OVERWRITES current gameweeks, bets, promos, rewards and history/standings</b> with whatever's in the file. There's no undo from inside the app except restoring an even older backup.</p>
     <input type="file" id="restoreFileInput" accept="application/json,.json" onchange="restoreBackupPick(this)">
+  </div>
+  <div class="card glow">
+    <h3>⚠️ Override</h3>
+    <div class="dangerbox">
+      <b>This is a failsafe, not a normal workflow.</b> It lets you edit any bet's status and payout by hand — including bets that have already been settled and paid out — for cases where the automatic calculation was wrong or something was missed. Every override is logged twice: on the bet itself (visible below, permanently, even if the audit log below rolls over) and in the audit log. Changing a bet's status/payout here immediately and retroactively changes that player's P&amp;L and the house standings everywhere they're shown — home page, standings, Back Office P&amp;L breakdown — with no automatic undo except applying another override or restoring an older backup. It does <b>not</b> reopen betting, re-run settlement, or touch any other bet.
+    </div>
+    <details ${overrideListOpen?'open':''} ontoggle="overrideListOpen=this.open"><summary>Find a bet to override (${S.bets.length} total)</summary>
+    ${filterBar()}
+    <div style="overflow-x:auto">
+    ${(()=>{ const list=applyBetFilters(S.bets.slice().sort((a,b)=>b.placedAt-a.placedAt)); return list.length?list.map(b=>overrideBetRow(b)).join(''):'<p class="muted small">No bets match your filters.</p>'; })()}
+    </div>
+    </details>
   </div>
   <div class="card"><details><summary>📜 Audit log (${S.audit.length})</summary>
     <div style="overflow-x:auto"><table style="margin-top:10px"><tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th></tr>
