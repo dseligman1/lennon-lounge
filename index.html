@@ -1528,48 +1528,62 @@ function computeMaxExposure(bets){
 /* ================================================================
    THE ALGO — random bet generator (copied verbatim from prototype)
    ================================================================ */
-// Batch 35, tightened post-launch (2026-08-20): every leg the Algo generates must trace back
-// to a match win/draw/away price the house has actually set (m.odds) — never a fresh line/
-// price invented on the fly, and — per explicit follow-up feedback — never a special market
-// either, even a published one. Real production data showed why: a batch of "BIG HAUL 65+ pts"
-// special markets (one per team, added while testing the Loader's special-markets feature)
-// were technically "published" but not something the admin actually wanted the Algo treating
-// as fair game — they read as "random players" to a player seeing them in a generated acca.
-// So the Algo's pool is now match win/draw/away odds ONLY, full stop. The Algo's own "edge"
-// (algoEdgePct) is still applied as a fixed discount formula on top of the published board
-// price — that's not hallucination, it's a house-cut formula on a real price.
-// Fold count: always a 2-10 leg acca (never a single straight bet) — capped in practice by
-// how many distinct real fixtures exist in the one gameweek Algo draws from (typically 6 for
-// a 12-team league), same as any acca can only use a given match once.
+// Batch 35, tightened, then re-widened post-launch (2026-08-20): every leg the Algo generates
+// must trace back to a price the house has actually published — match win/draw/away odds
+// (m.odds) or an offered gw.specialMarkets[] entry — never a fresh line/price invented on the
+// fly. Per the latest explicit feedback: (a) each leg's displayed price now mirrors the real
+// published price EXACTLY (no per-leg edge discount baked into what's shown — the house edge
+// is applied exactly once, to the combined total, same principle as combinedOdds()'s
+// accaEdgeByLegs already applies to a manually-built acca); (b) special markets are back in the
+// pool — the earlier "match odds only" restriction was a response to real production having
+// leftover test "BIG HAUL" markets that looked random, not a rule against special markets
+// generally; any market actually sitting in gw.specialMarkets[] is fair game again.
+// Fold count: always a 2-10 leg acca (never a single straight bet) — capped in practice by how
+// many distinct real fixtures + offered specials exist in the one gameweek Algo draws from.
 function genAlgoBet(state, myTeamId){
   // In-play betting is coming soon (batch 4) — Algo only generates pre-match bets for now.
   const gws=state.gameweeks.filter(g=>bettableNow(g)==='pre');
   if(gws.length===0) return null;
   const g=gws[gws.length-1];
   const fixtures=g.matches.filter(m=>m.home&&m.away);
-  if(fixtures.length===0) return null;
+  const offeredSpecials=g.specialMarkets||[];
+  if(fixtures.length===0 && offeredSpecials.length===0) return null;
   const edge=state.settings.algoEdgePct;
   const rnd=a=>a[Math.floor(Math.random()*a.length)];
-  const priceFromBoard=board=>Math.max(1.05, Math.round(board*(1-edge/100)*100)/100);
-  const makeMatchLeg=()=>{
-    const m=rnd(fixtures);
-    const picks=['home','home','away','away','draw'];
-    const pick=rnd(picks);
-    const label= pick==='draw' ? `Draw — ${team(m.home).name} v ${team(m.away).name}` : `${team(pick==='home'?m.home:m.away).name} to WIN v ${team(pick==='home'?m.away:m.home).name}`;
-    const board=promoPrice(g.id,m.id,pick) ?? weekBoostPrice(g,m,pick) ?? m.odds[pick];
-    return {type:'match', gwId:g.id, matchId:m.id, pick, odds:priceFromBoard(board), label};
-  };
-  const n=Math.min(fixtures.length, rnd([2,2,2,2,3,3,3,4,4,5,6,7,8,9,10]));
+  const makers=[];
+  if(fixtures.length){
+    makers.push(()=>{
+      const m=rnd(fixtures);
+      const picks=['home','home','away','away','draw'];
+      const pick=rnd(picks);
+      const label= pick==='draw' ? `Draw — ${team(m.home).name} v ${team(m.away).name}` : `${team(pick==='home'?m.home:m.away).name} to WIN v ${team(pick==='home'?m.away:m.home).name}`;
+      // Exact published price — promo/week-boost still compose (those ARE the published price
+      // for that button), just no separate algo-only discount baked into the leg itself.
+      const odds=promoPrice(g.id,m.id,pick) ?? weekBoostPrice(g,m,pick) ?? m.odds[pick];
+      return {type:'match', gwId:g.id, matchId:m.id, pick, odds, label};
+    });
+  }
+  if(offeredSpecials.length){
+    makers.push(()=>{
+      const m=rnd(offeredSpecials);
+      return {type:'special', gwId:g.id, marketId:m.id, kind:m.kind, teamId:m.teamId||undefined, matchId:m.matchId||undefined, line:m.line, dir:m.dir, odds:m.odds, label:m.label};
+    });
+  }
+  const n=Math.min(fixtures.length+offeredSpecials.length, rnd([2,2,2,2,3,3,3,4,4,5,6,7,8,9,10]));
   const legs=[]; let guard=0;
   while(legs.length<n && guard++<40){
-    const leg=makeMatchLeg();
-    if(legs.some(l=>l.matchId===leg.matchId)) continue;
+    const leg=rnd(makers)();
+    if(leg.type==='match' && legs.some(l=>l.type==='match'&&l.matchId===leg.matchId)) continue;
+    if(leg.type==='special' && legs.some(l=>l.type==='special'&&l.marketId===leg.marketId)) continue;
     // Anti-match-fixing: never generate a leg against the integrity rule for the acting player's own team
     if(myTeamId && slipViolatesIntegrity([leg], myTeamId)) continue;
     legs.push(leg);
   }
   if(legs.length<2) return null; // never offer a single-leg Algo bet
-  const odds=Math.max(1.05, Math.round(legs.reduce((a,l)=>a*l.odds,1)*100)/100);
+  // The house edge is applied exactly once, here, to the raw combined product — never baked
+  // into an individual leg's displayed price.
+  const rawProduct=legs.reduce((a,l)=>a*l.odds,1);
+  const odds=Math.max(1.05, Math.round(rawProduct*(1-edge/100)*100)/100);
   return {gwId:g.id, legs, odds, n:legs.length};
 }
 
@@ -1581,57 +1595,51 @@ function promoPrice(gwId, matchId, pick){
   return p? p.odds : null;
 }
 /* ================================================================
-   WEEKLY ODDS BOOSTS (batch 36) — admin-set, fixed absolute adds, rule-capped.
+   WEEKLY ODDS BOOSTS (batch 36, generalised post-launch 2026-08-20) — admin-set, fixed
+   absolute adds, rule-capped by count but no longer restricted to a specific outcome/team.
    Distinct from the random flash-promo mechanic above (S.promos/promoPrice) — that stays
-   untouched. Draw boost: +2.0 flat on a match's draw price, capped app-wide to at most
-   MAX_DRAW_BOOST_GWS gameweeks carrying one at a time (toggleDrawBoost). Favourite boost:
-   +0.1 flat on the league leader's win price, one team per gameweek (setFavBoost). Both
-   compose with the existing fire-icon/strikethrough display (`btn()` in vGwBoard, and the
-   same `boosted` var addMatchLeg()/genAlgoBet() already read) — a boosted price is still
-   just an admin-published number, never invented.
+   untouched. Big boost: +2.0 flat, admin's choice of ANY one outcome (home/draw/away) on a
+   match — no longer draw-only — capped app-wide to at most MAX_BIG_BOOST_GWS gameweeks
+   carrying one at a time (toggleBigBoost). Small boost: +0.1 flat on ANY one team's win
+   price that gameweek — no longer restricted to the league leader — one team per gameweek
+   (setFavBoost). Both compose with the existing fire-icon/strikethrough display (`btn()` in
+   vGwBoard, and the same `boosted` var addMatchLeg()/genAlgoBet() already read) — a boosted
+   price is still just an admin-published number, never invented.
    ================================================================ */
-const DRAW_BOOST_AMT=2.0, FAV_BOOST_AMT=0.1, MAX_DRAW_BOOST_GWS=2;
+const BIG_BOOST_AMT=2.0, SMALL_BOOST_AMT=0.1, MAX_BIG_BOOST_GWS=2;
 function weekBoostPrice(g,m,pick){
   if(!g||!m) return null;
-  if(pick==='draw' && m.drawBoost) return Math.round((m.odds.draw+DRAW_BOOST_AMT)*100)/100;
+  if(m.boostSide===pick) return Math.round((m.odds[pick]+BIG_BOOST_AMT)*100)/100;
   if(g.favBoostTeamId){
     const sideTeam = pick==='home'?m.home:(pick==='away'?m.away:null);
-    if(sideTeam && sideTeam===g.favBoostTeamId) return Math.round((m.odds[pick]+FAV_BOOST_AMT)*100)/100;
+    if(sideTeam && sideTeam===g.favBoostTeamId) return Math.round((m.odds[pick]+SMALL_BOOST_AMT)*100)/100;
   }
   return null;
 }
-// Current league leader by points (seasonStandingsTally's default 'pts' key) — the only team
-// eligible for the +0.1 favourite boost. Defined here (used ahead of seasonStandingsTally's
-// own definition further down the file) but that's fine: function declarations hoist, and this
-// is only ever called at click-time, never at load-time.
-function leagueLeaderTeamId(){
-  const lt=seasonStandingsTally();
-  let best=null;
-  S.teams.forEach(t=>{ if(!best||lt[t.id].pts>lt[best].pts) best=t.id; });
-  return best;
-}
-function toggleDrawBoost(gwId,mId){
+// Big boost (+2.0): admin picks which single outcome on a match carries it (mutually
+// exclusive per match — setting a new side clears any previous one on that same match).
+function toggleBigBoost(gwId,mId,pick){
   if(!requireAdmin()) return;
   const g=gw(gwId); const m=g&&g.matches.find(x=>x.id===mId); if(!m) return;
-  if(!m.drawBoost){
-    const boostedGws=new Set(S.gameweeks.filter(gg=>gg.matches.some(mm=>mm.drawBoost)).map(gg=>gg.id));
-    if(!boostedGws.has(gwId) && boostedGws.size>=MAX_DRAW_BOOST_GWS){
-      toast(`Draw boost is capped at ${MAX_DRAW_BOOST_GWS} gameweeks at once — remove one first`, true); return;
-    }
-    m.drawBoost=true;
+  if(m.boostSide===pick){
+    m.boostSide=null;
   } else {
-    m.drawBoost=false;
+    const boostedGws=new Set(S.gameweeks.filter(gg=>gg.matches.some(mm=>mm.boostSide)).map(gg=>gg.id));
+    if(!boostedGws.has(gwId) && boostedGws.size>=MAX_BIG_BOOST_GWS){
+      toast(`Boost is capped at ${MAX_BIG_BOOST_GWS} gameweeks at once — remove one first`, true); return;
+    }
+    m.boostSide=pick;
   }
-  audit('draw boost', `${g.name}: ${team(m.home)?team(m.home).name:'?'} v ${team(m.away)?team(m.away).name:'?'} → ${m.drawBoost?'ON +2.0':'off'}`);
+  audit('odds boost', `${g.name}: ${team(m.home)?team(m.home).name:'?'} v ${team(m.away)?team(m.away).name:'?'} → ${m.boostSide?m.boostSide.toUpperCase()+' +2.0':'off'}`);
   save(); render();
 }
+// Small boost (+0.1): admin picks any one team playing that gameweek — one team per gameweek.
 function setFavBoost(gwId,teamId){
   if(!requireAdmin()) return;
   const g=gw(gwId); if(!g) return;
-  if(g.favBoostTeamId===teamId){ g.favBoostTeamId=null; audit('fav boost', g.name+': cleared'); save(); render(); return; }
-  if(teamId!==leagueLeaderTeamId()){ toast("Favourite boost is only allowed for the team currently top of the table", true); return; }
+  if(g.favBoostTeamId===teamId){ g.favBoostTeamId=null; audit('team boost', g.name+': cleared'); save(); render(); return; }
   g.favBoostTeamId=teamId;
-  audit('fav boost', `${g.name}: ${team(teamId)?team(teamId).name:'?'} win +0.1 🔥`);
+  audit('team boost', `${g.name}: ${team(teamId)?team(teamId).name:'?'} win +0.1 🔥`);
   save(); render();
 }
 const PROMO_LINES=['🚀 ODDS BOOST!','🔥 SUPER BOOST!','💎 LOUNGE SPECIAL!','⚡ FLASH BOOST!'];
@@ -4762,26 +4770,25 @@ function gwBetsPanel(g){
 }
 function oddsCard(g,isDraft){
   // Batch 36: leader is whoever's currently top of the league table — the only team eligible
-  // for the +0.1 favourite boost this gameweek.
-  const leaderId=leagueLeaderTeamId();
-  const boostedGwCount=new Set(S.gameweeks.filter(gg=>gg.matches.some(mm=>mm.drawBoost)).map(gg=>gg.id)).size;
+  // for either boost this gameweek — no longer restricted by outcome or team, see setFavBoost/
+  // toggleBigBoost above.
+  const boostedGwCount=new Set(S.gameweeks.filter(gg=>gg.matches.some(mm=>mm.boostSide)).map(gg=>gg.id)).size;
+  const bigBtn=(m,pick)=>`<button class="x ${m.boostSide===pick?'boost':''}" title="${m.boostSide===pick?'Remove':'Give'} this price +2.0 🔥 (max ${MAX_BIG_BOOST_GWS} gameweeks at once)" onclick="toggleBigBoost('${g.id}','${m.id}','${pick}')">🔥</button>`;
+  const smallBtn=teamId=>`<button class="x ${g.favBoostTeamId===teamId?'boost':''}" title="${g.favBoostTeamId===teamId?'Remove':'Give'} this team's win odds +0.1 ⭐ (one team per gameweek)" onclick="setFavBoost('${g.id}','${teamId}')">⭐</button>`;
   return `<div class="card ${isDraft?'':'glow'}">
     <div class="gwhead">
       <h3 style="margin:0">📅 ${esc(g.name)} ${isDraft?'<span class="pill st-pending">DRAFT</span>':'<span class="pill st-accepted">LIVE</span>'}</h3>
       <span class="deadline">⏱ Cutoff ${fmtDT(g.deadline)}</span>
     </div>
-    <div class="muted small" style="margin-bottom:6px">🔥 Draw boosts active this season: ${boostedGwCount}/${MAX_DRAW_BOOST_GWS} gameweeks · Favourite boost only available for the league leader (${leaderId?esc(team(leaderId).name):'—'})</div>
+    <div class="muted small" style="margin-bottom:6px">🔥 Big boost (+2.0, any outcome): ${boostedGwCount}/${MAX_BIG_BOOST_GWS} gameweeks active · ⭐ Small boost (+0.1, any team's win): one per gameweek</div>
     <div style="overflow-x:auto"><table><tr><th>Fixture</th><th>Home</th><th>Draw</th><th>Away</th><th>Rec</th><th></th></tr>
     ${g.matches.map(m=>{
       const rec=recOdds(S,m.home,m.away);
-      const homeBoostBtn=(m.home===leaderId||g.favBoostTeamId===m.home)?`<button class="x ${g.favBoostTeamId===m.home?'boost':''}" title="${g.favBoostTeamId===m.home?'Remove':'Give'} this league leader's win odds +0.1 🔥 (one team per gameweek)" onclick="setFavBoost('${g.id}','${m.home}')">🔥</button>`:'';
-      const awayBoostBtn=(m.away===leaderId||g.favBoostTeamId===m.away)?`<button class="x ${g.favBoostTeamId===m.away?'boost':''}" title="${g.favBoostTeamId===m.away?'Remove':'Give'} this league leader's win odds +0.1 🔥 (one team per gameweek)" onclick="setFavBoost('${g.id}','${m.away}')">🔥</button>`:'';
-      const drawBoostBtn=`<button class="x ${m.drawBoost?'boost':''}" title="${m.drawBoost?'Remove':'Give'} this draw +2.0 🔥 (max ${MAX_DRAW_BOOST_GWS} gameweeks at once)" onclick="toggleDrawBoost('${g.id}','${m.id}')">🔥</button>`;
       return `<tr>
       <td><b>${esc(team(m.home)?team(m.home).name:'?')}</b> <span class="muted">v</span> <b>${esc(team(m.away)?team(m.away).name:'?')}</b></td>
-      <td><input type="number" step="0.1" min="1.1" value="${m.odds.home}" style="width:68px" onchange="setOdds('${g.id}','${m.id}','home',this.value)">${homeBoostBtn}</td>
-      <td><input type="number" step="0.1" min="1.1" value="${m.odds.draw}" style="width:68px" onchange="setOdds('${g.id}','${m.id}','draw',this.value)">${drawBoostBtn}</td>
-      <td><input type="number" step="0.1" min="1.1" value="${m.odds.away}" style="width:68px" onchange="setOdds('${g.id}','${m.id}','away',this.value)">${awayBoostBtn}</td>
+      <td><input type="number" step="0.1" min="1.1" value="${m.odds.home}" style="width:68px" onchange="setOdds('${g.id}','${m.id}','home',this.value)">${bigBtn(m,'home')}${smallBtn(m.home)}</td>
+      <td><input type="number" step="0.1" min="1.1" value="${m.odds.draw}" style="width:68px" onchange="setOdds('${g.id}','${m.id}','draw',this.value)">${bigBtn(m,'draw')}</td>
+      <td><input type="number" step="0.1" min="1.1" value="${m.odds.away}" style="width:68px" onchange="setOdds('${g.id}','${m.id}','away',this.value)">${bigBtn(m,'away')}${smallBtn(m.away)}</td>
       <td class="muted small">${fmtOdds(rec.home)} / ${fmtOdds(rec.draw)} / ${fmtOdds(rec.away)}</td>
       <td><button class="x" onclick="rerecommendMatch('${g.id}','${m.id}')" title="Reset this match to recommended">↺</button></td></tr>`;
     }).join('')}</table></div>

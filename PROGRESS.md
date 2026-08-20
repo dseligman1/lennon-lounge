@@ -720,6 +720,68 @@ already established as the approach for this app).
 
 ---
 
+## ROUND 7 — post-Round-6 follow-up requests, 2026-08-20
+
+Four more requests. Three were real changes to Algo/boost behaviour; the fourth turned out to
+already be existing correct behaviour on inspection (documented, not changed — no code edit for
+something that isn't broken). Same real-data-harness verification method as Round 6.
+
+- [x] 44. **Algo leg prices now mirror the exact published price, edge applied once at the
+  combined level.** Previously each leg's displayed `odds` already had `algoEdgePct` baked in
+  per-leg (`priceFromBoard()`), so what a player saw on an Algo leg was quietly discounted from
+  the real board price — not what's "presented for those bets." Now `leg.odds` is the exact
+  price a player would see clicking that same button on the board (`promoPrice(...) ??
+  weekBoostPrice(...) ?? m.odds[pick]` for a match leg, `m.odds` directly for a special leg) —
+  including an active promo/boost's price, since that IS what's presented. The house edge
+  (`algoEdgePct`) is now applied exactly once, to the raw product of leg odds, to produce the
+  bet's overall `odds`/`effOdds` — same principle as `combinedOdds()`'s `accaEdgeByLegs` already
+  applies once to a manually-built acca, not compounded per leg. Side benefit: this also fixes a
+  latent mismatch in `settleBet()`'s partial-void proration, which computes `orig=combinedOdds
+  (bet.legs.map(l=>l.odds),...)` assuming raw leg odds — previously it was combining
+  already-discounted legs, an unintended double-discount on that one payout path; now correct by
+  construction. Verified against real production data (GW1 has one genuinely active promo — a
+  +15% flash boost on a specific draw): ran 300 `genAlgoBet()` calls, found 24 legs whose price
+  differed from the match's raw `m.odds` — confirmed every single one was exactly the active
+  promo's price (13.23, not the raw 11.5), i.e. 100% correctly mirroring what's actually
+  presented, zero unexplained mismatches.
+- [x] 45. **Algo can use special markets again.** The "match odds only" restriction from batch
+  42 was a reaction to real production having 12 leftover test "BIG HAUL" markets that read as
+  random — not a rule against special markets as a category. `genAlgoBet()`'s special-market leg
+  maker (removed in batch 42) is back, sourcing `gw.specialMarkets[]` at its exact published
+  price (same "mirror the presented price" rule as batch 44). Fold-count ceiling
+  (`Math.min(fixtures.length+offeredSpecials.length, n)`) now accounts for both pools. Verified
+  against real GW1 (6 fixtures + 12 real special markets): 300 spins produced leg counts of 2-10
+  (the full requested range, now reachable since there are 18 distinct options to draw from) and
+  confirmed special-market legs actually appear (`sawSpecial:true`).
+- [x] 46. **Boost eligibility generalised to any bet, not just draws/league-leaders.** Renamed
+  `m.drawBoost` (boolean) → `m.boostSide` (`null|'home'|'draw'|'away'`) so the admin can put the
+  +2.0 "big boost" on ANY outcome of ANY match, not only a draw — same season-wide
+  `MAX_BIG_BOOST_GWS=2` cap as before, just no longer outcome-restricted. `setFavBoost()` (the
+  +0.1 "small boost") dropped its `leagueLeaderTeamId()` eligibility check entirely — any team
+  playing that gameweek is now selectable, still one team per gameweek. `leagueLeaderTeamId()`
+  itself removed (no longer called anywhere). `oddsCard()` now shows a 🔥 big-boost toggle on
+  all three cells (home/draw/away) per match and a ⭐ small-boost toggle on the two team-win
+  cells (home/away), replacing the old leader/draw-gated buttons; the info line above the table
+  updated to describe the generalised rules instead of naming a specific team. Verified: toggled
+  a big boost onto a non-draw outcome and a small boost onto a non-leader team against real GW1
+  data — both applied cleanly, Odds Setter re-rendered with no errors.
+- [x] 47. **Odds-editing-after-publish "keep latest as base" — verified already correct,
+  no change made.** Read through the full path: `oddsCard()`'s input `value=` attributes always
+  read live off `m.odds.home/draw/away` (whatever was last saved, whether originally
+  recommended or already manually tweaked) for both draft AND already-published (`open`)
+  gameweeks; `setOdds(gwId,mId,k,val)` mutates only the single field that changed and calls
+  `save()` — no other field is touched or reset; `releaseOdds()` (the "re-announce after
+  tweaking" action) only stamps `oddsReleasedAt` and sends notifications, it never touches
+  `m.odds` at all. So editing one or two fields on an already-published gameweek already starts
+  from, and only changes, exactly what's currently live — there was no bulk-only or
+  reset-to-recommended behavior blocking this. The only things that DO reset every field at once
+  are the explicitly-separate, clearly-labelled "↺ Reset all to recommended"
+  (`rerecommend()`) and per-match "↺" (`rerecommendMatch()`) buttons, which are a different,
+  intentional feature (not what was described) and were left untouched. Flagged here rather than
+  silently doing nothing — if something specific was actually observed not working this way in
+  practice, worth describing exactly what was clicked/seen so it can be reproduced and fixed
+  properly rather than guessed at.
+
 - [ ] 0. Codebase structure map (research only, feeds all other batches)
 - [x] 1. Odds decimal formatting + remove number-input spinners everywhere — `fmtOdds` now `.toFixed(1)`; global CSS hides number-input spinners; odds input `step`/`min` bumped to 0.1/1.1 (Odds Setter fields, counter-offer field, `setOdds` clamp). Commit b6734bc.
 - [x] 2. Cutoff / in-play-close time fields → calendar+clock picker widget — extracted `calGrid`+time-chip UI from the Loader into a shared, key-based `dtPicker`/`dtPickerPanelInner` widget (state in `dtPickState`, backed by `parseDTLocal`/`ukWallToTs`); Loader kickoff picker refactored to use it inline, GW deadline and in-play cutoff fields in Odds Setter now use it as a popover (raw `datetime-local` inputs removed). Commit 615a020.
