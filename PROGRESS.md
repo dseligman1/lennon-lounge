@@ -1401,11 +1401,12 @@ commit hash when done.
   (batch 50, sharing the same working tree) wrote `index.html` from its own stale copy and wiped
   ~300 lines of this batch's already-applied edits. Caught by a `git diff --stat` sanity check
   (44 insertions where ~300 were expected), fully re-applied, and re-verified from scratch.
-  Because of that shared tree, commit `8191068` also carries two in-flight changes that are NOT
-  batch 48's work and could not be separated file-by-file: a `vSettler()` FPL-ready status pill in
-  `index.html`, and batch 50's `schedule:` cron + self-throttle block in `fpl-sync.yml`. Noted in
-  the commit body too. **Future rounds should not run batches against the same working tree in
-  parallel** — one worktree per agent, or run them in sequence.
+  The commit body warns that `8191068` might also carry that agent's in-flight work; **it does
+  not** — verified after the fact (`git show 8191068` contains zero of its lines). The other agent
+  landed its own commit `bff86d7` moments before this one, so `8191068` is clean batch-48-only
+  work on top of it; disregard that paragraph of the commit message. **Future rounds should not
+  run batches against the same working tree in parallel** — one worktree per agent, or sequence
+  them.
 
   Original spec follows.
   Replace `recOdds()` (currently:
