@@ -751,7 +751,11 @@ const TEAMS = [
 // data). Keyed 1-10 (a flat % edge applied to that exact leg count); leg counts above 10 clamp to
 // the 10-leg rate in accaFactor(). Defaults are a sane increasing curve, fully admin-editable via
 // the Back Office "Limits & edge" card.
+// Batch 48: oddsCompetitiveness (1-20, 10 = normal) is the house's overround on PUBLISHED prices —
+// a completely separate concept from algoEdgePct/accaEdgeByLegs above, which are the Algo's own
+// discount applied ON TOP of prices that are already published. See houseEdgePct() for the curve.
 const DEFAULT_SETTINGS = { maxStake:300, maxPayout:2000, accaMarginPct:10, algoEdgePct:20, minStake:1,
+  oddsCompetitiveness:10,
   accaEdgeByLegs: {1:0, 2:4, 3:7, 4:9, 5:11, 6:13, 7:15, 8:17, 9:19, 10:20} };
 const SD = 15;
 
@@ -926,6 +930,14 @@ function migrate(s) {
   // keys via JS property coercion, this is just a defensive fill for any missing leg-count key).
   if (s.settings && !s.settings.accaEdgeByLegs) s.settings.accaEdgeByLegs = {...DEFAULT_SETTINGS.accaEdgeByLegs};
   else if (s.settings) { for (let i=1;i<=10;i++){ if (s.settings.accaEdgeByLegs[i]==null) s.settings.accaEdgeByLegs[i]=DEFAULT_SETTINGS.accaEdgeByLegs[i]; } }
+  // Batch 48: house competitiveness (published-odds overround). Backfilled to the "normal" 10 for
+  // any settings blob saved before this batch, and defensively clamped/rounded to the 1-20 integer
+  // range houseEdgePct() expects (a hand-edited Firebase value could otherwise be anything).
+  if (s.settings) {
+    let oc = Math.round(Number(s.settings.oddsCompetitiveness));
+    if (isNaN(oc)) oc = DEFAULT_SETTINGS.oddsCompetitiveness;
+    s.settings.oddsCompetitiveness = Math.max(1, Math.min(20, oc));
+  }
   if (s.settings && s.settings.maxPayout === 1000) s.settings.maxPayout = 10000;
   if (s.settings && s.settings.maxPayout === 10000) s.settings.maxPayout = 2000;
   if (!s.seq) s.seq = 1;
@@ -1309,26 +1321,323 @@ function teamAvg(state, tid){
   }));
   return n? (base*2+sum)/(2+n) : base;
 }
-function recOdds(state, homeId, awayId){
-  const dA=teamAvg(state,homeId), dB=teamAvg(state,awayId);
-  const pD=0.08;
-  // Divisor was 20, which — given TEAMS' base-strength spread of ~45-56 (an 11pt range before any
-  // history) — swung win probabilities wide enough that a moderate favourite/underdog gap produced
-  // odds well outside realistic bookmaker range (e.g. ~1.3 favourite vs ~4.6 underdog on an 11pt
-  // gap). Widened to 34 so a typical week-to-week gap lands closer to 1.5-2.5 on the favourite side,
-  // only pushing past that for a genuinely large mismatch — draw stays ~11.6 (pD=0.08 already sits
-  // in the requested 10-20 range unchanged).
-  const pH=(1-pD)/(1+Math.pow(10,-(dA-dB)/34));
-  const pA=1-pD-pH;
-  const juice=1.08;
-  const o=p=>Math.max(1.05, Math.round((1/(p*juice))*100)/100);
-  return {home:o(pH), draw:o(pD), away:o(pA)};
-}
 function edgedOdds(fairP, edgePct){
-  const fair=1/Math.min(.97,Math.max(.03,fairP));
-  return Math.max(1.05, Math.round(fair*(1-edgePct/100)*100)/100);
+  const k=1-edgePct/100;
+  // Batch 48, two changes, both protecting the "house margin never drops below 10%" rule:
+  //  1. The 1.05 minimum price used to silently eat the edge on very short markets. A 90% shot is
+  //     fair at 1.11, and 1.11 × 0.837 is 0.93 — an impossible price, so the old code just returned
+  //     1.05, leaving a realised margin of ~6% instead of the 16.3% the setting asked for. Capping
+  //     the probability at k/1.05 instead means the shortest price the house will ever publish is
+  //     exactly 1.05 AND carries exactly the full edge. In effect the house declines to price
+  //     anything it thinks is more likely than ~80% (at the normal setting) — which is what a real
+  //     book does when it can't make a market pay.
+  //  2. Floor to 2dp rather than round. Rounding a price UP hands a sliver of the edge back.
+  // The low clamp (0.03) is untouched and pre-dates this batch: it shortens an extreme longshot,
+  // which moves the price in the HOUSE's favour, so it can never breach the floor either.
+  const pMax=Math.min(.97, k/1.05);
+  const fair=1/Math.min(pMax,Math.max(.03,fairP));
+  return Math.max(1.05, Math.floor(fair*k*100)/100);
 }
 function pOver(line, avg){ return 1-phi((line-avg)/SD); }
+// SD of the DIFFERENCE of two independent team scores (and of a two-team combined total) —
+// sqrt(SD^2 + SD^2). Used by the match model and by match_total specials.
+const SD_DIFF = SD*Math.SQRT2;
+
+/* ================================================================
+   BATCH 48 — DEEP ODDS MODEL (replaces the old flat-average heuristic)
+   ================================================================
+   What the previous model did: teamAvg() = a flat LIFETIME mean of a manager's H2H scores with a
+   soft prior, a fixed 8% draw probability, a logistic on the difference with a hand-tuned divisor,
+   and a flat 1.08 juice multiplier. Nothing about the specific gameweek being priced entered into
+   it at all — the same two managers got the same price in GW3 and GW33, whether half their squad
+   was injured or not, and whether their players had six easy fixtures or six away days at the top
+   six.
+
+   What this does instead, in four steps:
+     (a) teamFormProj()   — recency-weighted H2H scoring form, not a lifetime average.
+     (b) squadExpected()  — expected points from the 11 who'll actually play, using each owned
+                            player's FPL form/ppg, their availability (injury/suspension/doubt) and
+                            their minutes share (rotation risk).
+     (c) playerFixtureMult() — each of those players' real-world club's fixture difficulty for the
+                            actual gameweek being priced, including blanks and doubles.
+     (d) projectTeams()   — combines them into one expected-points projection per manager-team for
+                            THAT gameweek, from which fairMatchProbs() derives home/draw/away, and
+                            suggestSpecialOdds() prices every special market.
+   The published price is then fair × (1 - houseEdgePct()/100) — see houseEdgePct() for the
+   competitiveness curve. Every knob lives in MODEL below so a future batch can re-calibrate in
+   one place rather than hunting through the maths.
+
+   Degrades gracefully at every layer: no squad data → (a) alone (which is still strictly better
+   than the old flat average); no plFixtures for the event → (a)+(b) with neutral fixtures; no
+   results at all → the hand-set S.stats[].base baselines, heavily shrunk toward even money. */
+const MODEL = {
+  FORM_DECAY: 0.82,        // weight multiplier per result further back — half-life ~3.5 games
+  FORM_PRIOR_W: 1.5,       // S.stats[].base counts as this many results (stops a 2-game sample running wild)
+  FORM_BLEND: 0.65,        // player expected pts = 0.65*FPL form + 0.35*season points-per-game
+  FDR_SENS: 0.075,         // expected-points swing per FDR point away from neutral (3)
+  DOUBLE_MULT: 1.8,        // a double gameweek is worth well under 2x — rotation is near-certain
+  MIN_MINUTES_SHARE: 0.35, // a fringe player is discounted, never erased
+  SQUAD_W: 0.55,           // how much of the squad signal's relative deviation reaches the projection
+  SQUAD_REL_MIN: 0.75, SQUAD_REL_MAX: 1.30,
+  DRAW_BASE: 0.07,         // prior tie rate for two FPL scores (see leagueDrawRate)
+  DRAW_PRIOR_N: 20,        // how many real results it takes to move off that prior
+  DRAW_SPREAD: 25,         // gap (pts) at which a tie is ~60% as likely as in a dead-even match
+  SHRINK_MIN: 0.55,        // fraction of the projected gap treated as real with zero evidence
+  SHRINK_K: 3,             // evidence weight at which shrink is halfway to 1
+  XI: 11
+};
+
+// Every past score for one manager-team, most recent gameweek FIRST, optionally cut off before a
+// given event (so pricing GW9 never sees GW9's own result). Merges S.history — the FPL-synced
+// results for events this app has no local settled gameweek for — with locally-settled
+// gw.matches[].result, exactly the same merge teamAvg()/vStandings()/teamForm() already do. The
+// difference from teamAvg() is that this keeps the EVENT NUMBER attached, which is what makes
+// recency weighting possible at all.
+function teamResults(state, tid, beforeEvent){
+  const out=[];
+  const localEvents=new Set((state.gameweeks||[]).filter(g=>g.event&&g.matches.some(m=>m.result)).map(g=>g.event));
+  (state.history||[]).forEach(h=>{
+    if(localEvents.has(h.event)) return;
+    if(h.a===tid) out.push({event:Number(h.event)||0, pts:h.ap});
+    if(h.b===tid) out.push({event:Number(h.event)||0, pts:h.bp});
+  });
+  (state.gameweeks||[]).forEach(g=>g.matches.forEach(m=>{
+    if(!m.result) return;
+    if(m.home===tid) out.push({event:Number(g.event)||0, pts:m.result.homePts});
+    if(m.away===tid) out.push({event:Number(g.event)||0, pts:m.result.awayPts});
+  }));
+  const cut=Number(beforeEvent)||0;
+  // event 0 = a hand-made/test gameweek with no FPL event number; it can't be ordered against a
+  // real event so it's always kept rather than silently dropped by the cutoff.
+  return out.filter(r=>!cut||!r.event||r.event<cut).sort((a,b)=>(b.event||0)-(a.event||0));
+}
+
+// (a) RECENCY-WEIGHTED FORM. Each result is weighted FORM_DECAY^i by how many results ago it was
+// (i=0 = most recent). At 0.82 the last five weeks carry ~62% of the total weight and anything
+// older than ~10 weeks is close to noise, which is the right shape for fantasy football where a
+// manager's roster genuinely changes month to month. The hand-set baseline stays in as a Bayesian
+// prior worth FORM_PRIOR_W results. `weight` is the total evidence weight excluding the prior —
+// it caps at 1/(1-FORM_DECAY) ≈ 5.6 no matter how long the season runs, and fairMatchProbs() uses
+// it to decide how much of the projected gap to believe.
+function teamFormProj(state, tid, beforeEvent){
+  const res=teamResults(state, tid, beforeEvent);
+  const base=(state.stats&&state.stats[tid]&&state.stats[tid].base)||50;
+  let sw=MODEL.FORM_PRIOR_W, sx=base*MODEL.FORM_PRIOR_W;
+  res.forEach((r,i)=>{ const wt=Math.pow(MODEL.FORM_DECAY,i); sw+=wt; sx+=wt*(Number(r.pts)||0); });
+  return {proj:sx/sw, weight:sw-MODEL.FORM_PRIOR_W, n:res.length};
+}
+
+// FPL's own status letters: a=available, d=doubtful, i=injured, s=suspended, u=unavailable (left
+// the league / not registered), n=on loan or otherwise ineligible.
+const FPL_AVAIL = {a:1, d:0.6, i:0, s:0, u:0, n:0};
+// chance_of_playing_this_round (0/25/50/75/100, or null when FPL has nothing to say) is a far
+// finer signal than the letter alone — a 75% doubt and a 25% doubt both just read as 'd'. When
+// it's present it wins; the letter is the fallback. A hard-unavailable status zeroes the player
+// out regardless of a stale chance figure, because those two disagreeing means the chance figure
+// is the out-of-date one.
+function playerAvailability(p){
+  const st=(p&&p.st)||'a';
+  if(st==='i'||st==='s'||st==='u'||st==='n') return 0;
+  const cp=(p&&p.cp!=null)?Number(p.cp):null;
+  if(cp!=null && !isNaN(cp)) return Math.max(0, Math.min(1, cp/100));
+  return FPL_AVAIL[st]!=null?FPL_AVAIL[st]:1;
+}
+// Rotation risk, the cheap way. There is no per-gameweek minutes history in bootstrap-static (only
+// a season total) and fetching it per player would be ~180 extra API calls in both the browser and
+// the Action — explicitly out of scope. Instead: the largest season-minutes figure across the whole
+// ingested player set belongs to a virtually ever-present player, so maxMinutes/90 is a good read
+// on how many league games have actually been played, and each player's own share of that is their
+// rotation profile. Returns games:0 pre-season (or if minutes were never ingested), which switches
+// the whole adjustment off rather than guessing.
+function squadMinutesContext(state){
+  const P=(state&&state.fpl&&state.fpl.players)||{};
+  let max=0; Object.keys(P).forEach(k=>{ const m=Number(P[k]&&P[k].mn)||0; if(m>max) max=m; });
+  return {maxMinutes:max, games: max>0?Math.max(1,Math.round(max/90)):0};
+}
+function playerStartShare(p, ctx){
+  if(!ctx||!ctx.games) return 1;
+  const mn=Number(p&&p.mn)||0;
+  return Math.max(MODEL.MIN_MINUTES_SHARE, Math.min(1, mn/(90*ctx.games)));
+}
+// (c) FIXTURE DIFFICULTY. clubFixture() (batch 29) resolves a real-world club id + gameweek to that
+// club's actual PL fixture and its 1-5 rating. 3 is neutral; each point easier/harder moves the
+// player's expected haul by FDR_SENS (so a 1 is +15%, a 5 is -15%). A blank gameweek is a genuine
+// zero — the player cannot score — and a double is worth DOUBLE_MULT, not 2, because nobody plays
+// 90 minutes twice in four days. Purely numeric: no real-world club is named anywhere in here.
+function playerFixtureMult(club, ev){
+  if(!ev) return 1;
+  const fx=clubFixture(club, ev);
+  if(!fx) return 0;
+  let m=1+(3-(Number(fx.fdr)||3))*MODEL.FDR_SENS;
+  if(fx.count>1) m*=MODEL.DOUBLE_MULT;
+  return Math.max(0.5, m);
+}
+// (b) SQUAD STRENGTH — expected points for the 11 who'll actually play. Each owned player's
+// baseline blends FPL `form` (mean points per game over the last 30 days — the recency signal)
+// with `ppg` (season mean — the stability signal), then multiplies by availability, minutes share
+// and fixture difficulty. If a published lineup exists we price that XI; otherwise we take the best
+// 11 by expected points, which is what a rational manager does with exactly this information.
+// Returns null when this manager has no squad data at all, so the caller can fall back cleanly.
+function squadExpected(state, tid, ev){
+  const P=(state&&state.fpl&&state.fpl.players)||{};
+  const ids=squadIds(tid);
+  if(!ids.length) return null;
+  const ctx=squadMinutesContext(state);
+  const haveFx=ev?plFixturesFor(ev).length>0:false;
+  const named=new Set(lineupIds(tid).map(Number));
+  const rows=ids.map(id=>{
+    const p=P[id]||P[String(id)]; if(!p) return null;
+    const form=Number(p.f)||0, ppg=Number(p.ppg)||0;
+    const basePts=form>0 ? MODEL.FORM_BLEND*form+(1-MODEL.FORM_BLEND)*ppg : ppg;
+    const av=playerAvailability(p);
+    const fm=haveFx?playerFixtureMult(Number(p.t)||0, ev):1;
+    return {id:Number(id), xp:Math.max(0, basePts*av*playerStartShare(p,ctx)*fm), av};
+  }).filter(Boolean);
+  if(!rows.length) return null;
+  const namedRows=rows.filter(r=>named.has(r.id));
+  const xi = namedRows.length>=MODEL.XI ? namedRows
+           : rows.slice().sort((a,b)=>b.xp-a.xp).slice(0,MODEL.XI);
+  return {xp: xi.reduce((s,r)=>s+r.xp,0), n: xi.length, squadSize: rows.length,
+          doubts: rows.filter(r=>r.av>0&&r.av<1).length, out: rows.filter(r=>r.av===0).length};
+}
+
+// (d) THE PROJECTION. Recency-weighted H2H form sets the level; the squad model moves a team off
+// that level by SQUAD_W of however far its expected XI sits from the league's average XI. The squad
+// number is deliberately used RELATIVELY rather than absolutely: summing eleven players' FPL form
+// is on a similar-but-not-identical scale to a Draft H2H score (draft has no captain, and bonus
+// points/autosubs land differently), so the ratio to the league mean is trustworthy where the raw
+// total isn't. SQUAD_W is 0.55 rather than 1.0 because the squad signal is genuinely forward-looking
+// (it's the only thing that knows about this week's injuries and fixtures) but noisy — `form` is a
+// 30-day average and FDR is a crude 1-5 — so it earns a majority say, not a dictatorship.
+// Returns a map of EVERY team id, so callers can compute league-relative things in one pass.
+function projectTeams(state, ev){
+  const ids=(state.teams||[]).map(t=>t.id);
+  const form={}, sq={};
+  ids.forEach(tid=>{ form[tid]=teamFormProj(state,tid,ev); sq[tid]=squadExpected(state,tid,ev); });
+  // A squad that HAS data but expects ~0 points (a full blank gameweek, or a squad wiped out by
+  // injuries) is a real, very weak squad — it must not be mistaken for "no data" and quietly
+  // given rel=1. Participation is keyed on the squad object existing, not on it being non-zero.
+  const withSq=ids.filter(tid=>sq[tid]);
+  const sqMean=withSq.length?withSq.reduce((s,tid)=>s+sq[tid].xp,0)/withSq.length:0;
+  const out={};
+  ids.forEach(tid=>{
+    const f=form[tid];
+    let rel=1;
+    // The clamp is what stops the squad half of the model ever running the show: whatever it
+    // thinks, a team's projection can only move by ±SQUAD_W × (clamp − 1) — about −14%/+17% at
+    // the current settings — off its recency-weighted form level. Deliberate: FPL `form` and a
+    // 1-5 FDR are too coarse to justify more, and the admin can always override the price.
+    if(sqMean>0&&sq[tid])
+      rel=Math.max(MODEL.SQUAD_REL_MIN, Math.min(MODEL.SQUAD_REL_MAX, sq[tid].xp/sqMean));
+    out[tid]={proj: Math.max(5, f.proj*(1+MODEL.SQUAD_W*(rel-1))),
+              formProj:f.proj, weight:f.weight, n:f.n, squad:sq[tid]||null, squadRel:rel};
+  });
+  return out;
+}
+// Convenience single-team read. Cheap enough to call in a loop (12 teams x ~15 players is a few
+// hundred operations) — deliberately not cached, because a stale projection after an odds edit or
+// a fresh FPL sync would be a far worse bug than the microseconds it saves.
+function teamProj(state, tid, ev){
+  const p=projectTeams(state, ev)[tid];
+  return p?p.proj:((state.stats&&state.stats[tid]&&state.stats[tid].base)||50);
+}
+
+// Draw probability. A "draw" here is an EXACT tie on fantasy points — rarer than a football draw
+// but far from rare. This league's own settled results are the best estimate available, blended
+// against a DRAW_BASE prior worth DRAW_PRIOR_N games so one freak early-season week can't move it.
+// The old model hardcoded 8% forever and never varied it by matchup.
+function leagueDrawRate(state){
+  let d=0,n=0;
+  const localEvents=new Set((state.gameweeks||[]).filter(g=>g.event&&g.matches.some(m=>m.result)).map(g=>g.event));
+  (state.history||[]).forEach(h=>{ if(localEvents.has(h.event)) return; n++; if(h.ap===h.bp) d++; });
+  (state.gameweeks||[]).forEach(g=>g.matches.forEach(m=>{ if(!m.result) return; n++; if(m.result.homePts===m.result.awayPts) d++; }));
+  return (d + MODEL.DRAW_BASE*MODEL.DRAW_PRIOR_N)/(n + MODEL.DRAW_PRIOR_N);
+}
+
+// FAIR home/draw/away probabilities for one H2H fixture in one gameweek. `ev` is the real-world
+// FPL event number (gw.event) — pass it, or the squad/fixture half of the model can't engage.
+function fairMatchProbs(state, homeId, awayId, ev, projMap){
+  const P=projMap||projectTeams(state, ev);
+  const a=P[homeId]||{proj:50,weight:0}, b=P[awayId]||{proj:50,weight:0};
+  // Shrink the projected gap toward zero by how much evidence actually sits behind it. Pre-season
+  // we're pricing off hand-set baselines plus a squad snapshot, so only SHRINK_MIN of the apparent
+  // gap is treated as real; with a full season of recency-weighted results behind both teams it
+  // rises toward ~0.85. This is what stops week 1 producing 1.3/4.5 prices off nothing but a
+  // baseline guess, and it's a principled version of what the old model's hand-tuned divisor 34
+  // was doing by feel.
+  const evid=Math.min(a.weight||0, b.weight||0);
+  const shrink=MODEL.SHRINK_MIN+(1-MODEL.SHRINK_MIN)*(evid/(evid+MODEL.SHRINK_K));
+  const D=(a.proj-b.proj)*shrink;
+  // Ties get less likely the further apart the two projections sit — a gaussian taper on the gap,
+  // which is the shape the exact-tie probability of two normal scores genuinely has.
+  const pD=Math.max(0.02, Math.min(0.20, leagueDrawRate(state)*Math.exp(-Math.pow(D/MODEL.DRAW_SPREAD,2)/2)));
+  // phi() is the logistic approximation to the standard normal CDF already used throughout this
+  // file; D/SD_DIFF is the difference expressed in standard deviations, so this is just
+  // P(home outscores away) under two normal scores — no new stats primitive invented.
+  const pHrel=phi(D/SD_DIFF);
+  return {home:(1-pD)*pHrel, draw:pD, away:(1-pD)*(1-pHrel),
+          diff:D, rawDiff:a.proj-b.proj, shrink, projHome:a.proj, projAway:b.proj};
+}
+
+/* HOUSE COMPETITIVENESS — S.settings.oddsCompetitiveness, integer 1-20, default 10.
+   Do NOT confuse this with algoEdgePct/accaEdgeByLegs: those are the Algo's own discount applied
+   on top of prices that are ALREADY published (batches 31/35/44/45). This is the overround baked
+   INTO the published price in the first place.
+   Prices are published at fair × (1 - edge/100), so `edge` is literally the house's expected margin
+   on turnover, and the book's overround is 1/(1-edge) - 1.
+   The curve is anchored on three points, linear between them:
+     20 → 10.0%  The user's hard rule: the house never runs thinner than a 10% margin, whatever the
+                 slider says. Clamped below as well as anchored, so no input can breach it.
+     10 → 16.3%  "Normal", and not a guess: it is exactly the margin implied by the user's own
+                 worked example of a close game. 1.8/1.8/12 is a book of 1.194, i.e. a 16.3% margin;
+                 their uneven example 1.6/2.0/12 is a book of 1.208, i.e. 17.2%. Setting MID to the
+                 lower of the two reproduces BOTH examples to within a penny (see the calibration
+                 assertions) and errs, where they disagree, on the punter-friendly side.
+      1 → 28.0%  Worst-for-punters, deliberately capped there rather than higher. At 28% an even
+                 match pays 1.54 and a 7% draw pays 10.2 — visibly poor value but still a bet.
+                 Past ~30% the numbers stop reading as odds at all (an evens shot under 1.4) and
+                 people simply stop playing, which costs the house more turnover than the extra
+                 margin earns. 28% is roughly where a real bookmaker's worst market (a 20-runner
+                 outright) sits, so it's the sane end of "bad", not a punitive fantasy number. */
+const ODDS_EDGE = {MIN:10, MID:16.3, MAX:28};
+function houseEdgePct(settings){
+  let s=Math.round(Number(settings&&settings.oddsCompetitiveness));
+  if(isNaN(s)) s=DEFAULT_SETTINGS.oddsCompetitiveness;
+  s=Math.max(1,Math.min(20,s));
+  const e = s<=10 ? ODDS_EDGE.MAX-(s-1)*(ODDS_EDGE.MAX-ODDS_EDGE.MID)/9
+                  : ODDS_EDGE.MID-(s-10)*(ODDS_EDGE.MID-ODDS_EDGE.MIN)/10;
+  return Math.max(ODDS_EDGE.MIN, Math.min(ODDS_EDGE.MAX, Math.round(e*10)/10));
+}
+
+// The published recommendation for one fixture. `ev` (gw.event) is optional but strongly wanted —
+// without it the squad/FDR half of the model sits out and this degrades to recency-weighted form
+// only. All five call sites pass it.
+function recOdds(state, homeId, awayId, ev, projMap){
+  const p=fairMatchProbs(state, homeId, awayId, ev, projMap);
+  const edge=houseEdgePct(state.settings);
+  return {home:edgedOdds(p.home,edge), draw:edgedOdds(p.draw,edge), away:edgedOdds(p.away,edge)};
+}
+
+// P(this team posts the highest score of anyone in the gameweek), done properly instead of the old
+// softmax-of-averages (exp(0.12*avg), which had no probabilistic meaning and ignored how spread out
+// the field was). Treat every team's score as normal(proj, SD) and integrate the density of team i
+// against the probability that every other team came in below it — one numeric sweep prices the
+// whole field at once. `sign` = -1 flips the axis to price bottom score with the identical maths.
+function extremeScoreProbs(projs, sign){
+  const mus=projs.map(m=>sign*m);
+  if(!mus.length) return [];
+  const lo=Math.min.apply(null,mus)-4*SD, hi=Math.max.apply(null,mus)+4*SD, steps=160, h=(hi-lo)/steps;
+  const out=mus.map(()=>0);
+  const dens=(x,mu)=>Math.exp(-Math.pow((x-mu)/SD,2)/2)/(SD*Math.sqrt(2*Math.PI));
+  for(let k=0;k<=steps;k++){
+    const x=lo+k*h, wt=(k===0||k===steps)?0.5:1;   // trapezium rule
+    const cdf=mus.map(mu=>Math.min(1-1e-9, Math.max(1e-9, phi((x-mu)/SD))));
+    let prod=1; for(let i=0;i<cdf.length;i++) prod*=cdf[i];
+    for(let i=0;i<mus.length;i++) out[i]+=wt*h*dens(x,mus[i])*(prod/cdf[i]);
+  }
+  const tot=out.reduce((a,b)=>a+b,0);
+  return tot>0?out.map(v=>v/tot):out.map(()=>1/out.length);
+}
 // Batch 31: replaces the old linear "margin scales with leg count" formula
 // (1-(marginPct/100)*n) with a flat per-leg-count edge looked up from settings.accaEdgeByLegs —
 // e.g. raw combined odds 11 on a 3-fold with a 10% edge set for 3-fold specifically → 11*(1-0.10)
@@ -3952,68 +4261,126 @@ const SPECIAL_MARKET_TEMPLATES = [
     blurb:'This team scores over the chosen points line.'},
   {id:'pts_under',     name:'📉 Team Points — Under a line',      kind:'team_pts', dir:'under', target:'team',
     blurb:'This team scores under the chosen points line.'},
-  {id:'form_spike',    name:'🚀 Form Spike — well above their average', kind:'team_pts', dir:'over',  target:'team', lineOffset:10,
-    blurb:'This team beats their own season average by 10+ points.'},
-  {id:'off_day',       name:'💤 Off Day — well below their average',   kind:'team_pts', dir:'under', target:'team', lineOffset:-10,
-    blurb:'This team falls 10+ points short of their own season average.'},
+  {id:'form_spike',    name:'🚀 Form Spike — well above their par', kind:'team_pts', dir:'over',  target:'team', lineOffset:10,
+    blurb:'This team beats their projected score for the week by 10+ points.'},
+  {id:'off_day',       name:'💤 Off Day — well below their par',   kind:'team_pts', dir:'under', target:'team', lineOffset:-10,
+    blurb:'This team falls 10+ points short of their projected score for the week.'},
   {id:'shootout',      name:'🔥 Shoot-Out — high combined match total', kind:'match_total', dir:'over',  target:'match',
     blurb:'The two teams in this fixture combine for a high points total.'},
   {id:'stalemate',     name:'🥶 Stalemate — low combined match total',  kind:'match_total', dir:'under', target:'match',
     blurb:'The two teams in this fixture combine for a low points total.'},
+  // Batch 48 additions (12 → 16). No new settleable kind: every one of these is another
+  // parameterisation of a kind evalLeg() already grades, deliberately, so nothing downstream
+  // (evalLeg/legLiveInfo/MARKET_LABELS/slipViolatesIntegrity) needed touching. They fill the two
+  // gaps the library had — a genuinely SHORT price for acca filler, and a genuinely LONG one —
+  // plus a near-evens staple and a bigger version of the shoot-out.
+  // The line here is DERIVED (projection − 9, about 0.6 SD) rather than a fixed absolute like the
+  // haul ladder above. That is deliberate and it matters for real money: a fixed low line such as
+  // "25+" is a ~97% shot for a healthy squad, and no price at or above this app's 1.05 minimum can
+  // carry a 10% house edge on a 97% shot (see nearCertaintyWarning). A line pegged 9 points under
+  // the team's own projection sits at ~75%, which prices around 1.1-1.2 WITH the full edge intact —
+  // a genuine short-priced acca filler rather than a loss-making one.
+  {id:'banker',        name:'🛡️ Banker — clears their floor',      kind:'haul', target:'team', lineOffset:-9,
+    blurb:'This team comfortably clears the floor the model sets for them. Short price — built for accas.'},
+  {id:'beat_par',      name:'⚖️ Above Par — beats their own line',  kind:'team_pts', dir:'over', target:'team', lineOffset:0,
+    blurb:'This team scores above the line the model projects for them this week — close to a coin flip.'},
+  {id:'disaster',      name:'💀 Disaster Week — under 30 points',   kind:'team_pts', dir:'under', target:'team', line:30,
+    blurb:'This team scores fewer than 30 points this gameweek. A genuinely bad week.'},
+  {id:'blowout',       name:'🌋 Blow-Out — huge combined total',    kind:'match_total', dir:'over', target:'match', lineOffset:25,
+    blurb:'The two teams in this fixture combine for an exceptional points total.'},
 ];
 // Sane starting threshold for a line-based template, given its target — admin can still edit it.
+// Batch 48: lines are now set off the deep model's per-gameweek projection (projectTeams) instead
+// of the flat lifetime teamAvg(), so a team with half its squad injured or a week of brutal
+// fixtures gets a lower line rather than the same one it got in GW1. Templates carrying an explicit
+// absolute `line` (banker_25, disaster, the haul ladder) keep it regardless — those are fixed
+// propositions whose whole point is a fixed threshold; the model prices them, it doesn't move them.
 function specialMarketDefaultLine(state, gwId, tpl, params){
   if(!['haul','team_pts','match_total'].includes(tpl.kind)) return null;
-  if(tpl.kind==='haul') return tpl.line!=null ? tpl.line : Math.round(teamAvg(state, params.teamId)*1.3);
+  const g=gw(gwId); const ev=g?g.event:null;
+  const P=projectTeams(state, ev);
+  const pr=tid=>(P[tid]&&P[tid].proj)||50;
+  // haul: an explicit absolute line wins; otherwise a lineOffset is applied to the team's own
+  // projection (batch 48 — see the 'banker' template for why a derived line matters here); failing
+  // both, the pre-existing proj*1.3 "big haul" default.
+  if(tpl.kind==='haul'){
+    if(tpl.line!=null) return tpl.line;
+    if(tpl.lineOffset!=null) return Math.max(1, Math.round(pr(params.teamId)+tpl.lineOffset));
+    return Math.round(pr(params.teamId)*1.3);
+  }
   if(tpl.kind==='team_pts'){
+    if(tpl.line!=null) return tpl.line;
     if(!params.teamId) return null;
-    return Math.round(teamAvg(state, params.teamId) + (tpl.lineOffset||0)) + 0.5;
+    return Math.round(pr(params.teamId) + (tpl.lineOffset||0)) + 0.5;
   }
   if(tpl.kind==='match_total'){
-    const g=gw(gwId); const fixtures=g?g.matches.filter(m=>m.home&&m.away):[];
+    const fixtures=g?g.matches.filter(m=>m.home&&m.away):[];
     const m=fixtures.find(x=>x.id===params.matchId);
     if(!m) return null;
-    const tot=teamAvg(state,m.home)+teamAvg(state,m.away);
-    return Math.round(tot + (tpl.dir==='under'?-12:12)) + 0.5;
+    const tot=pr(m.home)+pr(m.away);
+    const off=(tpl.lineOffset!=null)?tpl.lineOffset:(tpl.dir==='under'?-12:12);
+    return Math.round(tot + off) + 0.5;
   }
   return null;
 }
-// Heuristic suggested odds for a template+target(+line), reusing the exact same probability
-// shapes as genAlgoBet()'s per-kind makers and recOdds() — not real ML, a reasonable form-based
-// heuristic, editable by the admin before saving. Returns null when there isn't enough info yet
-// (no target picked) to price it.
+// Suggested odds for a template+target(+line). Batch 48 rewrote this on three axes:
+//   1. Every probability now comes off projectTeams()' per-gameweek projection (form + squad +
+//      injuries + FDR) instead of the flat lifetime teamAvg().
+//   2. top_score/bottom_score are priced by proper numeric integration (extremeScoreProbs) rather
+//      than the old exp(±0.12*avg) softmax, which was a shape with no probabilistic meaning.
+//   3. The house edge comes from houseEdgePct(oddsCompetitiveness) — the SAME shared function
+//      recOdds() uses — not from algoEdgePct, which it was wrongly borrowing before. algoEdgePct
+//      is the Algo's discount on already-published prices; it has no business setting the
+//      published price itself.
+// Returns null when there isn't enough info yet (no target picked) to price it.
 function suggestSpecialOdds(state, gwId, tpl, params){
   const g=gw(gwId);
-  const edge=(state.settings&&state.settings.algoEdgePct)||20;
+  const ev=g?g.event:null;
+  const edge=houseEdgePct(state.settings);
   const fixtures=g?g.matches.filter(m=>m.home&&m.away):[];
+  const P=projectTeams(state, ev);
+  const pr=tid=>(P[tid]&&P[tid].proj)||50;
   if(tpl.kind==='top_score'||tpl.kind==='bottom_score'){
     const tids=[...new Set(fixtures.flatMap(m=>[m.home,m.away]))];
     if(!tids.length||!params.teamId) return null;
-    const sign=tpl.kind==='top_score'?1:-1;
-    const ws=tids.map(tid=>({tid,w:Math.exp(sign*0.12*teamAvg(state,tid))}));
-    const tot=ws.reduce((s,x)=>s+x.w,0);
-    const mine=ws.find(x=>x.tid===params.teamId);
-    return mine?edgedOdds(mine.w/tot,edge):null;
+    const idx=tids.indexOf(params.teamId);
+    if(idx<0) return null;
+    const ps=extremeScoreProbs(tids.map(pr), tpl.kind==='top_score'?1:-1);
+    return edgedOdds(ps[idx], edge);
   }
   if(tpl.kind==='haul'){
     if(!params.teamId||params.line==null) return null;
-    return edgedOdds(pOver(params.line-0.5, teamAvg(state,params.teamId)), edge);
+    return edgedOdds(pOver(params.line-0.5, pr(params.teamId)), edge);
   }
   if(tpl.kind==='team_pts'){
     if(!params.teamId||params.line==null) return null;
-    const avg=teamAvg(state,params.teamId);
-    const p=tpl.dir==='under'?1-pOver(params.line,avg):pOver(params.line,avg);
+    const proj=pr(params.teamId);
+    const p=tpl.dir==='under'?1-pOver(params.line,proj):pOver(params.line,proj);
     return edgedOdds(p, edge);
   }
   if(tpl.kind==='match_total'){
     if(params.line==null) return null;
     const m=fixtures.find(x=>x.id===params.matchId);
     if(!m) return null;
-    const tot=teamAvg(state,m.home)+teamAvg(state,m.away);
-    const p=tpl.dir==='under'?phi((params.line-tot)/(SD*1.414)):1-phi((params.line-tot)/(SD*1.414));
+    const tot=pr(m.home)+pr(m.away);
+    const p=tpl.dir==='under'?phi((params.line-tot)/SD_DIFF):1-phi((params.line-tot)/SD_DIFF);
     return edgedOdds(p, edge);
   }
   return null;
+}
+/* Batch 48 — the one place the house edge genuinely CANNOT be guaranteed, surfaced instead of
+   hidden. A one-sided proposition whose true probability is above (1 - edge) simply cannot be
+   offered at any price ≥ 1.0 with that edge intact: a 95% shot needs 1.05 to break even, and 1.05
+   is already this app's minimum price. edgedOdds() caps the probability so the published price is
+   the shortest defensible one, but on a genuine near-certainty (a 25+ or 35+ haul for a strong
+   squad, say) the realised margin is thin or negative however it's priced. The model signals this
+   by returning exactly the 1.05 floor — so wherever a suggestion comes back at the floor, say so
+   out loud and let the admin raise the line rather than publishing a market that loses money.
+   MIN_ODDS is the app-wide minimum price used by every odds field and by edgedOdds(). */
+const MIN_ODDS = 1.05;
+function nearCertaintyWarning(suggested){
+  if(suggested==null || Number(suggested)>MIN_ODDS+0.001) return '';
+  return `<div class="muted small" style="color:var(--orange);margin-top:6px">⚠ The model rates this a near-certainty — at the ${fmtOdds(MIN_ODDS)} minimum price the house edge is thin or negative. Raise the threshold (or pick a stronger market) rather than publishing this one.</div>`;
 }
 // Player-facing label for a template+target(+line) — same phrasing style as genAlgoBet()'s legs.
 function specialMarketLabel(gwId, tpl, params){
@@ -4111,6 +4478,7 @@ function specialMarketBuilderCard(){
         <input type="number" step="0.05" min="1.05" value="${oddsShown!=null?fmtOdds(oddsShown):''}" style="width:90px;font-weight:800" onchange="setMktField('odds',this.value)" ${targetReady?'':'disabled'}></div>
     </div>
     ${label?`<div class="muted small">Preview: <b>${esc(label)}</b> <span class="mono" style="color:var(--gold)">@ ${fmtOdds(oddsShown||1.05)}</span></div>`:'<div class="muted small">Pick a target to see the suggested price.</div>'}
+    ${nearCertaintyWarning(suggested)}
     <div class="actions" style="margin-top:10px">
       <button class="btn" onclick="addSpecialMarketFromBuilder()" ${targetReady?'':'disabled'}>➕ Add to gameweek</button>
     </div>
@@ -4715,8 +5083,10 @@ function saveLoader(){
   if(ko){ deadline=ko-80*60000; kickoff=ko; }
   else if(d.fplDeadline){ deadline=d.fplDeadline+10*60000; kickoff=d.fplDeadline+90*60000; }
   else { toast('Set the first kick-off time',true); return; }
+  // Batch 48: recOdds() now takes the real-world FPL event so the squad/injury/FDR half of the
+  // model can engage — without it it silently degrades to form-only.
   const g={id:nid('gw'),name:d.name||('GW '+(S.gameweeks.length+1)),deadline,kickoff,event:d.event||null,status:'draft',
-    matches:fixtures.map(f=>({id:nid('m'),home:f.home,away:f.away,odds:recOdds(S,f.home,f.away),result:null}))};
+    matches:fixtures.map(f=>({id:nid('m'),home:f.home,away:f.away,odds:recOdds(S,f.home,f.away,d.event||null),result:null}))};
   S.gameweeks.push(g);
   audit('gameweek loaded',g.name+' · cutoff '+fmtDT(deadline));
   save(); loaderDraft=null; dtPickState['loaderKo']={day:null,time:null};
@@ -4736,17 +5106,28 @@ function vOddSetter(){
   const nextDraft=draftsSorted[0];
   const laterDrafts=draftsSorted.slice(1);
   const open=S.gameweeks.filter(g=>g.status==='open');
-  return `<h2>Odds Setter</h2><div class="sub">Recommended prices come from team form. Tweak, then publish.</div>
+  // Batch 48: the form-data panel now shows the model's actual per-gameweek projection next to the
+  // old lifetime average, so the admin can see WHY a price moved. Projected for whichever gameweek
+  // is being reviewed (nearest draft, else the first open one).
+  const projEv=(nextDraft&&nextDraft.event)||(open[0]&&open[0].event)||null;
+  const PJ=projectTeams(S, projEv);
+  return `<h2>Odds Setter</h2><div class="sub">Recommended prices come from the model — recent form, squad availability and real-world fixture difficulty. Tweak, then publish.</div>
   ${!nextDraft&&open.length===0?'<div class="card"><p class="muted">Nothing loaded yet. Back Office → FPL Sync → "Sync & stage gameweeks".</p></div>':''}
   ${nextDraft?oddsCard(nextDraft,true):''}
   ${open.map(g=>oddsCard(g,false)).join('')}
   ${laterDrafts.length?`<div class="card"><p class="muted small">+${laterDrafts.length} more gameweek(s) staged and visible to players under "Coming up" (${laterDrafts.map(g=>esc(g.name)).join(', ')}) — not shown here for review yet since their odds are based on today's form and will be stale by the time they're due. They'll appear here for review once ${esc(nextDraft?nextDraft.name:'the current one')} is published.</p></div>`:''}
   ${(nextDraft||open.length)?specialMarketBuilderCard():''}
   ${seasonMarketBuilderCard()}
-  <div class="card"><details><summary>📊 Team form data</summary>
-    <div class="statgrid">${S.teams.map(t=>`<div class="codecard"><b>${esc(t.name)}</b><br>
+  <div class="card"><details><summary>📊 Team form data &amp; model projections</summary>
+    <p class="muted small">House edge on published prices: <b class="mono">${houseEdgePct(S.settings)}%</b> (competitiveness ${S.settings.oddsCompetitiveness}/20 — Back Office → Limits &amp; edge). <b>Proj</b> is what the model expects this team to score in ${esc(projEv?('GW'+projEv):'the next gameweek')}: recency-weighted form, moved by squad availability and real-world fixture difficulty. <b>Avg</b> is the old flat lifetime average, shown for comparison only — nothing is priced off it any more.${hasSquadData()?'':' <b>No squad data pulled yet</b> — the squad/injury/fixture half of the model is sitting out; run Back Office → "⟳ Sync &amp; stage gameweeks".'}</p>
+    <div class="statgrid">${S.teams.map(t=>{
+      const p=PJ[t.id]||{proj:0,squadRel:1,squad:null};
+      const relPct=Math.round((p.squadRel-1)*100);
+      return `<div class="codecard"><b>${esc(t.name)}</b><br>
       <span class="muted small">Baseline</span> <input type="number" value="${S.stats[t.id]?S.stats[t.id].base:50}" style="width:64px;padding:4px 7px" onchange="if(!S.stats['${t.id}'])S.stats['${t.id}']={};S.stats['${t.id}'].base=parseFloat(this.value)||50;save()">
-      <span class="muted small">→ avg <b class="mono">${teamAvg(S,t.id).toFixed(1)}</b></span></div>`).join('')}</div>
+      <span class="muted small">→ proj <b class="mono" style="color:var(--teal)">${p.proj.toFixed(1)}</b> · avg <b class="mono">${teamAvg(S,t.id).toFixed(1)}</b></span>
+      ${p.squad?`<br><span class="muted small" title="Squad signal vs the league average XI, and how many of the 15 are flagged">squad ${relPct>0?'+':''}${relPct}%${p.squad.out?` · ${p.squad.out} out`:''}${p.squad.doubts?` · ${p.squad.doubts} doubtful`:''}</span>`:''}</div>`;
+    }).join('')}</div>
   </details></div>`;
 }
 // Bugfix (post-launch feedback, 2026-08-20): the admin wants every bet riding on a gameweek
@@ -4773,6 +5154,9 @@ function oddsCard(g,isDraft){
   // for either boost this gameweek — no longer restricted by outcome or team, see setFavBoost/
   // toggleBigBoost above.
   const boostedGwCount=new Set(S.gameweeks.filter(gg=>gg.matches.some(mm=>mm.boostSide)).map(gg=>gg.id)).size;
+  // Batch 48: compute the whole-league projection ONCE per card and hand it to every recOdds()
+  // call in the table below, rather than recomputing all 12 teams for each of the 6 fixtures.
+  const cardProj=projectTeams(S, g.event);
   const bigBtn=(m,pick)=>`<button class="x ${m.boostSide===pick?'boost':''}" title="${m.boostSide===pick?'Remove':'Give'} this price +2.0 🔥 (max ${MAX_BIG_BOOST_GWS} gameweeks at once)" onclick="toggleBigBoost('${g.id}','${m.id}','${pick}')">🔥</button>`;
   const smallBtn=teamId=>`<button class="x ${g.favBoostTeamId===teamId?'boost':''}" title="${g.favBoostTeamId===teamId?'Remove':'Give'} this team's win odds +0.1 ⭐ (one team per gameweek)" onclick="setFavBoost('${g.id}','${teamId}')">⭐</button>`;
   return `<div class="card ${isDraft?'':'glow'}">
@@ -4783,7 +5167,7 @@ function oddsCard(g,isDraft){
     <div class="muted small" style="margin-bottom:6px">🔥 Big boost (+2.0, any outcome): ${boostedGwCount}/${MAX_BIG_BOOST_GWS} gameweeks active · ⭐ Small boost (+0.1, any team's win): one per gameweek</div>
     <div style="overflow-x:auto"><table><tr><th>Fixture</th><th>Home</th><th>Draw</th><th>Away</th><th>Rec</th><th></th></tr>
     ${g.matches.map(m=>{
-      const rec=recOdds(S,m.home,m.away);
+      const rec=recOdds(S,m.home,m.away,g.event,cardProj);
       return `<tr>
       <td><b>${esc(team(m.home)?team(m.home).name:'?')}</b> <span class="muted">v</span> <b>${esc(team(m.away)?team(m.away).name:'?')}</b></td>
       <td><input type="number" step="0.1" min="1.1" value="${m.odds.home}" style="width:68px" onchange="setOdds('${g.id}','${m.id}','home',this.value)">${bigBtn(m,'home')}${smallBtn(m.home)}</td>
@@ -4836,7 +5220,11 @@ function setInplayCutoff(gwId,val){
   audit('in-play cutoff',g.name+': '+fmtDT(ts)); save(); render(); toast('In-play window set');
 }
 function rerecommend(gwId){
-  const g=gw(gwId); g.matches.forEach(m=>m.odds=recOdds(S,m.home,m.away));
+  // Batch 48: "reset to recommended" now resets to the deep model's output (form + squad + FDR at
+  // the current competitiveness setting), not the old flat-average heuristic. One projection pass
+  // shared across every fixture in the gameweek.
+  const g=gw(gwId); const PJ=projectTeams(S,g.event);
+  g.matches.forEach(m=>m.odds=recOdds(S,m.home,m.away,g.event,PJ));
   // Batch 21: reset-all now also covers offered special markets (batch 20's gw.specialMarkets[]) —
   // same "back to the model's suggestion" intent, just via suggestSpecialOdds() instead of recOdds().
   (g.specialMarkets||[]).forEach(m=>{
@@ -4849,7 +5237,7 @@ function rerecommend(gwId){
 // instead of rerecommend()'s whole-gameweek sweep above.
 function rerecommendMatch(gwId,mId){
   const g=gw(gwId); const m=g&&g.matches.find(x=>x.id===mId); if(!m) return;
-  m.odds=recOdds(S,m.home,m.away);
+  m.odds=recOdds(S,m.home,m.away,g.event);
   audit('odds reset',g.name+': '+(team(m.home)?team(m.home).name:'?')+' v '+(team(m.away)?team(m.away).name:'?')+' → model');
   save(); render(); toast('Match odds reset to model');
 }
@@ -5394,7 +5782,17 @@ function vOffice(){
       <div><label>Algo edge %</label><input type="number" id="setAlgoEdge" value="${S.settings.algoEdgePct}" style="width:100px"></div>
       <button class="btn" onclick="saveSettings()">Save</button>
     </div>
-    <p class="muted small">Algo edge: specials priced at fair × (1 − edge).</p>
+    <p class="muted small">Algo edge: the discount the Algo applies to an already-published combined price. Not the same thing as house competitiveness below.</p>
+    <hr class="hr">
+    <p><b>🎚️ House competitiveness</b> <span class="muted small">— how generous the PUBLISHED odds are. 20 = most competitive (best for players), 1 = least. This is the overround baked into every recommended price, for both match odds and special markets. Completely separate from the Algo/acca edges: those come off a price that's already been published.</span></p>
+    <div class="formrow">
+      <div style="flex:1;min-width:0">
+        <label>Competitiveness <b class="mono" id="compVal">${S.settings.oddsCompetitiveness}</b>/20 → house edge <b class="mono" id="compEdge" style="color:var(--gold)">${houseEdgePct(S.settings)}%</b></label>
+        <input type="range" min="1" max="20" step="1" id="setOddsComp" value="${S.settings.oddsCompetitiveness}" style="width:100%" oninput="updCompPreview()">
+      </div>
+    </div>
+    <p class="muted small" id="compPreview">${compPreviewText(S.settings.oddsCompetitiveness)}</p>
+    <p class="muted small">The house edge never drops below ${ODDS_EDGE.MIN}% however far the slider is pushed, and never rises above ${ODDS_EDGE.MAX}%. Takes effect on the NEXT recommendation — already-published odds don't move until you hit "↺ Reset to recommended" in Odds Setter, and already-placed bets keep their frozen price forever.</p>
     <hr class="hr">
     <p><b>Acca edge by leg count</b> <span class="muted small">— flat % edge applied to a multi-leg bet's combined odds, one rate per leg count. Legs beyond 10 use the 10-leg rate. Takes effect live for any NEW bet placed after Save — bets already accepted/settled keep their frozen odds, this never recalculates them.</span></p>
     <div class="formrow">
@@ -5490,11 +5888,38 @@ function vOffice(){
     </div>
   </div>`;
 }
+// Batch 48: live preview of what a competitiveness setting actually means in published prices,
+// worked on the two reference books the model is calibrated against — a dead-even fixture (fair
+// 46.5/7/46.5) and a modest favourite (fair 51.8/6.9/41.4). Patches only its own three nodes, the
+// same targeted-update pattern batch 37 established for the stake input, so dragging the slider
+// never triggers a full render().
+function compPreviewText(setting){
+  const e=houseEdgePct({oddsCompetitiveness:setting});
+  const even=[edgedOdds(0.465,e), edgedOdds(0.07,e), edgedOdds(0.465,e)];
+  const unev=[edgedOdds(0.518,e), edgedOdds(0.069,e), edgedOdds(0.413,e)];
+  const ov=Math.round((1/(1-e/100)-1)*1000)/10;
+  return `Book overround ${ov}%. A dead-even fixture prices <b class="mono">${fmtOdds(even[0])} / ${fmtOdds(even[1])} / ${fmtOdds(even[2])}</b>; a modest favourite prices <b class="mono">${fmtOdds(unev[0])} / ${fmtOdds(unev[1])} / ${fmtOdds(unev[2])}</b>.`;
+}
+function updCompPreview(){
+  const el=document.getElementById('setOddsComp'); if(!el) return;
+  const v=Math.max(1,Math.min(20,Math.round(parseFloat(el.value)||10)));
+  const a=document.getElementById('compVal'); if(a) a.textContent=v;
+  const b=document.getElementById('compEdge'); if(b) b.textContent=houseEdgePct({oddsCompetitiveness:v})+'%';
+  const c=document.getElementById('compPreview'); if(c) c.innerHTML=compPreviewText(v);
+}
 function saveSettings(){
   if(!requireAdmin()) return;
   S.settings.maxStake=parseFloat(document.getElementById('setMaxStake').value)||300;
   S.settings.maxPayout=parseFloat(document.getElementById('setMaxPayout').value)||10000;
   S.settings.algoEdgePct=parseFloat(document.getElementById('setAlgoEdge').value)||20;
+  // Batch 48: house competitiveness → published-odds overround. Clamped to the 1-20 integer range
+  // houseEdgePct() expects; houseEdgePct() clamps the resulting edge again on top, so the 10% floor
+  // holds even if this value is ever hand-edited in Firebase.
+  const compEl=document.getElementById('setOddsComp');
+  if(compEl){
+    const c=Math.round(parseFloat(compEl.value));
+    S.settings.oddsCompetitiveness=isNaN(c)?10:Math.max(1,Math.min(20,c));
+  }
   // Batch 31: acca edge-by-legs table — 10 flat per-leg-count % edges, admin-editable. Always-live:
   // combinedOdds()/accaFactor() read this straight off S.settings at bet-build time, so saving here
   // IS the "release" mechanism — no separate deploy/publish step. Already-accepted/settled bets keep
@@ -5502,7 +5927,7 @@ function saveSettings(){
   const edgeByLegs={};
   for(let n=1;n<=10;n++){ const v=parseFloat(document.getElementById('setAccaEdge'+n).value); edgeByLegs[n]=isNaN(v)?0:v; }
   S.settings.accaEdgeByLegs=edgeByLegs;
-  audit('settings',`stake £${S.settings.maxStake} · payout £${S.settings.maxPayout} · acca edges [${[1,2,3,4,5,6,7,8,9,10].map(n=>edgeByLegs[n]).join(',')}]% · algo ${S.settings.algoEdgePct}%`);
+  audit('settings',`stake £${S.settings.maxStake} · payout £${S.settings.maxPayout} · acca edges [${[1,2,3,4,5,6,7,8,9,10].map(n=>edgeByLegs[n]).join(',')}]% · algo ${S.settings.algoEdgePct}% · competitiveness ${S.settings.oddsCompetitiveness}/20 (house edge ${houseEdgePct(S.settings)}%)`);
   save(); render(); toast('Settings saved');
 }
 
@@ -5593,8 +6018,17 @@ function ingestFplSquads(boot, es, fixtures){
   const players={};
   ((boot&&boot.elements)||[]).forEach(el=>{
     if(!owned.has(el.id)) return;
+    // Batch 48 added `cp` and `mn`, both consumed by the odds model (playerAvailability() /
+    // playerStartShare()): chance_of_playing_this_round (0/25/50/75/100, null when FPL has nothing
+    // to say — falling back to next_round, which is what's populated between gameweeks) is a much
+    // finer injury-doubt signal than the single `st` letter, and season-total minutes is the only
+    // rotation-risk proxy available without ~180 extra per-player API calls. Both are stored as
+    // null-when-unknown rather than 0, because 0 is a meaningful value for each of them.
+    const cp = el.chance_of_playing_this_round!=null ? el.chance_of_playing_this_round
+             : (el.chance_of_playing_next_round!=null ? el.chance_of_playing_next_round : null);
     players[el.id]={n:el.web_name, t:el.team, p:el.element_type, f:Number(el.form)||0,
-                    tp:el.total_points||0, ep:el.event_points||0, ppg:Number(el.points_per_game)||0, st:el.status||'a'};
+                    tp:el.total_points||0, ep:el.event_points||0, ppg:Number(el.points_per_game)||0, st:el.status||'a',
+                    cp:cp, mn:el.minutes!=null?Number(el.minutes)||0:null};
   });
   S.fpl.plTeams=plTeams; S.fpl.players=players; S.fpl.squads=squads;
   let fdrGws=0;
@@ -5741,7 +6175,7 @@ function stageAllGameweeks(){
     const kickoff=info&&info.deadline?info.deadline+90*60000:Date.now()+3*86400000+80*60000;
     const deadline=kickoff-80*60000;
     const g={id:nid('gw'),name:'GW '+ev,deadline,kickoff,event:ev,status:'draft',
-      matches:fixtures.map(f=>({id:nid('m'),home:f.home,away:f.away,odds:recOdds(S,f.home,f.away),result:null}))};
+      matches:fixtures.map(f=>({id:nid('m'),home:f.home,away:f.away,odds:recOdds(S,f.home,f.away,ev),result:null}))};
     S.gameweeks.push(g);
   });
   if(short.length) toast('⚠ GW '+short.join(', ')+' had fewer fixtures than expected — check FPL Sync for unmatched entries',true);

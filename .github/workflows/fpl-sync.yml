@@ -343,10 +343,18 @@ jobs:
               const players = {};
               (bootstrap.elements || []).forEach(el => {
                 if (!ownedIds.has(el.id)) return;
+                // Batch 48: `cp` and `mn` feed the deep odds model (playerAvailability() /
+                // playerStartShare() in index.html). chance_of_playing_this_round is 0/25/50/75/100
+                // or null; between gameweeks FPL populates next_round instead, so fall back to it.
+                // Season-total minutes is the rotation-risk proxy — deliberately NOT a per-gameweek
+                // minutes history, which would cost ~180 extra API calls per run.
+                const cp = el.chance_of_playing_this_round != null ? el.chance_of_playing_this_round
+                         : (el.chance_of_playing_next_round != null ? el.chance_of_playing_next_round : null);
                 players[el.id] = {
                   n: el.web_name, t: el.team, p: el.element_type,
                   f: Number(el.form) || 0, tp: el.total_points || 0, ep: el.event_points || 0,
-                  ppg: Number(el.points_per_game) || 0, st: el.status || 'a'
+                  ppg: Number(el.points_per_game) || 0, st: el.status || 'a',
+                  cp: cp, mn: el.minutes != null ? (Number(el.minutes) || 0) : null
                 };
               });
 
