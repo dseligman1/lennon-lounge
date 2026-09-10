@@ -1231,3 +1231,136 @@ padding/gap totals that don't account for narrow viewports, and long unbreakable
 strings (team names, odds+currency combos) without `overflow-wrap`/`text-overflow`
 handling. Fix what you find; where you're not sure a fix actually rendered clean visually
 (no browser available), say so plainly in your report rather than claiming success.
+
+---
+
+## ROUND 8 — deep mathematical odds model, 2026-09-10
+
+User request: replace the current heuristic `recOdds()`/`suggestSpecialOdds()` (flat
+team-average + fixed juice) with a proper model using team form, squad-level player
+form/injuries, real-world PL fixture difficulty (FDR, from batch 29's `S.fpl` data),
+and opponent context — outputting fair probabilities, then a tunable house-competitiveness
+control, then final odds. Plus: auto-population of Odds Setter 21h before each gameweek's
+cutoff (as a DRAFT suggestion only — **confirmed with user: does NOT auto-publish**, admin
+still clicks Publish, same as today), an expanded special-markets library (~15 templates),
+and a Bet Review flag for any bet whose price didn't come from officially published odds
+(so nothing about house pricing integrity is ever taken on trust). Model assigned per the
+user's explicit instruction: the math model itself gets Opus 5 at high effort (batch 48);
+the two supporting changes get Sonnet 5 (batches 49/50). Real-money system — same verification
+bar as every prior batch (balance checks + headless harness + real-data spot checks), no
+`gh repo`/`gh api .../pages`/`gh secret` commands, work on `main-push`, push via
+`git push origin main-push:main`, copy `index.html` → `../lennon-lounge-v2.html` after,
+commit with a descriptive message, update this file's checkbox + a one-line note with the
+commit hash when done.
+
+- [ ] 48. (Opus 5, high effort) **Deep mathematical odds model.** Replace `recOdds()` (currently:
+  flat lifetime `teamAvg()` for each manager-team, fixed `pD=0.08` draw prob, logistic curve
+  divisor 34, flat `juice=1.08`) and `suggestSpecialOdds()`'s pricing with a model that actually
+  uses what the app already ingests: (a) **recent H2H form** — weight recent gameweeks more than
+  old ones (current `teamAvg()` is a flat lifetime average with only a soft Bayesian prior via
+  `base`; add real recency weighting, e.g. exponential decay over `S.history`+`g.matches` results,
+  last ~5-8 GWs matter most); (b) **squad-level player form/injuries** — `S.fpl.players[pid]` (see
+  `ingestFplSquads()`, ~line 5574) already carries `f` (FPL form), `tp`/`ep`/`ppg` (points), `st`
+  (status code: `a`=available/`d`=doubtful/`i`=injured/`s`=suspended/`u`=unavailable — grep FPL's
+  own status-code meaning if unsure) per player, and `S.fpl.squads[teamId]` gives each manager's
+  15-man roster; there's no per-GW recent-minutes-trend available cheaply (bootstrap-static only
+  has season-total `minutes`, not a redone per-GW breakdown — pulling that per-player would mean
+  ~180 extra API calls, both in-browser and in the Action — so don't attempt that; `chance_of_playing_this_round`/
+  `chance_of_playing_next_round` (0/25/50/75/100/null on FPL's real `elements[]`, not currently
+  captured — worth adding to `ingestFplSquads()`'s mapping, mirrored into `.github/workflows/
+  fpl-sync.yml`'s matching block per that function's own "mirrors field for field" comment) is a much
+  better injury-doubt signal than the coarse status code alone, and season-total `minutes` is still
+  a usable rotation-risk proxy (high form + low minutes = bench risk). Use `st`/chance-of-playing to
+  discount or zero out a doubtful/injured/suspended player's contribution to their squad's projected
+  score. (c) **fixture-adjusted projection** — `S.fpl.plFixtures[event]` (home/away club id +
+  `team_h_difficulty`/`team_a_difficulty` 1-5, from batch 29) lets you look up each squad's players'
+  real-world clubs' FDR for the gameweek being priced (`plFixturesFor`/`clubFixture`/`fdrClass`
+  already exist as helpers, ~line 3200s — reuse rather than reinvent) — a squad full of players
+  facing tough fixtures should project lower, easy fixtures higher. (d) Combine (a)+(b)+(c) into a
+  per-manager-team expected-points figure for the specific gameweek being priced (not just a lifetime
+  average), then derive home/draw/away fair probabilities from the *difference* between the two
+  teams' projections (reuse the existing `pOver`/`phi`/`SD=15` normal-distribution machinery already
+  used elsewhere — `pOver(line,avg)` at ~line 1331 — rather than inventing a new stats primitive).
+  Document your model's own reasoning inline as normal (like `recOdds()`'s existing divisor-choice
+  comment) so a future batch can follow the logic without re-deriving it.
+  **House competitiveness control**: new `S.settings.oddsCompetitiveness` (integer 1-20, default
+  10, migrate()-backfilled like every other setting), a new Back Office input near the existing
+  "📏 Limits & edge" card (do NOT touch `algoEdgePct` or `accaEdgeByLegs` — those are the Algo's
+  own acca-combination discount on top of already-published prices, per batches 31/35/44/45, a
+  completely separate concept from this). Map slider→house-edge-%: 20 = house edge floors at
+  **10% and never goes lower** (user's hard rule — "the house should always maintain a healthy 10%+
+  edge", never violate this regardless of slider position), 1 = worst for punters but capped at
+  something sane, not silly (pick a reasoned ceiling, e.g. ~25-30%, and say why), 10 = roughly
+  today's/a normal bookmaker feel. Calibrate against the user's own worked examples (not hard specs,
+  just a sanity check to run and report): "a close game" ≈ 1.8/1.8 for either team + 12 for the
+  draw; "a very uneven game" ≈ 1.6/2.0 + 12 for the draw — back-calculate what overround that
+  implies and land your slider curve in the same neighborhood at whatever setting represents
+  "normal". Wire this edge into both `recOdds()`'s match pricing AND `suggestSpecialOdds()`'s
+  special-market pricing (both should route through one shared edge-from-slider function, not
+  duplicate the mapping). **Special markets**: grow `SPECIAL_MARKET_TEMPLATES` (currently 11,
+  ~line 3938) toward ~15, reusing the existing 5 settleable `kind`s (`team_pts`/`haul`/`match_total`/
+  `top_score`/`bottom_score` — `evalLeg()` ~line 1356 is what actually grades these, don't invent a
+  6th kind unless truly justified, since it'd need matching `evalLeg`/`legLiveInfo`/`MARKET_LABELS`/
+  `slipViolatesIntegrity` additions) — price every one of them off the new deeper model's per-team
+  projections instead of the current flat heuristic. `suggestSpecialOdds`/`specialMarketDefaultLine`
+  are the two functions that currently do this. Keep `rerecommend()`/`rerecommendMatch()`/
+  `rerecommendMarket()` (the "↺ reset to recommended" buttons) working — they should now reset to
+  the NEW model's output. Verify: brace/paren/bracket/backtick balance check (the established method
+  every batch uses — `grep -o '{' | wc -l` etc.), a headless-Edge or real-data harness run (Firebase
+  stubbed, zero live writes) spot-checking the new odds against a few real GW1 fixtures with visibly
+  different team/squad strength to confirm the model actually differentiates (not just noise around
+  the old flat numbers), and the competitiveness-slider calibration check described above. This is
+  the biggest/most novel batch — do it justice, this is real money.
+
+- [ ] 49. (Sonnet 5, medium-high effort) **Bet Review flag: bet priced off non-official odds.**
+  Can run independent of batch 48 (uses existing published-odds infra, not the new model). The
+  Algo already only ever mirrors exactly-published prices (batches 35/44/45 — `genAlgoBet()` never
+  invents a number). The one path that doesn't is player-requested "🎯 Request a bet" (`isBespokeBet(b)`,
+  ~line 4426, batch 39) — a free-text bet at the player's own proposed odds, and (worth checking
+  while in there) counter-offers (`bet.offer`/accepted counter path — grep `counter_house`/
+  `counter_user`/`b.effOdds=b.offer.effOdds`) which renegotiate a bet's price away from the board
+  entirely, admin-approved but still not "the odds the house published." Build ONE general,
+  hallucination-proof check rather than a hardcoded bespoke-only flag: a pure `officialOddsCheck(bet,
+  state)` that, for a normal (non-bespoke, non-season, non-algo — actually algo/season/match legs
+  should all already be re-derivable) bet, recomputes what its price SHOULD be purely from currently
+  -published data (`m.odds[pick]` / `specialMarket.odds` / `seasonMarket.odds` per leg, combined via
+  the existing `combinedOdds()`) and flags a mismatch beyond sane rounding tolerance (e.g. £0.01/1
+  cent on odds, decide and document your tolerance) against `bet.effOdds`; a `type:'bespoke'` leg has
+  no board price to check against at all, so `isBespokeBet(b)` bets are always flagged unconditionally
+  (never "verify", just always "⚠️ not house-priced"). Note the published price used for the check
+  must be point-in-time correct where possible — if that's not cheaply available (odds get edited
+  after a bet is placed, per batch 47's finding that `setOdds` only mutates going forward), document
+  that limitation plainly rather than quietly getting it wrong; a reasonable fallback is comparing
+  against current live odds and noting bets flagged this way *might* be false positives from a
+  legitimate post-placement odds edit, vs. bespoke bets which are unconditional. Add a clear, hard-to-
+  miss badge (new CSS, red/warning styling distinct from the existing `overridden ×N` badge at
+  ~line 3852) on every affected `betCard()` row in `vReview()` specifically (Bet Review is the ask;
+  extending to `vMyBets`/`vBetFeed` is a reasonable bonus if cheap, not required). Verify: balance
+  check + a harness run seeding one normal bet, one bespoke bet, and one counter-offer-accepted bet,
+  confirming the flag fires exactly where expected and nowhere else.
+
+- [ ] 50. (Sonnet 5, medium-high effort) **Auto-populate Odds Setter 21h before cutoff.**
+  **Do this AFTER batch 48 lands** (needs its actual function names/shape — read what 48 shipped,
+  don't guess). `.github/workflows/fpl-sync.yml` currently has NO schedule trigger at all
+  (`workflow_dispatch` only, manual button) — add a `schedule:` cron (hourly is a reasonable
+  cadence given the ±30min tolerance "21 hours before" implies at that granularity; document
+  whatever cadence you pick and why, and flag the added recurring GitHub Actions cost to the user
+  in your report, don't just silently add it). At the end of a sync run, for the nearest DRAFT
+  gameweek (`S.gameweeks.filter(g=>g.status==='draft')`, sorted by event, first one — mirrors
+  `vOddSetter()`'s own `nextDraft` selection ~line 4735) with a known `g.deadline`: if `Date.now()`
+  is within the ~21-hour-before window AND this hasn't already fired for this gameweek (new
+  idempotency stamp, e.g. `g.oddsAutoSuggestedAt`, checked before running), mirror batch 48's model
+  (same "mirrors field for field" pattern `ingestFplSquads()`'s own comment already establishes
+  for this Action — the Action is Node, not browser, so port the pure scoring/pricing functions,
+  don't try to load the whole `index.html` script into Node) to recompute `g.matches[].odds` and
+  `g.specialMarkets[].odds` for that one draft gameweek exactly like clicking "↺ Reset all to
+  recommended" would, stamp `g.oddsAutoSuggestedAt=Date.now()`, and send an admin-only notification
+  (existing `pushNotif`/Firebase notif pattern — grep how the Action already writes anything
+  player-facing, e.g. how fixtures/deadlines land) saying odds are ready for review. **Must NOT**
+  change `g.status` — stays `draft`, nothing goes live, nothing is bettable, matches the user's
+  explicit "draft for admin review" decision. Also update `vOddSetter()`'s draft card (or add a
+  small line) to show "Auto-suggested {relative time}" when `g.oddsAutoSuggestedAt` is set, so the
+  admin can tell the difference between a fresh manual load and an auto-run. Verify: mirror batch
+  29/33/34's verification style (a harness with Firebase AND the FPL network layer both mocked,
+  confirming the window/idempotency logic fires exactly once per gameweek and never touches an
+  already-open or already-auto-suggested gameweek) plus a manual trace of the new cron addition.
