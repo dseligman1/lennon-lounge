@@ -1,10 +1,16 @@
 name: FPL Data Sync
 
 on:
-  # Manual only, by design — the house wants to control exactly when a sync happens (e.g.
-  # only once a gameweek's FPL standings are officially final), not have it silently refresh
-  # on a schedule. Trigger via the "Run workflow" button on this workflow's Actions page, or
-  # the shortcut link in the app's Back Office → FPL Sync card.
+  # Fires every hour, every day — cheap to declare and, thanks to the self-throttle at the top of
+  # main() below, cheap to run: most of these ticks do one lightweight fetch, decide nothing on
+  # FPL could have changed, and exit in a couple of seconds with zero Firebase writes. The full
+  # sync only actually runs within 2h before / 1h after a gameweek deadline, or on a day real PL
+  # fixtures are being played — using FPL's own live deadline/fixture data rather than a
+  # hardcoded matchday guess, so it self-corrects every week even when fixtures get rearranged.
+  # workflow_dispatch (the "Run workflow" button / Back Office → FPL Sync shortcut) always forces
+  # a full sync regardless of the throttle.
+  schedule:
+    - cron: '0 * * * *'
   workflow_dispatch:
 
 jobs:
@@ -16,6 +22,7 @@ jobs:
           FIREBASE_DB_URL: ${{ secrets.FIREBASE_DB_URL }}
           FIREBASE_SERVICE_KEY: ${{ secrets.FIREBASE_SERVICE_KEY }}
           FPL_LEAGUE_ID: ${{ secrets.FPL_LEAGUE_ID }}
+          TRIGGER_EVENT: ${{ github.event_name }}
         run: |
           node - << 'EOF'
           const https = require('https');
@@ -158,6 +165,38 @@ jobs:
             const bootstrap = await fetchJson('https://draft.premierleague.com/api/bootstrap-static');
             // bootstrap.events is {current, data:[...]} on the draft API, not a bare array.
             const evList = Array.isArray(bootstrap.events) ? bootstrap.events : ((bootstrap.events && bootstrap.events.data) || []);
+
+            // Self-throttle: on a scheduled (not manual) run, only pay for the full sync — the
+            // per-team lineup fetches and every Firebase write below — when it can actually
+            // matter: within 2h before/1h after a gameweek deadline, or on a day real PL
+            // fixtures kick off. Uses live FPL data (this event's own deadlines, the classic
+            // API's fixture kickoff times) rather than a hardcoded matchday/deadline schedule,
+            // so it stays correct even when fixtures get rearranged mid-season. Deliberately
+            // errs toward syncing if the fixture check itself fails.
+            if ((process.env.TRIGGER_EVENT || 'schedule') === 'schedule') {
+              const now = Date.now();
+              const deadlines = evList.map(e => e.deadline_time ? new Date(e.deadline_time).getTime() : null).filter(Boolean);
+              const nextDeadline = deadlines.filter(d => d >= now).sort((a, b) => a - b)[0];
+              const prevDeadline = deadlines.filter(d => d < now).sort((a, b) => b - a)[0];
+              const nearDeadline = (nextDeadline && nextDeadline - now <= 2 * 3600000) || (prevDeadline && now - prevDeadline <= 1 * 3600000);
+
+              let isMatchday = true; // fail-open: an unknown fixture state syncs rather than silently going stale
+              try {
+                const fixtures = await fetchJson('https://fantasy.premierleague.com/api/fixtures/');
+                const todayStr = new Date(now).toISOString().slice(0, 10);
+                isMatchday = (Array.isArray(fixtures) ? fixtures : []).some(f => {
+                  if (!f.kickoff_time) return false;
+                  const ko = new Date(f.kickoff_time).getTime();
+                  return new Date(ko).toISOString().slice(0, 10) === todayStr || (ko <= now && now - ko <= 3 * 3600000 && !f.finished);
+                });
+              } catch (e) { console.log('Matchday check failed, syncing anyway to be safe:', e.message); }
+
+              if (!nearDeadline && !isMatchday) {
+                console.log('Not near a deadline and no fixtures today — skipping this scheduled run, no Firebase writes.');
+                return;
+              }
+              console.log(`Proceeding with full sync (nearDeadline=${!!nearDeadline}, isMatchday=${isMatchday}).`);
+            }
 
             // Live in-play points for the current gameweek, for the "in-play" odds/results view.
             const currentEvent = evList.find(e => e.is_current);

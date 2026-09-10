@@ -5106,6 +5106,10 @@ function vSettler(){
     return `<div class="card">
     <div class="gwhead"><h3 style="margin:0">📅 ${esc(g.name)}</h3>
       <span class="muted small">${riding} accepted · ${negotiating} in negotiation (will expire)</span></div>
+    ${fs?`<div class="small" style="margin:8px 0 0;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <span class="pill ${fs.ready?'st-accepted':'st-pending'}">${fs.ready?'✅ GW'+g.event+' complete on FPL':'⏳ GW'+g.event+' still live on FPL'}</span>
+      <span class="muted">${fs.have}/${fs.total} match${fs.total===1?'':'es'} finished${S.fpl.lastSync?' · FPL checked '+timeAgo(S.fpl.lastSync):''}</span>
+    </div>`:''}
     ${fs&&fs.ready&&fs.missingLocal>0?`<div class="fpl-ready-banner"><span class="hero-dot"></span><span><b>⚡ FPL scores ready</b> — GW${g.event} is finished on FPL and all ${fs.total} match${fs.total===1?'':'es'} are waiting to sync.</span><button class="btn gold small" onclick="fillScoresFromFpl('${g.id}')">⬇ Sync scores from FPL now</button></div>`:''}
     <div style="overflow-x:auto"><table><tr><th>Home</th><th style="width:170px;text-align:center">Points</th><th style="text-align:right">Away</th></tr>
     ${g.matches.map(m=>`<tr>
