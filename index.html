@@ -186,6 +186,11 @@
   .flag{display:inline-block;padding:2px 9px;border-radius:10px;font-size:10px;font-weight:800;margin-left:6px}
   .flag.late{background:var(--gradHot);color:#fff}
   .flag.limit{background:rgba(255,201,49,.2);color:var(--gold);border:1px solid rgba(255,201,49,.4)}
+  /* Batch 49: bet-pricing-integrity flag — deliberately a solid, high-contrast danger pill (not
+     the plain colored-text "overridden ×N" marker near vOffice's override tool) since this is a
+     different, more serious signal: the bet's price can't be confirmed as coming from the board
+     at all (bespoke) or doesn't match what the board currently implies (mismatch). */
+  .flag.pricecheck{background:var(--danger);color:#fff;border:1px solid rgba(255,255,255,.35);box-shadow:0 0 10px rgba(255,77,109,.55)}
   /* ---------- bet cards ---------- */
   .bet{border:1px solid var(--line);border-radius:18px;padding:16px;margin-bottom:12px;background:var(--card2)}
   .bet.needsme{border-color:var(--cyan);box-shadow:0 0 18px rgba(0,217,255,.15)}
@@ -2594,10 +2599,13 @@ function filterBar(){
   </div>`;
 }
 
-function betCard(b,perspective){
+function betCard(b,perspective,showPricingFlag){
   const g=gw(b.gwId);
   const seasonBet=isSeasonBet(b);
   const bespokeBet=isBespokeBet(b);
+  // Batch 49: only computed when explicitly asked for (vReview() passes true) — every other
+  // betCard() call site (My Bets, Bet Feed, Home modal, etc.) is unaffected/unchanged.
+  const priceCheck = showPricingFlag ? officialOddsCheck(b, S) : null;
   // Batch 28: a season bet has no gw deadline to check — "locked in, can't cancel" instead means
   // at least one of its referenced season markets has already been settled (its outcome is fixed).
   // Non-season bets keep the exact prior gwDeadlinePassed() behavior, untouched.
@@ -2641,13 +2649,15 @@ function betCard(b,perspective){
         ${b.afterCutoff?'<span class="flag late">AFTER CUTOFF</span>':''}
         ${b.boostPct?`<span class="flag limit">🚀 +${b.boostPct}% BOOST</span>`:''}
         ${b.stakeCredit?`<span class="flag limit">🎟️ £${b.stakeCredit.toFixed(2)} FREE BET</span>`:''}
-        ${(b.limitFlags||[]).length?'<span class="flag limit">OVER LIMIT</span>':''}</div>
+        ${(b.limitFlags||[]).length?'<span class="flag limit">OVER LIMIT</span>':''}
+        ${priceCheck&&priceCheck.flagged?`<span class="flag pricecheck" title="${esc(priceCheck.reason)}">⚠️ NOT HOUSE-PRICED</span>`:''}</div>
       <span class="pill st-${b.status}">${stLabel}</span>
     </div>
     <ul class="legs">${b.legs.map(l=>{
       const info=legLiveInfo(l,g);
       return `<li>${legChip(info)}${esc(l.label)} <b class="mono">@ ${fmtOdds(l.odds)}</b>${info.score?`<div class="legresult ${info.out||''}">${esc(info.score)}</div>`:''}</li>`;
     }).join('')}</ul>
+    ${priceCheck&&priceCheck.flagged?`<div class="small" style="color:var(--danger);margin:-4px 0 8px">⚠️ ${esc(priceCheck.reason)}${bespokeBet?'':' <span class="muted">Note: odds can be edited after a bet is placed, so this may be a false positive from a legitimate later edit rather than proof of anything wrong — see officialOddsCheck() code comment.</span>'}</div>`:''}
     <div class="nums">
       <span>Stake<b class="mono">${GBP(b.stake)}</b></span>
       <span>Odds<b class="mono">${fmtOdds(b.effOdds)}</b></span>
@@ -3770,12 +3780,12 @@ function vReview(){
     <div class="${kpiCls('exposure')}" onclick="setReviewFilter('exposure')"><div class="l">Best case (house)</div><div class="v mono" style="color:var(--teal)">${GBP(expo.best)}</div></div>
   </div>
   <div class="muted small" style="margin:-10px 0 16px">📐 Modelled worst/best net across correlated match outcomes${expo.matchCount?` (${expo.matchCount} match${expo.matchCount===1?'':'es'} in play${expo.capped?', capped — showing fully-correlated bound':''})`:''} — an estimate, not an exact figure. Special-market legs assumed to all win (worst) or all lose (best).</div>
-  ${showNeeds?(needs.length?`<h3>🚨 Needs your call</h3>`+needs.map(b=>betCard(b,'house')).join(''):'<div class="card"><p class="muted">Inbox zero. No bets waiting. 🎉</p></div>'):''}
-  ${showWaiting&&waiting.length?`<h3 style="margin-top:18px">📨 Counter-offers with players</h3>`+waiting.map(b=>betCard(b,'house')).join(''):''}
-  ${showLive&&live.length?`<h3 style="margin-top:18px">🟢 Live book</h3>`+live.map(b=>betCard(b,'house')).join(''):''}
+  ${showNeeds?(needs.length?`<h3>🚨 Needs your call</h3>`+needs.map(b=>betCard(b,'house',true)).join(''):'<div class="card"><p class="muted">Inbox zero. No bets waiting. 🎉</p></div>'):''}
+  ${showWaiting&&waiting.length?`<h3 style="margin-top:18px">📨 Counter-offers with players</h3>`+waiting.map(b=>betCard(b,'house',true)).join(''):''}
+  ${showLive&&live.length?`<h3 style="margin-top:18px">🟢 Live book</h3>`+live.map(b=>betCard(b,'house',true)).join(''):''}
   ${rf==='all'&&closed.length?`<div class="card"><details ${closedBetsOpen?'open':''} ontoggle="closedBetsOpen=this.open"><summary>Closed bets (${closed.length})</summary>
     ${filterBar()}
-    ${(()=>{const filtered=applyBetFilters(closed); return filtered.length?filtered.map(b=>betCard(b,'house')).join(''):'<p class="muted">No bets match your filters.</p>';})()}
+    ${(()=>{const filtered=applyBetFilters(closed); return filtered.length?filtered.map(b=>betCard(b,'house',true)).join(''):'<p class="muted">No bets match your filters.</p>';})()}
   </details></div>`:''}`;
 }
 function houseAccept(id){
@@ -4424,6 +4434,79 @@ function isSeasonBet(b){ return !!(b&&b.legs&&b.legs.length&&b.legs.every(l=>l.t
 // Batch 39: a player-requested bespoke bet — always exactly one free-text leg, never combined
 // into an acca with anything else (see submitBet()'s isBespoke check).
 function isBespokeBet(b){ return !!(b&&b.legs&&b.legs.length===1&&b.legs[0].type==='bespoke'); }
+
+// Batch 49: Bet Review integrity check — recomputes what a bet's price SHOULD be purely from
+// CURRENTLY-PUBLISHED odds data and flags a mismatch against the stored bet.effOdds. The Algo
+// (genAlgoBet, batches 35/44/45) already only ever mirrors exactly-published board prices — it
+// never invents a number — so an Algo bet is genuinely re-derivable too, just via its own
+// algoEdgePct-on-the-combined-product formula rather than combinedOdds()'s accaEdgeByLegs table;
+// this check mirrors whichever formula actually priced the bet rather than assuming one. A
+// reward odds-boost (bet.boostPct, batch 17) is a legitimate house-configured mechanic, not house
+// mispricing, so it's applied on top of the recomputed board price before comparing — otherwise
+// every boosted bet would falsely flag.
+//
+// isBespokeBet(b) bets (batch 39 — a player's own free-text description + THEIR proposed price)
+// are ALWAYS flagged unconditionally: there is no board price for a bespoke leg at all, so there
+// is nothing to "verify" — this is a guaranteed flag by construction, never a false positive.
+//
+// KNOWN LIMITATION, documented per batch 47's finding: setOdds() only ever mutates a match's/
+// market's price going FORWARD — no history of what a price was AT PLACEMENT TIME is kept
+// anywhere in this app. This check can only compare a bet's stored effOdds against the
+// CURRENTLY live published price, not the price that was actually live the moment the bet was
+// placed. That means a flag on a NON-bespoke bet can be a false positive: a legitimate odds edit
+// made any time after that bet was placed (including an accepted counter-offer, which
+// deliberately renegotiates a bet's price away from whatever the board says) will make an
+// honestly-priced-at-the-time bet look "wrong" here, with no way for this check alone to tell
+// the two apart. A bespoke-bet flag is never a false positive for this reason — there was never
+// a board price to begin with, unconditional and certain. Treat a non-bespoke flag as "worth a
+// manual look in the bet's history", not proof of anything.
+const ODDS_CHECK_TOLERANCE = 0.01; // 1 cent of decimal odds — absorbs float rounding, not real drift
+function officialOddsCheck(bet, state){
+  if(isBespokeBet(bet)){
+    return {flagged:true, official:null, reason:'Player-proposed price — no board odds exist to verify this against.'};
+  }
+  const officialLegOdds=[];
+  for(const leg of bet.legs){
+    let price=null;
+    if(leg.type==='match'){
+      const g=(state.gameweeks||[]).find(x=>x.id===leg.gwId);
+      const m=g&&g.matches&&g.matches.find(x=>x.id===leg.matchId);
+      // Same composition rule as addMatchLeg()/genAlgoBet(): a promo/week-boost price IS the
+      // officially-presented price for that button, not a discount off it.
+      price = m ? (promoPrice(leg.gwId,leg.matchId,leg.pick) ?? weekBoostPrice(g,m,leg.pick) ?? m.odds[leg.pick]) : null;
+    } else if(leg.type==='special'){
+      const g=(state.gameweeks||[]).find(x=>x.id===leg.gwId);
+      const m=g&&g.specialMarkets&&g.specialMarkets.find(x=>x.id===leg.marketId);
+      price = m ? m.odds : null;
+    } else if(leg.type==='season'){
+      const m=(state.seasonMarkets||[]).find(x=>x.id===leg.marketId);
+      price = m ? m.odds : null;
+    }
+    if(price==null || !(price>0)){
+      return {flagged:true, official:null, reason:'A leg references a match/market that no longer has published odds — can\'t verify against the board.'};
+    }
+    officialLegOdds.push(price);
+  }
+  let official;
+  if(bet.algo){
+    // Mirrors genAlgoBet()'s own combine formula exactly (batch 44/45): edge applied once to
+    // the raw product of currently-published leg prices, NOT combinedOdds()/accaEdgeByLegs.
+    const edge=(state.settings&&state.settings.algoEdgePct!=null)?state.settings.algoEdgePct:20;
+    const rawProduct=officialLegOdds.reduce((a,b)=>a*b,1);
+    official=Math.max(1.05, Math.round(rawProduct*(1-edge/100)*100)/100);
+  } else {
+    official=combinedOdds(officialLegOdds, state.settings);
+    // A reward odds-boost (batch 17) composes on top of the board price, same formula as
+    // slipOddsFinal()/seasonSlipOddsFinal() — a boosted bet is still fully house-priced.
+    if(bet.boostPct){ official=Math.round(official*(1+bet.boostPct/100)*100)/100; }
+  }
+  const mismatch=Math.abs(official-bet.effOdds) > ODDS_CHECK_TOLERANCE;
+  return {
+    flagged: mismatch,
+    official,
+    reason: mismatch ? `Current board implies ${fmtOdds(official)}, this bet is priced at ${fmtOdds(bet.effOdds)}.` : ''
+  };
+}
 
 // Mirrors batch 20's addMarketLeg() exactly, just targeting S.seasonMarkets[]/seasonSlip instead
 // of gw.specialMarkets[]/slip. Toggles off if already staged. No slipViolatesIntegrity() check —
