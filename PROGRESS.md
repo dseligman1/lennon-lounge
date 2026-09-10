@@ -1253,7 +1253,162 @@ bar as every prior batch (balance checks + headless harness + real-data spot che
 commit with a descriptive message, update this file's checkbox + a one-line note with the
 commit hash when done.
 
-- [ ] 48. (Opus 5, high effort) **Deep mathematical odds model.** Replace `recOdds()` (currently:
+- [x] 48. (Opus 5, high effort) **Deep mathematical odds model — DONE, commit `8191068`.**
+  Replaced `recOdds()`'s flat-`teamAvg()`/`pD=0.08`/`juice=1.08` heuristic and
+  `suggestSpecialOdds()`'s pricing with a per-gameweek model, all of it in one new commented block
+  in the PRICING & SETTLEMENT ENGINE section (right after `pOver()`), with every tunable collected
+  in a single `MODEL` const so a future batch re-calibrates in one place instead of hunting through
+  the maths. Four layers, each degrading gracefully if its data is missing:
+  **(a) recency-weighted form.** New `teamResults(state,tid,beforeEvent)` does the same
+  `S.history` + local-`gw.matches[].result` merge `teamAvg()`/`vStandings()`/`teamForm()` already
+  do, but keeps the FPL event number attached and sorts most-recent-first — which is what makes
+  weighting possible at all — and honours a before-event cutoff so pricing GW9 never sees GW9's own
+  result. New `teamFormProj()` weights each result `0.82^i` by how many results ago it was (~3.5
+  game half-life; the last five weeks carry ~62% of the weight), keeping `S.stats[].base` as a
+  Bayesian prior worth 1.5 results. Its `weight` return (caps at ~5.6) is the evidence measure the
+  shrink below uses. Proven in the harness: two teams with an IDENTICAL lifetime average but
+  reversed trajectories are tied at 47.75 by `teamAvg()` and separated 51.2 vs 44.5 by this.
+  **(b) squad-level player form/injury/rotation.** New `squadExpected()` prices the XI that will
+  actually play — the published lineup if `lineupIds()` has one, otherwise the best 11 by expected
+  points, which is what a rational manager does with this information. Per player:
+  `0.65*form + 0.35*ppg`, times `playerAvailability()`, times `playerStartShare()`.
+  `ingestFplSquads()` now also captures `cp` (`chance_of_playing_this_round`, falling back to
+  `_next_round`, which is what FPL populates between gameweeks) and `mn` (season-total minutes) —
+  **mirrored field-for-field into `.github/workflows/fpl-sync.yml`** per that function's own
+  standing comment. `playerAvailability()` prefers the 0/25/50/75/100 chance figure over the coarse
+  `st` letter (a 75% doubt and a 25% doubt both just read as `d`), but a hard status
+  (`i`/`s`/`u`/`n`) zeroes the player regardless. `playerStartShare()` is the rotation proxy and
+  needed **no extra API calls at all**: the largest season-minutes figure in the ingested set is a
+  near-ever-present, so `maxMinutes/90` reads how many league games have been played and each
+  player's share of that is their rotation profile — floored at 0.35 so a fringe player is
+  discounted, never erased, and switched off entirely (`games:0`) pre-season rather than guessed.
+  **(c) real-world fixture difficulty.** New `playerFixtureMult()` reuses batch 29's
+  `clubFixture()`/`plFixturesFor()` rather than reinventing them: 3 is neutral, each FDR point
+  either way is ±7.5%, a **blank gameweek scores zero** (the player literally cannot score) and a
+  double is 1.8x, not 2x. Purely numeric — no real-world club is named in any of it.
+  **(d) the projection.** `projectTeams(state,ev)` returns every team at once (so callers can do
+  league-relative maths in one pass): form sets the level, and the squad signal moves a team by 55%
+  of however far its expected XI sits from the league mean XI, that ratio clamped to [0.75,1.30].
+  Used **relatively, not absolutely, on purpose** — summing eleven players' FPL form is a
+  similar-but-not-identical scale to a Draft H2H score (no captain, different bonus/autosub
+  behaviour), so the ratio is trustworthy where the raw total isn't. Net effect: a team's price can
+  move ~−14%/+17% off its form level on squad news, no more. One deliberate correction found by the
+  harness and fixed before commit: a squad with data but a projected ~0 (a full blank gameweek) was
+  initially being filtered out as "no data" and silently given rel=1 — `withSq` now keys on the
+  squad object existing, not on it being non-zero, and a full blank correctly drops a projection
+  52.5 → 43.1.
+  **Match probabilities.** `fairMatchProbs()` reuses the existing `phi()`/`SD` machinery (new
+  `SD_DIFF = SD*√2`) rather than inventing a stats primitive: `phi(D/SD_DIFF)` is just
+  P(home outscores away) under two normal scores. `D` is first shrunk by how much evidence backs it
+  — 0.55 with nothing but hand-set baselines, rising toward ~0.85 with a full season — which is the
+  principled version of what the old model's hand-tuned "divisor 34" was doing by feel, and is what
+  stops week 1 producing 1.3/4.5 off a baseline guess (harness: a 56-vs-46 baseline gap with zero
+  results prices 1.43/2.23, not 1.3/4.5). Draw probability is no longer the hardcoded 8%: new
+  `leagueDrawRate()` reads this league's own tie rate blended against a 7% prior worth 20 games,
+  then tapers with the projection gap (gaussian, which is the shape an exact-tie probability
+  actually has) and is clamped to [2%,20%].
+  **House competitiveness.** New `S.settings.oddsCompetitiveness` (integer 1-20, default 10,
+  `DEFAULT_SETTINGS` + `migrate()`-backfilled AND clamped there, so a hand-edited Firebase value
+  can't break it) → `houseEdgePct()`, a three-anchor linear curve: **20 → 10.0%** (the user's hard
+  floor, clamped as well as anchored), **10 → 16.3%**, **1 → 28.0%**. The 16.3% is not a guess — it
+  is exactly the margin implied by the user's own close-game example (1.8/1.8/12 is a book of
+  1.194). The 28% ceiling is reasoned and documented inline: at 28% an even match pays 1.54 and a
+  7% draw pays 10.2 — visibly poor value but still a bet; past ~30% an evens shot drops under 1.4,
+  the numbers stop reading as odds, and lost turnover costs the house more than the margin earns.
+  **One shared function feeds both `recOdds()` and `suggestSpecialOdds()`** — the latter was
+  previously (wrongly) borrowing `algoEdgePct` to set a *published* price. `algoEdgePct` and
+  `accaEdgeByLegs` are untouched and stay exactly what batches 31/35/44/45 made them: the Algo's
+  discount on top of already-published prices. New slider + live worked-price preview
+  (`compPreviewText()`/`updCompPreview()`, patching only its own three nodes — batch 37's targeted
+  -update pattern, so dragging never triggers a `render()`) in Back Office → "📏 Limits & edge",
+  read back by `saveSettings()` and named in its `audit()` line.
+  **`edgedOdds()` hardened (real-money detail, found by the harness).** It now floors to 2dp rather
+  than rounding (rounding UP hands the punter back a sliver of edge) and caps the probability at
+  `(1-edge)/1.05`. Without that cap the 1.05 minimum price silently ate the edge: a 90% shot is
+  fair at 1.11, `1.11 × 0.837 = 0.93` is an impossible price, so the old code just returned 1.05 —
+  a realised margin of ~6%, not the 16.3% the setting asked for. **Flagged explicitly rather than
+  papered over:** a one-sided market whose true probability exceeds `(1 − edge)` cannot be offered
+  with that edge at *any* price ≥ 1.00 (a 95% shot would need odds of 0.947 to leave the house
+  10%). So the guarantee is stated precisely — for every probability the house is willing to price
+  (≤79.7% at setting 10) the realised margin is ≥10% at every slider position, verified
+  exhaustively across 12 probabilities × 20 settings; above that the model returns exactly the 1.05
+  floor and new `nearCertaintyWarning()` tells the admin in the market builder to raise the line
+  rather than publish a market that loses money. The pre-existing 0.03 low clamp is untouched and
+  can't breach the floor — it shortens an extreme longshot, which moves the price the house's way.
+  **Special markets 12 → 16** (the spec said "currently 11"; it was actually 12), all reusing the
+  five existing settleable kinds so `evalLeg`/`legLiveInfo`/`MARKET_LABELS`/`slipViolatesIntegrity`
+  needed no changes: `banker` (short-price acca filler), `beat_par` (near-evens), `disaster`
+  (under 30, long), `blowout` (huge combined total). `banker`'s line is **derived** (projection − 9,
+  ~0.6 SD) rather than a fixed "25+" for exactly the edge reason above — a fixed low line is a ~97%
+  shot for a healthy squad and unpriceable; projection − 9 sits at ~75% and prices 1.11 with the
+  full edge intact. `specialMarketDefaultLine()` gained `lineOffset` support for `haul` and fixed
+  absolute `line` support for `team_pts` to make those work, and now sets every line off the
+  projection instead of `teamAvg()`. `top_score`/`bottom_score` are now priced by proper numeric
+  integration (`extremeScoreProbs()` — density of team i against P(everyone else came in below),
+  one trapezium sweep prices the whole 12-team field, `sign=-1` flips it for bottom score) instead
+  of the old `exp(±0.12*avg)` softmax, which had no probabilistic meaning and ignored how spread
+  out the field was. `recOdds()` gained an `ev` parameter (all five call sites updated:
+  `saveLoader`, `syncAndStage`'s staging loop, `oddsCard`, `rerecommend`, `rerecommendMatch`) plus
+  an optional pre-computed projection map so `oddsCard()`/`rerecommend()` do one 12-team pass
+  instead of one per fixture. `rerecommend()`/`rerecommendMatch()`/`rerecommendMarket()` all still
+  work and now reset to the new model. Odds Setter's "📊 Team form data" panel became "Team form
+  data & model projections": per-team **proj** (teal) alongside the old lifetime **avg** for
+  comparison, the squad signal as a ±%, out/doubtful counts, the current house edge, and a plain
+  warning when no squad data has been pulled.
+  **Calibration check (the user's own two examples, run and reported as asked).** Back-calculating
+  their books: 1.8/1.8/12 = 1.194 (16.3% margin, fair 46.5/7.0/46.5); 1.6/2.0/12 = 1.208 (17.2%,
+  fair 51.8/6.9/41.4). At setting 10 the model reproduces **both to within a penny**: close game
+  → 1.79/11.95/1.79, uneven game → 1.61/12.13/2.02. **One honest divergence flagged rather than
+  fudged:** the 12.0 draw price implies a ~7% tie rate, and `leagueDrawRate()` now uses the
+  league's REAL tie rate once enough results exist. On a realistic seed (~4.3% ties) a level
+  fixture correctly prices 1.74/**19.69**/1.74 — the two match sides land on the user's ~1.8 shape,
+  but the draw lengthens. That is the model being right: pricing draws at 12 when ties really run
+  3-4% is a ~60% house edge on that one outcome. It stays near 12 early on (7% prior, weight 20
+  games) and moves to the truth as evidence accumulates. **Worth a decision from Dan** if he'd
+  rather the draw stay pinned near 12 for feel — that's a one-line change to `MODEL.DRAW_PRIOR_N`.
+  **Verified**: brace/paren/bracket/backtick balance on the full file (baseline HEAD `{`2738/2738
+  `(`5853/5853 `[`552/552 918 backticks checked first to confirm a clean baseline, since no
+  node/python exists in this environment — `python` is only the Microsoft Store alias stub; after
+  this batch `{`2830/2830 `(`6232/6232 `[`606/606 956 backticks, all balanced) plus the workflow's
+  own JS (`{`160/160 `(`318/318 `[`46/46). Then an **83-assertion headless-Edge (`--dump-dom`)
+  harness** with both Firebase CDN `<script src>` tags stripped and replaced by a stub and
+  `initApp()` never called (zero network, zero live-DB contact — the harness builder throws rather
+  than proceeding if the tag isn't found), plus `save`/`saveNow`/`saveFields`/`startListener`
+  stubbed: **83/83 passed, `TESTOK:true`, zero `window.onerror` catches.** Coverage: the
+  competitiveness curve (all 20 positions, monotonicity, clamping, junk input); the calibration
+  above; recency weighting vs `teamAvg()` on identical-lifetime-average trajectories; a 12-team
+  fixture set seeded with an IDENTICAL flat history so ONLY squad data can differentiate, with
+  deliberate manipulations (one squad all on FDR-1 fixtures, one all on FDR-5, one with 6 injured,
+  one with 6 at 25% chance-of-playing, one entirely rotation-risk, one full blank) — every one
+  moved the projection the right way, and the matched pairing priced dead even at 2.09/2.09; the
+  ≥10% margin sweep; graceful degradation with no squad data / no fixtures / no event; the draw
+  taper and the 20% clamp on an absurd all-draws history; all 16 templates pricing to finite sane
+  numbers with their lines; `algoEdgePct` proven to no longer move a special's price; all three
+  rerecommend paths; and a real Back Office DOM round-trip (render → drag slider → live readout →
+  `saveSettings()` → persisted, with `algoEdgePct`/`accaEdgeByLegs` asserted untouched). Copied to
+  the sibling sync file and diffed identical. **NOT pushed** — committed locally only, per the
+  orchestrator's instruction; `git push origin main-push:main` still to run.
+  **Two caveats worth knowing.** (1) Season/bespoke markets (`suggestSeasonOdds()`, batch 27) still
+  price off `algoEdgePct` and were left alone — out of this batch's stated scope (which named
+  `recOdds` and `suggestSpecialOdds`), but they're published prices too and arguably belong on
+  `houseEdgePct()`; a small, contained follow-up. (2) The model will produce genuinely short
+  favourites (~1.1-1.3) where it projects a large gap, which is more aggressive than the old
+  compressed model — mathematically right (a 19-point projected edge really is ~75%), but the
+  admin should expect it and can override any price. Pre-existing template `haul_35` also lands on
+  the 1.05 floor for a strong squad; that's unchanged behaviour from before this batch, and
+  `nearCertaintyWarning()` now says so out loud.
+  **Concurrency incident, flagged plainly:** partway through, a concurrently-running agent
+  (batch 50, sharing the same working tree) wrote `index.html` from its own stale copy and wiped
+  ~300 lines of this batch's already-applied edits. Caught by a `git diff --stat` sanity check
+  (44 insertions where ~300 were expected), fully re-applied, and re-verified from scratch.
+  Because of that shared tree, commit `8191068` also carries two in-flight changes that are NOT
+  batch 48's work and could not be separated file-by-file: a `vSettler()` FPL-ready status pill in
+  `index.html`, and batch 50's `schedule:` cron + self-throttle block in `fpl-sync.yml`. Noted in
+  the commit body too. **Future rounds should not run batches against the same working tree in
+  parallel** — one worktree per agent, or run them in sequence.
+
+  Original spec follows.
+  Replace `recOdds()` (currently:
   flat lifetime `teamAvg()` for each manager-team, fixed `pD=0.08` draw prob, logistic curve
   divisor 34, flat `juice=1.08`) and `suggestSpecialOdds()`'s pricing with a model that actually
   uses what the app already ingests: (a) **recent H2H form** — weight recent gameweeks more than
