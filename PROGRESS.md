@@ -1468,32 +1468,71 @@ commit hash when done.
   the old flat numbers), and the competitiveness-slider calibration check described above. This is
   the biggest/most novel batch — do it justice, this is real money.
 
-- [ ] 49. (Sonnet 5, medium-high effort) **Bet Review flag: bet priced off non-official odds.**
-  Can run independent of batch 48 (uses existing published-odds infra, not the new model). The
-  Algo already only ever mirrors exactly-published prices (batches 35/44/45 — `genAlgoBet()` never
-  invents a number). The one path that doesn't is player-requested "🎯 Request a bet" (`isBespokeBet(b)`,
-  ~line 4426, batch 39) — a free-text bet at the player's own proposed odds, and (worth checking
-  while in there) counter-offers (`bet.offer`/accepted counter path — grep `counter_house`/
-  `counter_user`/`b.effOdds=b.offer.effOdds`) which renegotiate a bet's price away from the board
-  entirely, admin-approved but still not "the odds the house published." Build ONE general,
-  hallucination-proof check rather than a hardcoded bespoke-only flag: a pure `officialOddsCheck(bet,
-  state)` that, for a normal (non-bespoke, non-season, non-algo — actually algo/season/match legs
-  should all already be re-derivable) bet, recomputes what its price SHOULD be purely from currently
-  -published data (`m.odds[pick]` / `specialMarket.odds` / `seasonMarket.odds` per leg, combined via
-  the existing `combinedOdds()`) and flags a mismatch beyond sane rounding tolerance (e.g. £0.01/1
-  cent on odds, decide and document your tolerance) against `bet.effOdds`; a `type:'bespoke'` leg has
-  no board price to check against at all, so `isBespokeBet(b)` bets are always flagged unconditionally
-  (never "verify", just always "⚠️ not house-priced"). Note the published price used for the check
-  must be point-in-time correct where possible — if that's not cheaply available (odds get edited
-  after a bet is placed, per batch 47's finding that `setOdds` only mutates going forward), document
-  that limitation plainly rather than quietly getting it wrong; a reasonable fallback is comparing
-  against current live odds and noting bets flagged this way *might* be false positives from a
-  legitimate post-placement odds edit, vs. bespoke bets which are unconditional. Add a clear, hard-to-
-  miss badge (new CSS, red/warning styling distinct from the existing `overridden ×N` badge at
-  ~line 3852) on every affected `betCard()` row in `vReview()` specifically (Bet Review is the ask;
-  extending to `vMyBets`/`vBetFeed` is a reasonable bonus if cheap, not required). Verify: balance
-  check + a harness run seeding one normal bet, one bespoke bet, and one counter-offer-accepted bet,
-  confirming the flag fires exactly where expected and nowhere else.
+- [x] 49. (Sonnet 5, medium-high effort) **Bet Review flag: bet priced off non-official odds.**
+  Built directly on top of existing published-odds infra, independent of batch 48's new model — new
+  pure `officialOddsCheck(bet, state)` (~line 4438, right after `isSeasonBet`/`isBespokeBet`). Per-leg
+  it recomputes what a bet's price SHOULD currently be, purely from published data: `match` legs via
+  `promoPrice(...) ?? weekBoostPrice(...) ?? m.odds[pick]` (the exact same composition rule
+  `addMatchLeg()`/`genAlgoBet()` already use — a promo/boost price IS the presented price, not a
+  discount off it), `special` legs via `gw.specialMarkets[].odds`, `season` legs via
+  `S.seasonMarkets[].odds`. `isBespokeBet(b)` bets (batch 39) are always flagged unconditionally —
+  there's no board price for a free-text leg to check against at all, so it's a guaranteed flag by
+  construction, never a "verify". Every other bet's recomputed per-leg odds are combined the way
+  that SPECIFIC bet was actually priced, not one blanket formula: `bet.algo` bets combine via
+  `Math.max(1.05, round(rawProduct*(1-algoEdgePct/100)*100)/100)`, mirroring `genAlgoBet()`'s own
+  formula exactly (batches 44/45 — Algo already only mirrors published prices, so it IS re-derivable,
+  just via a different edge mechanism than manual accas); everything else (manual single/multi-leg,
+  season bets) combines via the existing `combinedOdds()`/`accaEdgeByLegs`. **Important correctness
+  catch found while building this**: `placeBet()`/`placeSeasonBet()` apply an auto-granted reward
+  odds-boost (`bet.boostPct`, batch 17) on top of `combinedOdds()`'s output before storing
+  `bet.effOdds` — without accounting for that, EVERY legitimately reward-boosted bet would have
+  false-positive flagged as "not house-priced". Fixed by applying the identical boost formula
+  (`round(official*(1+boostPct/100)*100)/100`, matching `slipOddsFinal()`/`seasonSlipOddsFinal()`
+  exactly) to the recomputed official price before comparing. Tolerance: `ODDS_CHECK_TOLERANCE=0.01`
+  (1 cent of decimal odds — absorbs float rounding from the chained multiplication, not real drift),
+  documented inline. **Point-in-time caveat, documented per the spec's explicit ask** (both in a code
+  comment on `officialOddsCheck()` and here): batch 47 established `setOdds()` only ever mutates a
+  price going forward, no snapshot of what a price was AT PLACEMENT TIME is kept anywhere in this
+  app — this check can only compare against the CURRENTLY live published price. A flag on a
+  non-bespoke bet (including an accepted counter-offer, which deliberately renegotiates the price
+  away from the board on purpose — admin-approved, still worth a glance) can therefore be a false
+  positive from a perfectly legitimate later odds edit, with no way for this check alone to
+  distinguish the two cases; a bespoke flag is never a false positive, since there was never a board
+  price to begin with. The in-app badge text spells this asymmetry out explicitly for non-bespoke
+  flags. UI: `betCard(b, perspective, showPricingFlag)` gained a third, default-`false` param — only
+  `vReview()`'s 4 call sites (needs-review, awaiting-player, live book, closed-bets-filtered) pass
+  `true`, so every other view (My Bets, Bet Feed, Home's click-into-bet modal, Odds Setter's
+  `gwBetsPanel`) is untouched, per the spec's explicit "vReview() specifically" ask — extending
+  further was left as the noted optional bonus, not done, to stay tightly scoped. New `.flag.pricecheck`
+  CSS: a solid `--danger`-red pill with a glow, deliberately distinct from the plain colored-text
+  "overridden ×N" marker near the Back Office override tool (batch 32) — that's a different, milder
+  signal (an admin manually corrected a settled outcome) from "this bet's price can't be confirmed
+  as ever having come from the board". A red detail line under the leg list also renders the specific
+  reason (e.g. "Current board implies 5.42, this bet is priced at 9.99.") plus the false-positive
+  caveat sentence on non-bespoke flags. Verified: brace/paren/bracket/backtick balance check on the
+  extracted `<script>` content via `grep -o | tr -cd | wc -l` (no node/python available in this
+  worktree, same established method) — all balanced (`{` 2327/2327, `(` 5327/5327, `[` 554/554, 924
+  backticks). Built a headless-Edge (`--headless=new --dump-dom`) harness with Firebase fully stubbed
+  (zero live network/DB contact), seeding via the app's own `freshState()` plus one hand-built open
+  gameweek (2 real matches + 1 special market) and one season market, then 7 bets covering every
+  case: a correctly-priced normal 2-leg manual acca (not flagged), a bespoke request (flagged,
+  unconditional), an accepted counter-offer whose renegotiated price diverges from the board
+  (flagged), a correctly-priced Algo bet (not flagged — proves the algoEdgePct-vs-accaEdgeByLegs
+  branch works and doesn't false-positive every Algo bet), a manual bet with a legitimate reward
+  boost applied (not flagged — proves the boostPct fix above actually works), a correctly-priced
+  season-market bet (not flagged), and a genuinely mispriced manual bet (flagged). 14/14 assertions
+  passed, `TESTOK:true`, zero `window.onerror` catches, including direct `officialOddsCheck()` calls,
+  `betCard()` HTML-output checks confirming the badge appears only when `showPricingFlag=true` and
+  is absent from a plain `betCard(b,'house')` call, and a full `vReview()` render confirming exactly
+  3 `flag pricecheck` badges appear (matching the 3 flagged bets among the 7 seeded) and none
+  spuriously elsewhere. Harness scratch files deleted after the run, not committed.
+  **Sync-file note**: this batch ran in an isolated git worktree
+  (`.claude/worktrees/agent-ae20308e6ace87265`) — the project's usual "copy index.html to the sibling
+  `../lennon-lounge-v2.html`" step was skipped here since that path is ambiguous from a nested
+  worktree (the canonical repo's actual sync copy lives at `C:\Users\DanSeligman\Downloads\
+  lennon-lounge-v2.html`, well outside this worktree, and is also stale relative to Rounds 6-8 —
+  flagged for the orchestrator to sync once this branch is merged, rather than risk a racy write to
+  a shared file from a worktree that doesn't have batch 48's concurrent changes). Commit `4339178`.
 
 - [ ] 50. (Sonnet 5, medium-high effort) **Auto-populate Odds Setter 21h before cutoff.**
   **Do this AFTER batch 48 lands** (needs its actual function names/shape — read what 48 shipped,
