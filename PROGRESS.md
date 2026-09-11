@@ -2070,7 +2070,7 @@ OLD too-wide model (stays a draft, never live/bettable, but wrong until an admin
 "↺ Reset all to recommended" in Odds Setter, which already uses the correct model in the
 browser). Land this well before 16:00 UK.
 
-- [ ] 54. (Sonnet 5, medium-high effort) **Re-port the recalibrated model into
+- [x] 54. (Sonnet 5, medium-high effort) **Re-port the recalibrated model into
   `.github/workflows/fpl-sync.yml`.** This is a faithful port, not new design — batch 52 already
   did the hard math and documented every change in its retrospective (read it in full, it's the
   "- [x] 52." entry directly above this section). Replace the workflow's stale `MODEL`
@@ -2109,3 +2109,64 @@ browser). Land this well before 16:00 UK.
   time; a wrong port shipped fast is worse than a correct port shipped in 45 minutes instead of 20.
   Commit format and PROGRESS.md update per the usual per-batch conventions (see "Batch details"
   near the end of this file).
+  **Retrospective:** Read index.html's actual current source (not from memory) for every function
+  the spec named, at their real current line numbers: `MODEL` const (~1488), `teamResults` (1519),
+  `teamFormProj` (1549), `formReliability` (1578, new — no equivalent existed in the workflow at
+  all), `playerAvailability`/`squadMinutesContext`/`playerStartShare`/`playerFixtureMult`/
+  `squadExpected` (1604-1674, bodies unchanged from batch 50's port — only the `MODEL.FORM_BLEND`
+  constant they read changed), `projectTeams` (1709, rewritten), `leagueDrawRate` (1766, body
+  actually unchanged — same `(d + DRAW_BASE*DRAW_PRIOR_N)/(n + DRAW_PRIOR_N)` shape, only the
+  `DRAW_BASE` constant moved), `fairMatchProbs` (1776, rewritten), `houseEdgePct`/`edgedOdds`/
+  `recOdds` (bodies unchanged). `matchPricingRationale` was confirmed UI-only (reads DOM/squad-
+  viewer globals this Action has no equivalent of) and correctly stays unported, noted explicitly
+  in the workflow's header comment. `specialMarketDefaultLine` stays deliberately unported per
+  batch 50's original note (unchanged, still correct).
+  Ported into `.github/workflows/fpl-sync.yml`: the full new `MODEL` object (FORM_BLEND 0.30,
+  SQUAD_W/FORM_W 0.70/0.30, SQUAD_TRANSFER 0.45, SCORE_SD 15, TALENT_SD_MIN/MAX 2/6,
+  BASE_NOISE_VAR 16, PROJ_DEV_MAX 0.14, DRAW_BASE 0.068, DRAW_TILT 0.10, DRAW_SPREAD 10,
+  DRAW_P_MIN/MAX 0.050/0.070, GAP_SOFTCAP 4.2; SHRINK_MIN/SHRINK_K deleted); `teamFormProj()` now
+  returns `neff`/`att`; new `formReliability()` transcribed verbatim; `projectTeams()` rewritten to
+  blend squad/form deviations as a weighted average (not multiply) with the `PROJ_DEV_MAX` rail;
+  `fairMatchProbs()` rewritten with the `GAP_SOFTCAP` tanh squash and the `DRAW_BASE`/`DRAW_TILT`
+  house-anchored draw band. Updated the workflow's header comment from "BATCH 50" to "BATCH 52" and
+  documented what changed and why, so the next drift is easier to spot.
+  **Verification.** `node` and `python` are both unavailable in this worktree's shell (confirmed:
+  neither resolves on PATH; the only `python.exe` present is the Windows Store app-execution-alias
+  stub). Per the task's own fallback instructions, used the brace/paren/bracket/backtick balance
+  check as the primary structural check (before: `{`299/299 wasn't tracked pre-edit but post-edit
+  is fully balanced: `{` 299/299, `(` 752/752, `[` 95/95, 78 backticks — even) — passes clean.
+  For numeric verification, since neither the actual per-team GW4 seed data nor a JS runtime were
+  available (batch 52's retrospective reports aggregate statistics and final odds, not the raw
+  synthetic squad/form inputs its harness used), re-implemented the CHANGED formula chain
+  (`edgedOdds`/`houseEdgePct`/the new `fairMatchProbs` draw-anchor + `GAP_SOFTCAP` logic, and
+  `formReliability`'s tau^2 shrink) in Perl (the one scripting language actually on PATH here),
+  using the exact MODEL constants just written into the workflow, and checked the output against
+  three independent numbers batch 52's own retrospective states as *consequences* of its formulas
+  (not inputs I chose):
+    1. "A genuinely level fixture prices 1.78/13.67/1.78" — Perl reproduction of the ported
+       formula at raw gap = 0 gives **1.78 / 13.67 / 1.78, exact match to the penny.**
+    2. "the house will never price a Draft H2H fixture wider than about 1.52/2.12" — Perl
+       reproduction at a saturating raw gap (D -> GAP_SOFTCAP 4.2) gives **1.51 / 14.93 / 2.12**
+       (home 1 cent off 1.52 from floor-rounding at the saturation boundary, away exact).
+    3. "On the GW4 reconstruction: varObs 16.5, meanNoise 32.3 -> tau^2 floored at 4 -> form
+       deviations believed at 11%" — `tau2/(tau2+meanNoise)` with the ported constants gives
+       **0.1102, matching the reported ~11% exactly.**
+  These three matches are strong evidence the ported arithmetic is byte-correct against
+  index.html's real formulas, since they reproduce numbers batch 52 derived independently rather
+  than numbers I fed in. What this does NOT prove: an exact penny-for-penny reproduction of the
+  six specific GW4 fixtures' final odds, because that requires the actual per-team squad/form seed
+  data batch 52's harness used, which isn't recorded in PROGRESS.md (only its aggregate stats and
+  final output are) — flagged honestly rather than fabricated. Also confirmed by grep: no
+  `SHRINK_MIN`/`SHRINK_K`/old `FORM_BLEND: 0.65`/old `SQUAD_W: 0.55`/old `DRAW_SPREAD: 25` values
+  remain anywhere in the file.
+  Did NOT touch `oddsWindowDue()`/`maybeAutoSuggestOdds()`/window constants/idempotency-stamp
+  logic (confirmed by diff: only the pricing-math block changed, lines ~193-428; the scheduling
+  block below it, ~430 onward, is untouched). Did not touch `index.html` — this batch is workflow-
+  only, so the "copy index.html to ../lennon-lounge-v2.html" step is correctly not applicable here.
+  Commit `b57b711` in worktree `agent-ad9554fdbfb113d1e` (branch
+  `worktree-agent-ad9554fdbfb113d1e`). Nothing pushed. **Outstanding for the orchestrator:** given
+  the URGENT window closes ~16:00 UK today, this should be merged to the branch the Action actually
+  runs from before then; and a genuinely exact numeric cross-check (ideally in a node-enabled
+  environment, running both index.html's real functions and this port side-by-side on identical
+  seed data) would be a valuable follow-up once time allows, even though the three independent
+  reference-number matches above give good confidence the port is correct now.
