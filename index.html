@@ -1417,7 +1417,7 @@ const SD_DIFF = SD*Math.SQRT2;
    What this does instead, in four steps:
      (a) teamFormProj()   — recency-weighted H2H scoring form, not a lifetime average.
      (b) squadExpected()  — expected points from the 11 who'll actually play, using each owned
-                            player's FPL form/ppg, their availability (injury/suspension/doubt) and
+                            player's FPL ppg/form, their availability (injury/suspension/doubt) and
                             their minutes share (rotation risk).
      (c) playerFixtureMult() — each of those players' real-world club's fixture difficulty for the
                             actual gameweek being priced, including blanks and doubles.
@@ -1430,21 +1430,83 @@ const SD_DIFF = SD*Math.SQRT2;
 
    Degrades gracefully at every layer: no squad data → (a) alone (which is still strictly better
    than the old flat average); no plFixtures for the event → (a)+(b) with neutral fixtures; no
-   results at all → the hand-set S.stats[].base baselines, heavily shrunk toward even money. */
+   results at all → the hand-set S.stats[].base baselines, heavily shrunk toward even money.
+
+   ----------------------------------------------------------------------------------------------
+   BATCH 52 — RECALIBRATION. Real GW4 production output (Dan's Odds Setter screenshot) had every
+   fixture running far too wide: 1.17/25.96/3.30, 2.04/22.97/1.51, 2.03/22.97/1.51, 1.23/24.89/2.90,
+   1.70/22.72/1.77, 4.29/27.90/1.07 — every draw in the 20s, sides out to 1.07 and 4.29. Working
+   backwards from those books (all at competitiveness 10 = a 16.3% edge, and a league tie rate of
+   0/18) the model was running on projection gaps of +17.1, −5.0, −4.9, +14.2, +0.6 and −22.9
+   points off a 12-team projection spread of 38.8→61.6. Four separate mechanisms were stacking:
+
+     1. COMPOUNDING, NOT BLENDING. projectTeams() multiplied the two signals: proj = formProj ×
+        (1 + SQUAD_W×(rel−1)). Form and squad quality are strongly POSITIVELY correlated — a good
+        squad is exactly why a manager has been scoring — so multiplying them counts the same
+        information twice and produces more swing than either signal alone justifies. They are now
+        BLENDED: each is expressed as a deviation in points from the league's own level and combined
+        as a weighted average (weights summing to 1), which is what you do with two estimates of the
+        same quantity, not two independent effects.
+     2. THE EVIDENCE SHRINK BELIEVED A 3-GAME SAMPLE. SHRINK_MIN 0.55 / SHRINK_K 3 was an invented
+        curve; at GW4 it treated 75% of the apparent gap as real. The recency weights (1, .82, .67)
+        give an effective sample size of 2.9 games, so with a per-week scoring SD of 15 the standard
+        error of a team's form level is ~5.5 points — i.e. essentially the whole observed spread is
+        sampling noise. That is now measured rather than assumed: formReliability() is a textbook
+        empirical-Bayes/James-Stein shrink that estimates the league's REAL spread of scoring levels
+        from its own data (cross-team variance minus the expected sampling variance) and believes
+        each team's form deviation only in proportion to it. On the GW4 reconstruction it lands at
+        ~0.11, not 0.75. It also self-corrects: a league whose teams genuinely diverge will produce
+        a bigger tau and the form signal earns more weight back.
+     3. THE DRAW WAS PRICED OFF A 3-4% EMPIRICAL TIE RATE. leagueDrawRate() read the league's true
+        tie rate (0 in 18 → 3.7% after batch 48's 7%/20-game prior), which at a 16.3% edge is a
+        22.7 draw before the gaussian taper pushed the lopsided fixtures out to 27.9. Statistically
+        that was right and batch 48 flagged it as a decision for Dan; Dan has now made it — draws
+        are a house-policy band (12-16), so DRAW_BASE is the anchor, DRAW_PRIOR_N is heavy enough
+        that the league's own rate only nudges it, and pD is clamped to a band whose ends ARE the
+        12-16 the house wants. Stated plainly because it matters: a 14.0 draw is short of fair when
+        ties really run ~4%, so the house's realised margin on the draw is well above the headline
+        edge. That is margin in the house's favour, never against it.
+     4. NOTHING CAPPED THE BOOK. Even a perfect projection gap has to be converted to a price
+        through phi(D/SD_DIFF), and the model's own uncertainty about its gap estimate is large —
+        much larger than the gap itself early in a season. GAP_SOFTCAP applies a smooth tanh squash
+        so D ≈ raw for the small gaps the model can actually resolve and saturates at ±4.2 points,
+        which is the shape a posterior mean takes under a heavy-tailed prior on the true gap: a
+        20-point projected gap in a 12-team fantasy league is far more likely to be model error than
+        a real 20-point edge. In published terms the house will never price a Draft H2H fixture
+        wider than about 1.52/2.12 — Dan's own stated rail — and an ordinary fixture sits near 1.78.
+
+   BATCH 52 — SQUAD OVER FORM. Dan's instruction, verbatim: "make sure you don't weight player form
+   too highly over the actual players they currently have... it doesn't necessarily mean that just
+   because you've won the last two games and someone's lost the last two games, you would actually
+   beat them. It all comes down primarily to the players they have." So the ordering is inverted in
+   both places it lived: per player, FORM_BLEND drops 0.65 → 0.30, so season points-per-game (the
+   stable estimate of a player's scoring rate) leads and the 30-day `form` window is the minor
+   modifier; per team, SQUAD_W/FORM_W make squad composition 70% of the blended deviation and the
+   H2H record 30% — and that 30% is then multiplied AGAIN by the empirical-Bayes reliability above,
+   so at GW4 the record is worth about 3% of the price and the squad about 97%. Which is exactly
+   what Dan described: two wins in a row is not evidence. */
 const MODEL = {
   FORM_DECAY: 0.82,        // weight multiplier per result further back — half-life ~3.5 games
   FORM_PRIOR_W: 1.5,       // S.stats[].base counts as this many results (stops a 2-game sample running wild)
-  FORM_BLEND: 0.65,        // player expected pts = 0.65*FPL form + 0.35*season points-per-game
+  FORM_BLEND: 0.30,        // player expected pts = 0.30*FPL 30-day form + 0.70*season points-per-game
   FDR_SENS: 0.075,         // expected-points swing per FDR point away from neutral (3)
   DOUBLE_MULT: 1.8,        // a double gameweek is worth well under 2x — rotation is near-certain
   MIN_MINUTES_SHARE: 0.35, // a fringe player is discounted, never erased
-  SQUAD_W: 0.55,           // how much of the squad signal's relative deviation reaches the projection
+  SQUAD_W: 0.70,           // squad quality is the PRIMARY half of the projection deviation
+  FORM_W: 0.30,            // the recency-weighted H2H record is the secondary half (and is shrunk again)
   SQUAD_REL_MIN: 0.75, SQUAD_REL_MAX: 1.30,
-  DRAW_BASE: 0.07,         // prior tie rate for two FPL scores (see leagueDrawRate)
-  DRAW_PRIOR_N: 20,        // how many real results it takes to move off that prior
-  DRAW_SPREAD: 25,         // gap (pts) at which a tie is ~60% as likely as in a dead-even match
-  SHRINK_MIN: 0.55,        // fraction of the projected gap treated as real with zero evidence
-  SHRINK_K: 3,             // evidence weight at which shrink is halfway to 1
+  SQUAD_TRANSFER: 0.45,    // how much of an XI's relative strength edge actually reaches the scoreboard
+  SCORE_SD: 15,            // per-team per-week scoring noise (= SD), used by the evidence shrink
+  TALENT_SD_MIN: 2,        // floor/ceiling on the ESTIMATED real spread of manager scoring levels
+  TALENT_SD_MAX: 6,
+  BASE_NOISE_VAR: 16,      // how wrong a hand-set S.stats[].base can be, as a variance (SD 4 pts)
+  PROJ_DEV_MAX: 0.14,      // a team's projection can sit at most ±14% off the league level
+  DRAW_BASE: 0.068,        // the house's anchor draw price on a dead-even fixture (~12.3 at edge 16.3%)
+  DRAW_PRIOR_N: 20,        // leagueDrawRate() stays a genuine estimate of this league's own tie rate...
+  DRAW_TILT: 0.10,         // ...but it may only move the anchor ±10% either way (see fairMatchProbs)
+  DRAW_SPREAD: 10,         // how fast the draw lengthens as the fixture gets lopsided
+  DRAW_P_MIN: 0.050, DRAW_P_MAX: 0.070,  // = a published draw between ~12.0 and ~16.7 at edge 16.3%
+  GAP_SOFTCAP: 4.2,        // pts — the widest projected gap the house will express in a price
   XI: 11
 };
 
@@ -1478,14 +1540,57 @@ function teamResults(state, tid, beforeEvent){
 // older than ~10 weeks is close to noise, which is the right shape for fantasy football where a
 // manager's roster genuinely changes month to month. The hand-set baseline stays in as a Bayesian
 // prior worth FORM_PRIOR_W results. `weight` is the total evidence weight excluding the prior —
-// it caps at 1/(1-FORM_DECAY) ≈ 5.6 no matter how long the season runs, and fairMatchProbs() uses
-// it to decide how much of the projected gap to believe.
+// it caps at 1/(1-FORM_DECAY) ≈ 5.6 no matter how long the season runs.
+// Batch 52 also returns `neff` — the EFFECTIVE sample size of the weighted mean, (Σw)²/Σw², which
+// caps at ~10 games however long the season runs — and `att`, the share of the posterior that came
+// from real results rather than the hand-set baseline prior. formReliability() needs both to work
+// out how much of a team's form deviation is signal and how much is week-to-week noise. `weight` is
+// unchanged and still returned for any caller that wants the raw evidence total.
 function teamFormProj(state, tid, beforeEvent){
   const res=teamResults(state, tid, beforeEvent);
   const base=(state.stats&&state.stats[tid]&&state.stats[tid].base)||50;
-  let sw=MODEL.FORM_PRIOR_W, sx=base*MODEL.FORM_PRIOR_W;
-  res.forEach((r,i)=>{ const wt=Math.pow(MODEL.FORM_DECAY,i); sw+=wt; sx+=wt*(Number(r.pts)||0); });
-  return {proj:sx/sw, weight:sw-MODEL.FORM_PRIOR_W, n:res.length};
+  let sw=MODEL.FORM_PRIOR_W, sx=base*MODEL.FORM_PRIOR_W, w1=0, w2=0;
+  res.forEach((r,i)=>{ const wt=Math.pow(MODEL.FORM_DECAY,i); sw+=wt; w1+=wt; w2+=wt*wt; sx+=wt*(Number(r.pts)||0); });
+  return {proj:sx/sw, weight:w1, n:res.length,
+          neff: w2>0?(w1*w1)/w2:0, att: w1>0?w1/(w1+MODEL.FORM_PRIOR_W):0};
+}
+
+/* (a2) HOW MUCH OF THE FORM SPREAD IS REAL? — batch 52, and the single biggest fix in it.
+   A manager's recency-weighted form level is a mean of a handful of very noisy numbers. With
+   FORM_DECAY 0.82 the effective sample size is 2.9 games at GW4 and never exceeds ~10, and a Draft
+   H2H score has a standard deviation of about SCORE_SD (15) week to week. So the standard error on
+   a team's form level is ~5.5 points at GW4 — which is about as big as the ENTIRE observed spread
+   between the best and worst manager. Batch 48's SHRINK_MIN/SHRINK_K curve believed 75% of that
+   gap; it should have believed almost none of it.
+
+   This is the textbook empirical-Bayes (James-Stein) answer, and it needs no new tuning constants
+   because it reads the answer off the league's own data:
+       observed cross-team variance  =  real spread (tau^2)  +  average sampling variance
+   so tau^2 is what's left when you subtract the sampling variance, and each team's deviation is
+   believed in the ratio tau^2 / (tau^2 + its own sampling variance). A league whose managers really
+   do diverge produces a big tau and gets its form signal back; a league that just looks spread out
+   because it's week 4 gets shrunk almost to the league mean. TALENT_SD_MIN/MAX only stop the
+   estimate running to zero or to nonsense on a tiny sample.
+
+   Sampling variance per team has two parts: the results half (att^2 × SCORE_SD^2/neff) and the
+   baseline-prior half ((1-att)^2 × BASE_NOISE_VAR) — because a hand-typed S.stats[].base is an
+   estimate too, and pre-season, when att is 0, it is the ONLY thing in the projection. */
+function formReliability(ids, form){
+  const rows=ids.filter(t=>form[t]);
+  if(!rows.length) return {mu:50, tau2:MODEL.TALENT_SD_MIN*MODEL.TALENT_SD_MIN, r:{}};
+  const mu=rows.reduce((s,t)=>s+form[t].proj,0)/rows.length;
+  const varObs=rows.reduce((s,t)=>s+Math.pow(form[t].proj-mu,2),0)/rows.length;
+  const noiseOf=t=>{
+    const f=form[t], a=f.att;
+    const res=f.neff>0 ? (MODEL.SCORE_SD*MODEL.SCORE_SD)/f.neff : 0;
+    return a*a*res + (1-a)*(1-a)*MODEL.BASE_NOISE_VAR;
+  };
+  const meanNoise=rows.reduce((s,t)=>s+noiseOf(t),0)/rows.length;
+  const lo=MODEL.TALENT_SD_MIN*MODEL.TALENT_SD_MIN, hi=MODEL.TALENT_SD_MAX*MODEL.TALENT_SD_MAX;
+  const tau2=Math.max(lo, Math.min(hi, varObs-meanNoise));
+  const r={};
+  rows.forEach(t=>{ const nv=noiseOf(t); r[t]=nv>0?tau2/(tau2+nv):1; });
+  return {mu, tau2, r, varObs, meanNoise};
 }
 
 // FPL's own status letters: a=available, d=doubtful, i=injured, s=suspended, u=unavailable (left
@@ -1533,11 +1638,17 @@ function playerFixtureMult(club, ev){
   if(fx.count>1) m*=MODEL.DOUBLE_MULT;
   return Math.max(0.5, m);
 }
-// (b) SQUAD STRENGTH — expected points for the 11 who'll actually play. Each owned player's
-// baseline blends FPL `form` (mean points per game over the last 30 days — the recency signal)
-// with `ppg` (season mean — the stability signal), then multiplies by availability, minutes share
-// and fixture difficulty. If a published lineup exists we price that XI; otherwise we take the best
-// 11 by expected points, which is what a rational manager does with exactly this information.
+// (b) SQUAD STRENGTH — expected points for the 11 who'll actually play, and after batch 52 the
+// PRIMARY input to the whole model. Each owned player's baseline blends `ppg` (season mean — the
+// stable estimate of how good this player actually is) with FPL `form` (mean points per game over
+// the last 30 days — the volatile recency signal), then multiplies by availability, minutes share
+// and fixture difficulty. Batch 52 flipped FORM_BLEND from 0.65 to 0.30 on Dan's explicit
+// instruction: a four-game hot streak is a much worse guide to next week than a season's scoring
+// rate is, and the same logic applies to a player as to a manager. `form` keeps a real 30% share
+// because it does carry genuinely new information a season average can't — a player who has just
+// moved into the XI, onto penalties, or into a new role.
+// If a published lineup exists we price that XI; otherwise we take the best 11 by expected points,
+// which is what a rational manager does with exactly this information.
 // Returns null when this manager has no squad data at all, so the caller can fall back cleanly.
 function squadExpected(state, tid, ev){
   const P=(state&&state.fpl&&state.fpl.players)||{};
@@ -1562,36 +1673,67 @@ function squadExpected(state, tid, ev){
           doubts: rows.filter(r=>r.av>0&&r.av<1).length, out: rows.filter(r=>r.av===0).length};
 }
 
-// (d) THE PROJECTION. Recency-weighted H2H form sets the level; the squad model moves a team off
-// that level by SQUAD_W of however far its expected XI sits from the league's average XI. The squad
-// number is deliberately used RELATIVELY rather than absolutely: summing eleven players' FPL form
-// is on a similar-but-not-identical scale to a Draft H2H score (draft has no captain, and bonus
-// points/autosubs land differently), so the ratio to the league mean is trustworthy where the raw
-// total isn't. SQUAD_W is 0.55 rather than 1.0 because the squad signal is genuinely forward-looking
-// (it's the only thing that knows about this week's injuries and fixtures) but noisy — `form` is a
-// 30-day average and FDR is a crude 1-5 — so it earns a majority say, not a dictatorship.
-// Returns a map of EVERY team id, so callers can compute league-relative things in one pass.
+/* (d) THE PROJECTION — rewritten in batch 52. Every team starts at the LEAGUE's own scoring level
+   and is then moved off it by a single blended deviation, in points:
+
+       dev = ( SQUAD_W × squadDev  +  FORM_W × formDev ) / (SQUAD_W + FORM_W)
+
+   squadDev = (this XI's strength relative to the league's average XI − 1) × SQUAD_TRANSFER × level.
+   formDev  = (this team's recency-weighted form level − the league's) × its empirical-Bayes
+              reliability from formReliability().
+
+   Three things changed from batch 48 and each of them matters:
+
+   * BLEND, DON'T MULTIPLY. Batch 48 did proj = formProj × (1 + SQUAD_W×(rel−1)). Form and squad
+     quality are the same information twice over — a good squad is WHY a manager has been scoring —
+     so multiplying two positively-correlated signals inflates the spread beyond what either
+     justifies. A weighted average of two estimates of the same quantity is the right operation, and
+     it is also what makes the squad-over-form ordering Dan asked for expressible at all.
+
+   * SQUAD_TRANSFER. The XI's ppg-sum ratio is a real signal but it is NOT a one-for-one points
+     ratio. A squad whose starting eleven sums 15% above the league's average eleven does not score
+     15% more: every manager still starts eleven players, Draft scoring has no captaincy multiplier,
+     bonus/autosubs land unevenly, and FPL `form`/FDR explain only a modest slice of what a player
+     actually returns in any single week. SQUAD_TRANSFER (0.38) is that regression coefficient —
+     how much of the apparent edge shows up on the scoreboard — and it is the honest place to put
+     that discount rather than hiding it in a clamp.
+
+   * PROJ_DEV_MAX. A final hard rail: no team's projection may sit more than ±14% off the league
+     level, however extreme its squad news. A full blank gameweek or a squad with six players out
+     will hit it — and should.
+
+   The relative-not-absolute treatment of the squad number is unchanged from batch 48 and still
+   right: summing eleven players' FPL points is on a similar-but-not-identical scale to a Draft H2H
+   score, so the RATIO to the league mean is trustworthy where the raw total isn't.
+   Returns a map of EVERY team id, so callers can compute league-relative things in one pass. */
 function projectTeams(state, ev){
   const ids=(state.teams||[]).map(t=>t.id);
   const form={}, sq={};
   ids.forEach(tid=>{ form[tid]=teamFormProj(state,tid,ev); sq[tid]=squadExpected(state,tid,ev); });
+  const REL=formReliability(ids, form);
+  const level=REL.mu||50;
   // A squad that HAS data but expects ~0 points (a full blank gameweek, or a squad wiped out by
   // injuries) is a real, very weak squad — it must not be mistaken for "no data" and quietly
   // given rel=1. Participation is keyed on the squad object existing, not on it being non-zero.
   const withSq=ids.filter(tid=>sq[tid]);
   const sqMean=withSq.length?withSq.reduce((s,tid)=>s+sq[tid].xp,0)/withSq.length:0;
+  const cap=MODEL.PROJ_DEV_MAX*level;
   const out={};
   ids.forEach(tid=>{
     const f=form[tid];
     let rel=1;
-    // The clamp is what stops the squad half of the model ever running the show: whatever it
-    // thinks, a team's projection can only move by ±SQUAD_W × (clamp − 1) — about −14%/+17% at
-    // the current settings — off its recency-weighted form level. Deliberate: FPL `form` and a
-    // 1-5 FDR are too coarse to justify more, and the admin can always override the price.
-    if(sqMean>0&&sq[tid])
-      rel=Math.max(MODEL.SQUAD_REL_MIN, Math.min(MODEL.SQUAD_REL_MAX, sq[tid].xp/sqMean));
-    out[tid]={proj: Math.max(5, f.proj*(1+MODEL.SQUAD_W*(rel-1))),
-              formProj:f.proj, weight:f.weight, n:f.n, squad:sq[tid]||null, squadRel:rel};
+    const haveSq=sqMean>0&&!!sq[tid];
+    if(haveSq) rel=Math.max(MODEL.SQUAD_REL_MIN, Math.min(MODEL.SQUAD_REL_MAX, sq[tid].xp/sqMean));
+    const r=(REL.r&&REL.r[tid]!=null)?REL.r[tid]:0;
+    const devSquad=(rel-1)*MODEL.SQUAD_TRANSFER*level;
+    const devForm=(f.proj-level)*r;
+    // Weights are renormalised rather than fixed, so a league with no squad data pulled yet still
+    // prices off form alone (at full strength) instead of quietly halving every deviation.
+    const wS=haveSq?MODEL.SQUAD_W:0, wF=MODEL.FORM_W, wSum=wS+wF;
+    const dev=wSum>0?(wS*devSquad+wF*devForm)/wSum:0;
+    out[tid]={proj: Math.max(5, level+Math.max(-cap, Math.min(cap, dev))),
+              formProj:f.proj, weight:f.weight, n:f.n, squad:sq[tid]||null, squadRel:rel,
+              level, formRel:r, devSquad, devForm, dev};
   });
   return out;
 }
@@ -1603,10 +1745,24 @@ function teamProj(state, tid, ev){
   return p?p.proj:((state.stats&&state.stats[tid]&&state.stats[tid].base)||50);
 }
 
-// Draw probability. A "draw" here is an EXACT tie on fantasy points — rarer than a football draw
-// but far from rare. This league's own settled results are the best estimate available, blended
-// against a DRAW_BASE prior worth DRAW_PRIOR_N games so one freak early-season week can't move it.
-// The old model hardcoded 8% forever and never varied it by matchup.
+/* Draw probability anchor. A "draw" here is an EXACT tie on fantasy points.
+   BATCH 52 — READ THIS BEFORE RE-TUNING. Batch 48 made this the league's own measured tie rate
+   blended against a 7%/20-game prior, and it was statistically correct: this league has tied 0 of
+   its first 18 matches, the blended rate came out at 3.7%, and a 3.7% outcome priced at a 16.3%
+   edge is a 22.7 — which is exactly what every draw in the GW4 screenshot was. Batch 48 flagged the
+   consequence and asked Dan to decide. He has: the draw is a house-policy price that lives between
+   12 and 16, because a 25.96 draw reads as broken to the people betting it and nobody takes it.
+   This function therefore still returns an HONEST estimate of the league's tie rate (the same
+   0.07-prior/20-game blend batch 48 used, so the number means what it says and any future batch can
+   read it straight); it is fairMatchProbs() that then treats it as a ±DRAW_TILT nudge around the
+   house's DRAW_BASE anchor rather than as the price itself. Keeping the estimate honest here and
+   the policy visible there is deliberate — the alternative, inflating the prior until the estimate
+   itself came out at 7%, would have hidden a business decision inside a statistic.
+   Said out loud rather than buried: two normal scores 21 points apart in standard deviation tie
+   about 2% of the time, and this league has tied 0 of its first 18, so a 14.0 draw is well short of
+   fair. That margin runs in the HOUSE's favour, never against it, and it is the price of a book
+   that looks like a book. If the league's real tie rate ever climbs toward 7% it stops being a
+   subsidy and becomes close to a fair price on its own terms. */
 function leagueDrawRate(state){
   let d=0,n=0;
   const localEvents=new Set((state.gameweeks||[]).filter(g=>g.event&&g.matches.some(m=>m.result)).map(g=>g.event));
@@ -1619,25 +1775,47 @@ function leagueDrawRate(state){
 // FPL event number (gw.event) — pass it, or the squad/fixture half of the model can't engage.
 function fairMatchProbs(state, homeId, awayId, ev, projMap){
   const P=projMap||projectTeams(state, ev);
-  const a=P[homeId]||{proj:50,weight:0}, b=P[awayId]||{proj:50,weight:0};
-  // Shrink the projected gap toward zero by how much evidence actually sits behind it. Pre-season
-  // we're pricing off hand-set baselines plus a squad snapshot, so only SHRINK_MIN of the apparent
-  // gap is treated as real; with a full season of recency-weighted results behind both teams it
-  // rises toward ~0.85. This is what stops week 1 producing 1.3/4.5 prices off nothing but a
-  // baseline guess, and it's a principled version of what the old model's hand-tuned divisor 34
-  // was doing by feel.
-  const evid=Math.min(a.weight||0, b.weight||0);
-  const shrink=MODEL.SHRINK_MIN+(1-MODEL.SHRINK_MIN)*(evid/(evid+MODEL.SHRINK_K));
-  const D=(a.proj-b.proj)*shrink;
-  // Ties get less likely the further apart the two projections sit — a gaussian taper on the gap,
-  // which is the shape the exact-tie probability of two normal scores genuinely has.
-  const pD=Math.max(0.02, Math.min(0.20, leagueDrawRate(state)*Math.exp(-Math.pow(D/MODEL.DRAW_SPREAD,2)/2)));
+  const a=P[homeId]||{proj:50}, b=P[awayId]||{proj:50};
+  const raw=a.proj-b.proj;
+  /* Batch 52. The evidence shrink batch 48 applied here has MOVED — it now lives inside
+     projectTeams()/formReliability(), where it can be measured from the league's data and applied
+     only to the signal that actually needs it (the noisy H2H record), instead of being a single
+     hand-picked haircut on the finished gap. Applying it in both places would shrink twice.
+
+     What stays here is different in kind: a soft cap on how wide a book the house is willing to
+     publish at all. The model's uncertainty about its OWN gap estimate is large — far larger than
+     the gap itself in the first half of a season — so the honest posterior given a heavy-tailed
+     prior on the true gap is not the raw estimate but something that saturates: small gaps pass
+     through essentially unchanged, big ones are treated as mostly model error, because a 20-point
+     projected gap between two 12-team Draft managers almost always is. tanh is the smooth version
+     of that (no cliff, no two fixtures pinned to the same boundary price), and GAP_SOFTCAP sets
+     where it saturates: ±4.2 points, i.e. the widest H2H book the house will ever print is about
+     1.52/2.12, with an ordinary fixture landing near 1.78. That is Dan's stated rail, implemented
+     as one named constant rather than smeared across five. */
+  const cap=MODEL.GAP_SOFTCAP;
+  const D=cap*Math.tanh(raw/cap);
+  /* The draw. DRAW_BASE is the house's anchor (see leagueDrawRate for why this is a policy number
+     and not an estimate); the league's own measured tie rate is allowed to move it by at most
+     ±DRAW_TILT, so a league that genuinely ties a lot shortens its draws and one that never does
+     lengthens them — but neither can drag the price out of the 12-16 band Dan asked for. Batch 48
+     multiplied the raw estimate by the taper and clamped afterwards, which is why a 20-week season
+     with no ties would have pinned every single draw to the band floor.
+     Ties then get less likely the further apart the two projections sit. Worth being precise about
+     what this taper is: the TRUE exact-tie taper has scale SD_DIFF (~21), and over the ±4.2 points
+     D can now reach that is a change of under 2% — genuinely almost nothing. DRAW_SPREAD 10 is
+     deliberately steeper than the truth so the draw visibly lengthens on a lopsided fixture, which
+     is what Dan asked for and what a bettor expects to see; the whole effect is ~1.5 points of odds
+     and it moves in the house's favour, so nothing rides on it beyond feel. */
+  const anchor=Math.max(MODEL.DRAW_BASE*(1-MODEL.DRAW_TILT),
+               Math.min(MODEL.DRAW_BASE*(1+MODEL.DRAW_TILT), leagueDrawRate(state)));
+  const pD=Math.max(MODEL.DRAW_P_MIN, Math.min(MODEL.DRAW_P_MAX,
+            anchor*Math.exp(-Math.pow(D/MODEL.DRAW_SPREAD,2)/2)));
   // phi() is the logistic approximation to the standard normal CDF already used throughout this
   // file; D/SD_DIFF is the difference expressed in standard deviations, so this is just
   // P(home outscores away) under two normal scores — no new stats primitive invented.
   const pHrel=phi(D/SD_DIFF);
   return {home:(1-pD)*pHrel, draw:pD, away:(1-pD)*(1-pHrel),
-          diff:D, rawDiff:a.proj-b.proj, shrink, projHome:a.proj, projAway:b.proj};
+          diff:D, rawDiff:raw, shrink:(raw?D/raw:1), projHome:a.proj, projAway:b.proj};
 }
 
 /* HOUSE COMPETITIVENESS — S.settings.oddsCompetitiveness, integer 1-20, default 10.
@@ -1677,6 +1855,122 @@ function recOdds(state, homeId, awayId, ev, projMap){
   const p=fairMatchProbs(state, homeId, awayId, ev, projMap);
   const edge=houseEdgePct(state.settings);
   return {home:edgedOdds(p.home,edge), draw:edgedOdds(p.draw,edge), away:edgedOdds(p.away,edge)};
+}
+
+/* ================================================================
+   BATCH 52 — "WHY THESE ODDS?"  (matchPricingRationale)
+   ================================================================
+   Pure, no DOM, no side effects: hand it a gameweek + match and it returns a headline plus two or
+   three plain-English bullets built from the SAME numbers that actually moved that fixture's price.
+   Nothing here is decorative — every bullet is generated from a real measured factor and each one
+   has to clear its own threshold to be included at all. If a squad has no injuries, no bullet
+   claims it does; if the two sides' fixtures are level, no bullet says one has it easier; if no
+   squad data has been synced, it says exactly that instead of inventing reasons.
+   Each candidate carries a weight so the most load-bearing factors are the ones that get shown,
+   and the last bullet is always an honest summary of how firm the price is — including, when it
+   applies, the fact that a big recent-results gap is deliberately NOT being believed yet.
+   Reads the same global-backed squad helpers (squadSummary/squadPlayers/squadTopScorers/
+   clubFixture) the squad viewer uses, so what a player reads here always matches what they see
+   when they click through to the squads. */
+function matchPricingRationale(state, gwId, matchId){
+  const g=(state.gameweeks||[]).find(x=>x.id===gwId);
+  if(!g) return null;
+  const m=(g.matches||[]).find(x=>x.id===matchId);
+  if(!m||!m.home||!m.away) return null;
+  const ev=g.event||null;
+  const PJ=projectTeams(state, ev);
+  const pr=fairMatchProbs(state, m.home, m.away, ev, PJ);
+  const nmOf=tid=>{ const t=team(tid); return t?t.name:'?'; };
+  const ready=(typeof hasSquadData==='function')&&hasSquadData();
+  const sums=ready?{[m.home]:squadSummary(m.home,ev), [m.away]:squadSummary(m.away,ev)}:null;
+  const facts=[];
+  const push=(w,text)=>{ if(text) facts.push({w, text}); };
+
+  // ---- 1. real-world fixture difficulty, the factor Dan's own worked example leads with ----
+  if(sums&&sums[m.home].avgFdr&&sums[m.away].avgFdr){
+    const dh=sums[m.home].avgFdr, da=sums[m.away].avgFdr, gap=da-dh;
+    if(Math.abs(gap)>=0.4){
+      const kind=gap>0?m.home:m.away, tough=gap>0?m.away:m.home;
+      const kf=(kind===m.home?dh:da), tf=(tough===m.home?dh:da);
+      push(2.4*Math.abs(gap),
+        `${nmOf(kind)} have much the kinder week of real-life fixtures — their likely XI averages `+
+        `${kf.toFixed(1)}/5 for difficulty against ${nmOf(tough)}'s ${tf.toFixed(1)}/5.`);
+    }
+  }
+  // ---- 2. blank gameweeks — a player with no fixture simply cannot score ----
+  if(sums){
+    [m.home,m.away].forEach(tid=>{
+      const b=sums[tid].blanks;
+      if(b>=2) push(0.9*b, `${nmOf(tid)} have ${b} players with no real-life fixture at all this gameweek, so that's ${b} slots that can't score.`);
+    });
+  }
+  // ---- 3. injuries and doubts, naming the standout absentee rather than just counting ----
+  if(sums){
+    [m.home,m.away].forEach(tid=>{
+      const ps=sums[tid].players||[];
+      const gone=ps.filter(p=>p.status==='i'||p.status==='s'||p.status==='u'||p.status==='n');
+      const iffy=ps.filter(p=>p.status==='d');
+      if(!gone.length&&!iffy.length) return;
+      const head=gone.slice().sort((a,b)=>b.pts-a.pts)[0];
+      const isTalisman=head&&squadTopScorers(ps).has(head.id);
+      const bits=[];
+      if(gone.length) bits.push(`${gone.length} player${gone.length===1?'':'s'} out injured or suspended`);
+      if(iffy.length) bits.push(`${gone.length?'another ':''}${iffy.length} carrying a fitness doubt`);
+      let t=`${nmOf(tid)} have ${bits.join(' and ')}`;
+      t += head ? ` — ${head.name}${isTalisman?', their highest scorer this season,':''} is unavailable.` : '.';
+      push(1.1*gone.length+0.5*iffy.length, t);
+    });
+  }
+  // ---- 4. the crowned top scorer walking into a hard fixture ----
+  if(sums){
+    [m.home,m.away].forEach(tid=>{
+      const ps=sums[tid].players||[];
+      const tops=squadTopScorers(ps);
+      ps.filter(p=>tops.has(p.id)&&(!p.status||p.status==='a')).forEach(p=>{
+        if(p.fx&&p.fx.fdr>=4)
+          push(1.4, `${nmOf(tid)}'s highest scorer ${p.name} has a hard one — ${p.fx.home?'home to':'away at'} ${p.fx.oppName}, rated ${p.fx.fdr}/5.`);
+        else if(!p.fx)
+          push(1.5, `${nmOf(tid)}'s highest scorer ${p.name} has no fixture this gameweek and scores nothing.`);
+      });
+    });
+  }
+  // ---- 5. overall squad strength, the model's primary signal ----
+  const rh=PJ[m.home]&&PJ[m.home].squadRel, ra=PJ[m.away]&&PJ[m.away].squadRel;
+  if(ready&&rh!=null&&ra!=null&&Math.abs(rh-ra)>=0.05){
+    const strong=rh>ra?m.home:m.away, weak=rh>ra?m.away:m.home;
+    const sp=Math.round(((rh>ra?rh:ra)-1)*100), wp=Math.round(((rh>ra?ra:rh)-1)*100);
+    push(3.0*Math.abs(rh-ra)*10,
+      `On the players they actually hold, ${nmOf(strong)}'s likely eleven rates ${sp>0?'+':''}${sp}% against the league average and ${nmOf(weak)}'s ${wp>0?'+':''}${wp}% — squad quality is what the model leans on hardest.`);
+  }
+  // ---- 6. recent results, reported honestly INCLUDING how little they're being believed ----
+  const rec=tid=>{
+    const rs=teamResults(state,tid,ev).slice(0,3);
+    return rs.length?{n:rs.length, avg:rs.reduce((s,r)=>s+(Number(r.pts)||0),0)/rs.length}:null;
+  };
+  const fh=rec(m.home), fa=rec(m.away);
+  if(fh&&fa&&Math.abs(fh.avg-fa.avg)>=5){
+    const hot=fh.avg>fa.avg?m.home:m.away, cold=fh.avg>fa.avg?m.away:m.home;
+    const hv=Math.max(fh.avg,fa.avg), cv=Math.min(fh.avg,fa.avg);
+    const rel=(PJ[hot]&&PJ[hot].formRel!=null)?PJ[hot].formRel:0;
+    const weak=rel<0.35 && Math.min(fh.n,fa.n)<8;
+    push(weak?0.8:1.6,
+      `${nmOf(hot)} have been scoring more lately (${hv.toFixed(0)} a week against ${nmOf(cold)}'s ${cv.toFixed(0)} over the last ${Math.min(fh.n,fa.n)})`+
+      (weak?` — but on only ${Math.min(fh.n,fa.n)} game${Math.min(fh.n,fa.n)===1?'':'s'} that's mostly luck, so it barely moves the price.`:`, and with enough games behind it that counts.`));
+  }
+  if(!ready) push(5, `No squad data has been synced yet, so this price is coming off results and hand-set baselines alone — it will sharpen once Back Office pulls the squads in.`);
+
+  facts.sort((a,b)=>b.w-a.w);
+  const bullets=facts.slice(0,3).map(f=>f.text);
+  // The closing line is always true by construction: it is read straight off the priced gap.
+  const gap=Math.abs(pr.projHome-pr.projAway);
+  const lead=pr.projHome>pr.projAway?m.home:m.away;
+  if(gap<0.75) bullets.push(`Net of all that the two project within a point of each other, which is why the price is close to even.`);
+  else bullets.push(`It all nets out to about ${gap.toFixed(1)} points in ${nmOf(lead)}'s favour — a real edge, but one big haul from any single player is worth more than that, which is why the price stays close.`);
+  const edge=houseEdgePct(state.settings);
+  return {headline:`${nmOf(m.home)} v ${nmOf(m.away)}`, bullets,
+          projHome:pr.projHome, projAway:pr.projAway, edge,
+          odds:{home:edgedOdds(pr.home,edge), draw:edgedOdds(pr.draw,edge), away:edgedOdds(pr.away,edge)},
+          hasSquads:!!ready};
 }
 
 // P(this team posts the highest score of anyone in the gameweek), done properly instead of the old
@@ -2751,7 +3045,7 @@ function vGwBoard(g,openByDefault,mode){
       };
       const liveScore=inplay&&m.result?`<span class="livechip" style="animation:none">${m.result.homePts??0}–${m.result.awayPts??0}</span>`:'';
       return `<div class="match${inplay||upcoming?' soon':''}">
-        <div class="names">${teamLink(m.home)}${formDot(m.home)}<span class="vs">v</span>${teamLink(m.away)}${formDot(m.away)} ${liveScore}${squadCompareBtn(g.id,m.id)}</div>
+        <div class="names">${teamLink(m.home)}${formDot(m.home)}<span class="vs">v</span>${teamLink(m.away)}${formDot(m.away)} ${liveScore}${squadCompareBtn(g.id,m.id)}${whyOddsBtn(g.id,m.id)}</div>
         <div class="oddsbtns">${btn('home','HOME')}${btn('draw','DRAW')}${btn('away','AWAY')}</div>
       </div>`;
     }).join('')||'<p class="muted">Fixtures coming soon.</p>'}
@@ -3747,6 +4041,13 @@ function openSquadCompare(gwId, matchId){
   squadModalState={mode:'compare', teamId:m.home, teamB:m.away, gwId, matchId};
   renderSquadModal();
 }
+// Batch 52: third mode on the same modal — the pricing rationale for one fixture.
+function openWhyOdds(gwId, matchId){
+  const g=gw(gwId); if(!g) return;
+  const m=(g.matches||[]).find(x=>x.id===matchId); if(!m||!m.home||!m.away) return;
+  squadModalState={mode:'why', teamId:m.home, teamB:m.away, gwId, matchId};
+  renderSquadModal();
+}
 function closeSquadModal(){
   squadModalState=null;
   const panel=document.getElementById('squadModal'), overlay=document.getElementById('squadModalOverlay');
@@ -3763,7 +4064,8 @@ function renderSquadModal(){
   if(!panel||!overlay||!body) return;
   const st=squadModalState;
   if(!st){ panel.classList.remove('open'); overlay.classList.remove('open'); return; }
-  body.innerHTML = st.mode==='compare' ? squadCompareBody(st) : squadSingleBody(st);
+  body.innerHTML = st.mode==='why' ? whyOddsBody(st)
+                 : st.mode==='compare' ? squadCompareBody(st) : squadSingleBody(st);
   panel.classList.add('open'); overlay.classList.add('open');
 }
 function squadTeamSwitcher(activeId){
@@ -3839,6 +4141,45 @@ function squadCompareBody(st){
     ${squadLegend()}
   `}`;
 }
+/* Batch 52 — the "Why these odds?" body. Deliberately thin: every word of substance comes from
+   matchPricingRationale() so there is exactly one place that decides what's true about a price.
+   Two honesty details worth keeping if this is ever reworked:
+     * it shows the PUBLISHED price (what a player can actually bet), not the model's suggestion,
+       and says so out loud when the house has moved a price away from the model by hand — a
+       player reading an explanation of a number they can't bet would be worse than no explanation;
+     * it never claims more certainty than the model has. If there's no squad data, or no notable
+       factor, the bullets say that instead of padding. */
+function whyOddsBody(st){
+  const g=gw(st.gwId);
+  const m=g?(g.matches||[]).find(x=>x.id===st.matchId):null;
+  const why=(g&&m)?matchPricingRationale(S, st.gwId, st.matchId):null;
+  const a=team(st.teamId), b=team(st.teamB);
+  const head=`<div class="betmodal-head">
+    <div><h3 style="margin:0">❓ Why these odds?</h3>
+      <div class="muted small">${esc(a?a.name:'?')} v ${esc(b?b.name:'?')} · ${esc(g?g.name:'')}</div></div>
+    <button class="betmodal-close" onclick="closeSquadModal()">✕</button>
+  </div>`;
+  if(!why) return head+`<p class="muted">This fixture can't be explained right now — it may have been removed from the gameweek.</p>`;
+  const pub=m.odds||{};
+  const drift=['home','draw','away'].some(k=>{
+    const p=Number(pub[k])||0, s=Number(why.odds[k])||0;
+    return p>0&&s>0&&Math.abs(p-s)/s>0.05;
+  });
+  return head+`
+  <div class="sq-stats" style="margin-bottom:12px">
+    <div class="sq-stat"><div class="l">${esc(a?a.name:'Home')}</div><div class="v mono">${fmtOdds(pub.home)}</div></div>
+    <div class="sq-stat"><div class="l">Draw</div><div class="v mono">${fmtOdds(pub.draw)}</div></div>
+    <div class="sq-stat"><div class="l">${esc(b?b.name:'Away')}</div><div class="v mono">${fmtOdds(pub.away)}</div></div>
+  </div>
+  <ul style="margin:0 0 12px;padding-left:20px;line-height:1.6">
+    ${why.bullets.map(t=>`<li>${esc(t)}</li>`).join('')}
+  </ul>
+  <p class="muted small">Model projection for this gameweek: <b class="mono">${why.projHome.toFixed(1)}</b> v <b class="mono">${why.projAway.toFixed(1)}</b> points.${
+    drift?' <b>The house has adjusted this price by hand</b>, so what you can bet above differs from what the model alone suggested ('+fmtOdds(why.odds.home)+' / '+fmtOdds(why.odds.draw)+' / '+fmtOdds(why.odds.away)+').':''
+  }</p>
+  <p class="muted small">The model weighs the players each manager actually holds first — their season scoring rate, who's injured or doubtful, who's rotation risk, and how hard their real-life fixtures are this week — and treats recent results as a much smaller nudge on top. Every published price also carries the house margin.</p>
+  <div class="actions"><button class="btn secondary small" onclick="openSquadCompare('${st.gwId}','${st.matchId}')">⚔ Compare the two squads</button></div>`;
+}
 // A team name rendered as a click-through into that team's squad. Used everywhere a team name
 // used to be a static esc()'d label. stopPropagation() is baked in because several call sites
 // sit inside an already-clickable card (e.g. the home page's standings card).
@@ -3849,6 +4190,10 @@ function teamLink(teamId, label){
 }
 function squadCompareBtn(gwId, matchId){
   return `<button class="sq-cmpbtn" onclick="event.stopPropagation();openSquadCompare('${gwId}','${matchId}')" title="Compare both squads side by side, with this week's fixture difficulty">⚔ Squads</button>`;
+}
+// Batch 52: the player-facing "why is this priced like this" button. Same #squadModal, third mode.
+function whyOddsBtn(gwId, matchId){
+  return `<button class="sq-cmpbtn" onclick="event.stopPropagation();openWhyOdds('${gwId}','${matchId}')" title="See the factors that set this fixture's price">❓ Why these odds?</button>`;
 }
 
 function openBetModal(id){
@@ -5295,7 +5640,7 @@ function vOddSetter(){
   ${(nextDraft||open.length)?specialMarketBuilderCard():''}
   ${seasonMarketBuilderCard()}
   <div class="card"><details><summary>📊 Team form data &amp; model projections</summary>
-    <p class="muted small">House edge on published prices: <b class="mono">${houseEdgePct(S.settings)}%</b> (competitiveness ${S.settings.oddsCompetitiveness}/20 — Back Office → Limits &amp; edge). <b>Proj</b> is what the model expects this team to score in ${esc(projEv?('GW'+projEv):'the next gameweek')}: recency-weighted form, moved by squad availability and real-world fixture difficulty. <b>Avg</b> is the old flat lifetime average, shown for comparison only — nothing is priced off it any more.${hasSquadData()?'':' <b>No squad data pulled yet</b> — the squad/injury/fixture half of the model is sitting out; run Back Office → "⟳ Sync &amp; stage gameweeks".'}</p>
+    <p class="muted small">House edge on published prices: <b class="mono">${houseEdgePct(S.settings)}%</b> (competitiveness ${S.settings.oddsCompetitiveness}/20 — Back Office → Limits &amp; edge). <b>Proj</b> is what the model expects this team to score in ${esc(projEv?('GW'+projEv):'the next gameweek')}: led by squad quality, availability and real-world fixture difficulty, with the recency-weighted H2H record as a secondary nudge (batch 52 — the record is believed only in proportion to how much of this league's result spread is real rather than noise, which early in a season is very little). <b>Avg</b> is the old flat lifetime average, shown for comparison only — nothing is priced off it any more. Projections sit closer together than they used to on purpose: the model no longer double-counts squad strength and recent form against each other.${hasSquadData()?'':' <b>No squad data pulled yet</b> — the squad/injury/fixture half of the model is sitting out; run Back Office → "⟳ Sync &amp; stage gameweeks".'}</p>
     <div class="statgrid">${S.teams.map(t=>{
       const p=PJ[t.id]||{proj:0,squadRel:1,squad:null};
       const relPct=Math.round((p.squadRel-1)*100);
@@ -6054,6 +6399,21 @@ function vOffice(){
     </div>
     <p class="muted small" id="compPreview">${compPreviewText(S.settings.oddsCompetitiveness)}</p>
     <p class="muted small">The house edge never drops below ${ODDS_EDGE.MIN}% however far the slider is pushed, and never rises above ${ODDS_EDGE.MAX}%. Takes effect on the NEXT recommendation — already-published odds don't move until you hit "↺ Reset to recommended" in Odds Setter, and already-placed bets keep their frozen price forever.</p>
+    <details style="margin-top:10px">
+      <summary style="cursor:pointer;font-weight:800;padding:6px 0">🧮 How are these odds calculated?</summary>
+      <div class="muted small" style="line-height:1.65;margin-top:6px">
+        <p style="margin:0 0 8px"><b>In one line:</b> the model works out how many points each manager is likely to score in the specific gameweek being priced, turns the gap between the two into a probability, and then takes the house margin off it. The slider above only controls that last step.</p>
+        <p style="margin:0 0 6px"><b>What it weighs, in order:</b></p>
+        <ol style="margin:0 0 8px;padding-left:20px">
+          <li><b>The players they actually hold — roughly ${Math.round(MODEL.SQUAD_W*100)}% of the difference between two teams.</b> Every owned player's season points-per-game (${Math.round((1-MODEL.FORM_BLEND)*100)}%) blended with their last-30-days form (${Math.round(MODEL.FORM_BLEND*100)}%), then knocked down for injuries, suspensions and doubts (using FPL's own chance-of-playing figure where it exists), for rotation risk (minutes played this season), and for how hard their real-life club fixture is that week — with a blank gameweek scoring zero and a double worth ${MODEL.DOUBLE_MULT}×, not 2×. Only the eleven who will actually start count.</li>
+          <li><b>Real-life fixture difficulty</b> sits inside that first number rather than beside it: each FPL difficulty point away from neutral moves a player by ${Math.round(MODEL.FDR_SENS*100)}%, so a squad facing a kind week projects meaningfully higher than the same squad facing a brutal one.</li>
+          <li><b>Recent results — about ${Math.round(MODEL.FORM_W*100)}%, and usually a lot less than that in practice.</b> A manager's recent scores are recency-weighted (the last five weeks carry most of it), but the model then measures how much of the spread in this league's results is genuine and how much is just week-to-week luck, and believes the record only in that proportion. Early in a season that lands near 10%, because three games of results genuinely cannot tell two managers apart. Two wins in a row does not make you the favourite; your squad does.</li>
+        </ol>
+        <p style="margin:0 0 8px"><b>How wide it will ever go.</b> The gap between two projections is deliberately capped, so a normal fixture prices close to <b class="mono">1.78</b> either side and even the most lopsided one the model can construct stops around <b class="mono">1.52 / 2.12</b>. That's not timidity — one big haul from any single player is worth more points than most projected gaps, so a book wider than that would be claiming certainty the model does not have.</p>
+        <p style="margin:0 0 8px"><b>The draw, stated plainly.</b> Exact ties between two fantasy scores are rare — this league is currently running at <b class="mono">${(leagueDrawRate(S)*100).toFixed(1)}%</b> on the model's own blended estimate, and the underlying maths puts the true rate at roughly 2-4%. Priced honestly a draw would be 25-40. It is instead held in a <b class="mono">12-16</b> band as a deliberate house call, because a 26.0 draw reads as broken and nobody bets it. That means the draw carries a much fatter margin than the headline edge above — always in the house's favour, never against it — and you should expect to win more on drawn-market turnover than the slider implies.</p>
+        <p style="margin:0"><b>What the slider does.</b> Nothing above changes when you drag it. It only sets the margin taken off the fair price: at ${ODDS_EDGE.MIN}% (slider 20) players get the most of the true price back, at ${ODDS_EDGE.MAX}% (slider 1) the least. Every published price is fair × (1 − edge), for match odds and special markets alike. It is <b>not</b> the Algo edge or the acca edge — those are discounts applied on top of prices that have already been published.</p>
+      </div>
+    </details>
     <hr class="hr">
     <p><b>Acca edge by leg count</b> <span class="muted small">— flat % edge applied to a multi-leg bet's combined odds, one rate per leg count. Legs beyond 10 use the 10-leg rate. Takes effect live for any NEW bet placed after Save — bets already accepted/settled keep their frozen odds, this never recalculates them.</span></p>
     <div class="formrow">
@@ -6149,17 +6509,25 @@ function vOffice(){
     </div>
   </div>`;
 }
-// Batch 48: live preview of what a competitiveness setting actually means in published prices,
-// worked on the two reference books the model is calibrated against — a dead-even fixture (fair
-// 46.5/7/46.5) and a modest favourite (fair 51.8/6.9/41.4). Patches only its own three nodes, the
-// same targeted-update pattern batch 37 established for the stake input, so dragging the slider
-// never triggers a full render().
+// Batch 48: live preview of what a competitiveness setting actually means in published prices.
+// Patches only its own three nodes, the same targeted-update pattern batch 37 established for the
+// stake input, so dragging the slider never triggers a full render().
+// Batch 52 rebuilt the two reference books off the recalibrated model rather than hardcoding the
+// old 46.5/7/46.5 figures: the first is a genuinely dead-even fixture (D=0, draw at DRAW_P_MAX),
+// the second is the WIDEST book this model will ever publish (D at GAP_SOFTCAP) — which is the
+// number an admin actually wants to see when deciding how competitive to be, because it is the
+// outer rail of the whole season's pricing.
 function compPreviewText(setting){
   const e=houseEdgePct({oddsCompetitiveness:setting});
-  const even=[edgedOdds(0.465,e), edgedOdds(0.07,e), edgedOdds(0.465,e)];
-  const unev=[edgedOdds(0.518,e), edgedOdds(0.069,e), edgedOdds(0.413,e)];
+  const pdEven=MODEL.DRAW_BASE;
+  const even=[edgedOdds((1-pdEven)/2,e), edgedOdds(pdEven,e), edgedOdds((1-pdEven)/2,e)];
+  const D=MODEL.GAP_SOFTCAP;
+  const pdWide=Math.max(MODEL.DRAW_P_MIN, Math.min(MODEL.DRAW_P_MAX,
+    MODEL.DRAW_BASE*Math.exp(-Math.pow(D/MODEL.DRAW_SPREAD,2)/2)));
+  const ph=phi(D/SD_DIFF);
+  const wide=[edgedOdds((1-pdWide)*ph,e), edgedOdds(pdWide,e), edgedOdds((1-pdWide)*(1-ph),e)];
   const ov=Math.round((1/(1-e/100)-1)*1000)/10;
-  return `Book overround ${ov}%. A dead-even fixture prices <b class="mono">${fmtOdds(even[0])} / ${fmtOdds(even[1])} / ${fmtOdds(even[2])}</b>; a modest favourite prices <b class="mono">${fmtOdds(unev[0])} / ${fmtOdds(unev[1])} / ${fmtOdds(unev[2])}</b>.`;
+  return `Book overround ${ov}%. A dead-even fixture prices <b class="mono">${fmtOdds(even[0])} / ${fmtOdds(even[1])} / ${fmtOdds(even[2])}</b>; the most lopsided fixture this model will ever print prices <b class="mono">${fmtOdds(wide[0])} / ${fmtOdds(wide[1])} / ${fmtOdds(wide[2])}</b>.`;
 }
 function updCompPreview(){
   const el=document.getElementById('setOddsComp'); if(!el) return;
