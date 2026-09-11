@@ -191,24 +191,33 @@ jobs:
           function asArr(x) { return Array.isArray(x) ? x : (x ? Object.values(x) : []); }
 
           /* ================================================================
-             BATCH 50 — PORT of batch 48's deep odds model (index.html), pure-scoring/pricing half
+             BATCH 52 — PORT of index.html's recalibrated deep odds model, pure-scoring/pricing half
              only. This is a hand-maintained PORT, not a shared module: index.html has no build step
              and this Action runs in Node with no access to the browser file at all, so the only way
              to reuse the model here is to copy the pure math across, same "mirrors field for field"
              convention ingestFplSquads()'s own header comment already establishes for this file.
-             MUST be kept in sync by hand with index.html's MODEL/ODDS_EDGE/projectTeams/
-             fairMatchProbs/houseEdgePct/recOdds/suggestSpecialOdds/edgedOdds/extremeScoreProbs any
-             time a future batch changes the model there — nothing here recalibrates itself.
+             MUST be kept in sync by hand with index.html's MODEL/ODDS_EDGE/formReliability/
+             projectTeams/fairMatchProbs/houseEdgePct/recOdds/suggestSpecialOdds/edgedOdds/
+             extremeScoreProbs any time a future batch changes the model there — nothing here
+             recalibrates itself. Batch 52 replaced the old "form × squad multiplier" + invented
+             evidence-shrink + raw-tie-rate-draw model with: a blend (not multiply) of squad and
+             form deviations, an empirical-Bayes formReliability() shrink measured off the league's
+             own data, a DRAW_BASE/DRAW_TILT house-anchored draw band, and a GAP_SOFTCAP tanh squash
+             on the priced gap — see index.html's MODEL const and the block comment above it for the
+             full reasoning; ported verbatim here, values and all.
              Deliberately NOT ported: specialMarketDefaultLine() (only used when the admin first
              CREATES a market in the Loader UI — this Action only ever resets the .odds on markets
              that already exist, exactly like rerecommend()/rerecommendMarket() in the app, never
-             their .line), teamAvg()/the "avg" display figure (display-only, not used in pricing). */
+             their .line), teamAvg()/the "avg" display figure (display-only, not used in pricing),
+             matchPricingRationale() (Bet Builder "why these odds?" explainer — UI-only, reads DOM/
+             squad-viewer helpers this Action has no equivalent of, and is never called from here). */
           const MODEL = {
-            FORM_DECAY: 0.82, FORM_PRIOR_W: 1.5, FORM_BLEND: 0.65, FDR_SENS: 0.075,
-            DOUBLE_MULT: 1.8, MIN_MINUTES_SHARE: 0.35, SQUAD_W: 0.55,
-            SQUAD_REL_MIN: 0.75, SQUAD_REL_MAX: 1.30,
-            DRAW_BASE: 0.07, DRAW_PRIOR_N: 20, DRAW_SPREAD: 25,
-            SHRINK_MIN: 0.55, SHRINK_K: 3, XI: 11
+            FORM_DECAY: 0.82, FORM_PRIOR_W: 1.5, FORM_BLEND: 0.30, FDR_SENS: 0.075,
+            DOUBLE_MULT: 1.8, MIN_MINUTES_SHARE: 0.35, SQUAD_W: 0.70, FORM_W: 0.30,
+            SQUAD_REL_MIN: 0.75, SQUAD_REL_MAX: 1.30, SQUAD_TRANSFER: 0.45,
+            SCORE_SD: 15, TALENT_SD_MIN: 2, TALENT_SD_MAX: 6, BASE_NOISE_VAR: 16,
+            PROJ_DEV_MAX: 0.14, DRAW_BASE: 0.068, DRAW_PRIOR_N: 20, DRAW_TILT: 0.10,
+            DRAW_SPREAD: 10, DRAW_P_MIN: 0.050, DRAW_P_MAX: 0.070, GAP_SOFTCAP: 4.2, XI: 11
           };
           const SD = 15;
           const SD_DIFF = SD * Math.SQRT2;
@@ -261,9 +270,34 @@ jobs:
           function teamFormProj(state, tid, beforeEvent) {
             const res = teamResults(state, tid, beforeEvent);
             const base = (state.stats && state.stats[tid] && state.stats[tid].base) || 50;
-            let sw = MODEL.FORM_PRIOR_W, sx = base * MODEL.FORM_PRIOR_W;
-            res.forEach((r, i) => { const wt = Math.pow(MODEL.FORM_DECAY, i); sw += wt; sx += wt * (Number(r.pts) || 0); });
-            return { proj: sx / sw, weight: sw - MODEL.FORM_PRIOR_W, n: res.length };
+            let sw = MODEL.FORM_PRIOR_W, sx = base * MODEL.FORM_PRIOR_W, w1 = 0, w2 = 0;
+            res.forEach((r, i) => { const wt = Math.pow(MODEL.FORM_DECAY, i); sw += wt; w1 += wt; w2 += wt * wt; sx += wt * (Number(r.pts) || 0); });
+            return { proj: sx / sw, weight: w1, n: res.length,
+                     neff: w2 > 0 ? (w1 * w1) / w2 : 0, att: w1 > 0 ? w1 / (w1 + MODEL.FORM_PRIOR_W) : 0 };
+          }
+          // Batch 52 — empirical-Bayes/James-Stein shrink on the recency-weighted form deviation.
+          // Reads the league's own data: observed cross-team variance of form levels minus the mean
+          // sampling variance of those levels = tau^2 (the REAL spread of manager talent); each
+          // team's deviation is then believed in the ratio tau^2/(tau^2 + its own sampling
+          // variance). See index.html's formReliability() header comment for the full derivation —
+          // ported verbatim, no new tuning constants beyond MODEL.SCORE_SD/TALENT_SD_MIN/MAX/
+          // BASE_NOISE_VAR already carried across above.
+          function formReliability(ids, form) {
+            const rows = ids.filter(t => form[t]);
+            if (!rows.length) return { mu: 50, tau2: MODEL.TALENT_SD_MIN * MODEL.TALENT_SD_MIN, r: {} };
+            const mu = rows.reduce((s, t) => s + form[t].proj, 0) / rows.length;
+            const varObs = rows.reduce((s, t) => s + Math.pow(form[t].proj - mu, 2), 0) / rows.length;
+            const noiseOf = t => {
+              const f = form[t], a = f.att;
+              const res = f.neff > 0 ? (MODEL.SCORE_SD * MODEL.SCORE_SD) / f.neff : 0;
+              return a * a * res + (1 - a) * (1 - a) * MODEL.BASE_NOISE_VAR;
+            };
+            const meanNoise = rows.reduce((s, t) => s + noiseOf(t), 0) / rows.length;
+            const lo = MODEL.TALENT_SD_MIN * MODEL.TALENT_SD_MIN, hi = MODEL.TALENT_SD_MAX * MODEL.TALENT_SD_MAX;
+            const tau2 = Math.max(lo, Math.min(hi, varObs - meanNoise));
+            const r = {};
+            rows.forEach(t => { const nv = noiseOf(t); r[t] = nv > 0 ? tau2 / (tau2 + nv) : 1; });
+            return { mu, tau2, r, varObs, meanNoise };
           }
           function playerAvailability(p) {
             const st = (p && p.st) || 'a';
@@ -315,14 +349,25 @@ jobs:
             const ids = asArr(state.teams).map(t => t.id);
             const form = {}, sq = {};
             ids.forEach(tid => { form[tid] = teamFormProj(state, tid, ev); sq[tid] = squadExpected(state, tid, ev); });
+            const REL = formReliability(ids, form);
+            const level = REL.mu || 50;
             const withSq = ids.filter(tid => sq[tid]);
             const sqMean = withSq.length ? withSq.reduce((s, tid) => s + sq[tid].xp, 0) / withSq.length : 0;
+            const cap = MODEL.PROJ_DEV_MAX * level;
             const out = {};
             ids.forEach(tid => {
               const f = form[tid];
               let rel = 1;
-              if (sqMean > 0 && sq[tid]) rel = Math.max(MODEL.SQUAD_REL_MIN, Math.min(MODEL.SQUAD_REL_MAX, sq[tid].xp / sqMean));
-              out[tid] = { proj: Math.max(5, f.proj * (1 + MODEL.SQUAD_W * (rel - 1))), formProj: f.proj, weight: f.weight, n: f.n, squad: sq[tid] || null, squadRel: rel };
+              const haveSq = sqMean > 0 && !!sq[tid];
+              if (haveSq) rel = Math.max(MODEL.SQUAD_REL_MIN, Math.min(MODEL.SQUAD_REL_MAX, sq[tid].xp / sqMean));
+              const r = (REL.r && REL.r[tid] != null) ? REL.r[tid] : 0;
+              const devSquad = (rel - 1) * MODEL.SQUAD_TRANSFER * level;
+              const devForm = (f.proj - level) * r;
+              const wS = haveSq ? MODEL.SQUAD_W : 0, wF = MODEL.FORM_W, wSum = wS + wF;
+              const dev = wSum > 0 ? (wS * devSquad + wF * devForm) / wSum : 0;
+              out[tid] = { proj: Math.max(5, level + Math.max(-cap, Math.min(cap, dev))),
+                           formProj: f.proj, weight: f.weight, n: f.n, squad: sq[tid] || null, squadRel: rel,
+                           level, formRel: r, devSquad, devForm, dev };
             });
             return out;
           }
@@ -336,13 +381,24 @@ jobs:
           }
           function fairMatchProbs(state, homeId, awayId, ev, projMap) {
             const P = projMap || projectTeams(state, ev);
-            const a = P[homeId] || { proj: 50, weight: 0 }, b = P[awayId] || { proj: 50, weight: 0 };
-            const evid = Math.min(a.weight || 0, b.weight || 0);
-            const shrink = MODEL.SHRINK_MIN + (1 - MODEL.SHRINK_MIN) * (evid / (evid + MODEL.SHRINK_K));
-            const D = (a.proj - b.proj) * shrink;
-            const pD = Math.max(0.02, Math.min(0.20, leagueDrawRate(state) * Math.exp(-Math.pow(D / MODEL.DRAW_SPREAD, 2) / 2)));
+            const a = P[homeId] || { proj: 50 }, b = P[awayId] || { proj: 50 };
+            const raw = a.proj - b.proj;
+            // Batch 52 — soft cap on the priced gap (the evidence shrink moved into
+            // projectTeams()/formReliability() above, where it's measured, not invented; applying
+            // it here too would shrink twice). tanh saturates at +-GAP_SOFTCAP so small gaps pass
+            // through unchanged and large ones are treated as mostly model error.
+            const cap = MODEL.GAP_SOFTCAP;
+            const D = cap * Math.tanh(raw / cap);
+            // Batch 52 — DRAW_BASE is the house's policy anchor; the league's own measured tie rate
+            // (leagueDrawRate) may only tilt it by +-DRAW_TILT, then the taper (DRAW_SPREAD) and the
+            // DRAW_P_MIN/MAX clamp keep the published draw inside the house's 12-16 band.
+            const anchor = Math.max(MODEL.DRAW_BASE * (1 - MODEL.DRAW_TILT),
+                           Math.min(MODEL.DRAW_BASE * (1 + MODEL.DRAW_TILT), leagueDrawRate(state)));
+            const pD = Math.max(MODEL.DRAW_P_MIN, Math.min(MODEL.DRAW_P_MAX,
+                        anchor * Math.exp(-Math.pow(D / MODEL.DRAW_SPREAD, 2) / 2)));
             const pHrel = phi(D / SD_DIFF);
-            return { home: (1 - pD) * pHrel, draw: pD, away: (1 - pD) * (1 - pHrel) };
+            return { home: (1 - pD) * pHrel, draw: pD, away: (1 - pD) * (1 - pHrel),
+                     diff: D, rawDiff: raw, shrink: (raw ? D / raw : 1), projHome: a.proj, projAway: b.proj };
           }
           function recOdds(state, homeId, awayId, ev, projMap) {
             const p = fairMatchProbs(state, homeId, awayId, ev, projMap);
