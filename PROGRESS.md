@@ -1660,3 +1660,55 @@ commit hash when done.
   29/33/34's verification style (a harness with Firebase AND the FPL network layer both mocked,
   confirming the window/idempotency logic fires exactly once per gameweek and never touches an
   already-open or already-auto-suggested gameweek) plus a manual trace of the new cron addition.
+
+---
+
+## ROUND 9 — Usage & Engagement analytics, 2026-09-11
+
+User request: see how much each player actually uses the app — logins, bets clicked, bets built
+but not placed, general usage metrics/graphs, and time-of-day usage — as a new section in the
+Back Office, to know who to nudge.
+
+- [x] 51. **Usage & Engagement tracking + Back Office card.** New `S.usage` node: `events[]`
+  (rolling capped raw log, same 500-cap pattern as `S.audit`, but capped at 4000 — a recent-
+  activity detail feed, NOT what the card's numbers are computed from), `daily[date][teamId]`
+  (permanent per-day counters — logins/views/legClicks/betsBuilt/betsPlaced — small enough
+  across a whole season × 12 teams to never need trimming, so trend numbers stay correct even
+  once raw events roll off), `hourly[teamId][hour 0-23]` (permanent, all-time hour-of-day
+  histogram), `lastSeen[teamId]` (single timestamp, the "who's gone quiet" signal). Added to
+  `freshState()` and backfilled in `migrate()` (empty `usage` object for any state saved before
+  this feature — a valid resting position, not an error). New `ukDateKey()`/`ukHour()` (UK-local
+  day/hour via `Intl.DateTimeFormat`, matching the app's existing UK-time convention) and
+  `logUsage(type, tab)` — writes an event + increments the daily/hourly/lastSeen buckets, rides
+  the existing DEBOUNCED `save()` (same "low-stakes action" convention batch 6 set for chat/
+  counters — this fires on every nav click and odds tap, so it must not force a write per call).
+  Hooked at: `switchUser()` → `login`; `go(tab)` → `view` (+tab name); `addMatchLeg`/
+  `addSpecialLeg`'s add branches → `leg_click`; `submitBet()` → `bet_attempt` at entry (covers
+  every caller — manual builder, Algo bundles, season, bespoke — in one place) and `bet_placed`
+  right after `S.bets.push(bet)` (i.e. once it's actually cleared every validation gate). "Built
+  but not placed" in the Back Office UI is simply `bet_attempt` count minus `bet_placed` count —
+  no separate abandoned-slip heuristic needed since every submit path already funnels through
+  `submitBet()`.
+  New reusable `usageBarChartSvg(labels, values, opts)` — hand-built inline SVG bar chart (fixed
+  per-bar pixel width wrapped in `overflow-x:auto`, same batch-23/25 convention as any content
+  that can run wider than a phone screen, rather than squashing bars via `preserveAspectRatio`),
+  following the existing no-charting-library precedent `pnlSparklineSvg()` set.
+  New `usageSummary(days)` (pure computation over `S.usage.daily`/`lastSeen`, returns per-team
+  rows sorted **least-recently-active first** — that ordering IS the nudge list) and
+  `usageOfficeCard()`, wired into `vOffice()` right after the existing top KPI row. Card shows:
+  a mini KPI row (active today, logins today, bets placed today, 14-day build→place %), a per-
+  team table (last seen + 14d logins/legs-clicked/built/placed/conversion, with a gold "⚠ quiet"
+  pill for anyone with no login in 7+ days), a 14-day daily-activity bar chart (logins+views+
+  clicks+placements, all teams combined), and an all-time hour-of-day bar chart (UK local time,
+  for timing nudges/announcements to when people are actually online).
+  Verified: brace/paren/bracket/backtick balance check (all balanced — 2938/2938 `{}`, 6455/6455
+  `()`, 645/645 `[]`, 1006 backticks even), plus a from-scratch headless-Edge harness (Firebase
+  fully stubbed via an in-memory `window.__store` — zero live network/DB contact, no
+  `seedTestData()` existed in this repo to reuse so one was hand-built for this batch) that logs
+  in as admin, seeds 20 days of synthetic per-team usage (one team, HUXLEY, deliberately never
+  logged in), opens Back Office, and asserts on the rendered `#view` HTML: zero `window.onerror`
+  catches, the Usage card and both charts render, HUXLEY sorts first with a "never"/"⚠ quiet" row
+  while a team seeded with a login "today" (Selig's Shakers) sorts last with no quiet flag and
+  exactly the seeded logins/built/placed/conversion numbers — confirming the sort order, the
+  quiet-flag threshold, and the per-team aggregation math are all correct, not just crash-free.
+  Commit pending.

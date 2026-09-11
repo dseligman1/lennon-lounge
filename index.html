@@ -849,6 +849,14 @@ function freshState() {
     // gameweek's `gw.specialMarkets[]` (batch 20) but NOT tied to any specific gameweek.
     // Full shape documented above `SEASON_MARKET_TEMPLATES`.
     seasonMarkets: [],
+    // Usage/engagement analytics (Back Office "Usage" card). `events[]` is a rolling capped raw
+    // log (same cap pattern as `audit` above) powering the recent-activity feed; `daily[date]
+    // [teamId]` is a small PERMANENT per-day counter set (never trimmed — a season's worth across
+    // 12 teams is a few thousand numbers) powering trend graphs even once raw events roll off;
+    // `hourly[teamId]` is a permanent hour-of-day (0-23, string keys) histogram powering the
+    // time-of-day view; `lastSeen[teamId]` is a single timestamp for the "who's gone quiet" list.
+    // See logUsage() for what writes here.
+    usage: { events: [], daily: {}, hourly: {}, lastSeen: {} },
     seq: 1
   };
 }
@@ -950,6 +958,16 @@ function migrate(s) {
   // existed. Auto-sync matching anchors on this instead of the FPL team name, which owners
   // can rename mid-season and silently break name-based matching.
   s.teams.forEach(t => { const src = TEAMS.find(x => x.id === t.id); if (src && !t.fplName) t.fplName = src.fplName; });
+  // Usage/engagement analytics — backfilled empty for any state saved before this feature (an
+  // empty usage picture is a valid resting position, not an error). `events` is the one true
+  // array in here (same Firebase array-as-object quirk as every other list this function fixes);
+  // `daily`/`hourly`/`lastSeen` are keyed by date-string/teamId/teamId respectively, never by a
+  // contiguous integer index, so Firebase round-trips them as plain objects with no toArr() needed.
+  if (!s.usage) s.usage = {events:[],daily:{},hourly:{},lastSeen:{}};
+  s.usage.events = toArr(s.usage.events);
+  if (!s.usage.daily) s.usage.daily = {};
+  if (!s.usage.hourly) s.usage.hourly = {};
+  if (!s.usage.lastSeen) s.usage.lastSeen = {};
   return s;
 }
 
@@ -1116,6 +1134,10 @@ function switchUser(tid) {
   if (bn) bn.style.display = '';
   startListener();
   if (S) render();
+  // Usage tracking: no-ops via logUsage()'s own guard on the rare cold-start case where S hasn't
+  // loaded from Firebase yet (startListener() above is async) — that one login goes unlogged
+  // rather than adding complexity to wait for it; every subsequent login/switch has S loaded.
+  logUsage('login');
   setTimeout(maybeShowPromo, 900);
 }
 
@@ -1280,6 +1302,40 @@ function bettableNow(g){
 function audit(action, detail){
   S.audit.push({at:Date.now(), by:me?me.id:'system', action, detail:String(detail||'')});
   if(S.audit.length>500) S.audit=S.audit.slice(-500);
+}
+/* ================================================================
+   USAGE / ENGAGEMENT TRACKING — Back Office "Usage" card
+   ================================================================
+   ukDateKey/ukHour give an Europe/London day-boundary and hour-of-day for a timestamp (en-CA
+   formats as YYYY-MM-DD, a sortable date key for free) — matches the rest of the app's UK-time
+   convention (fmtDT, ukWallToTs) rather than the browser's local timezone. */
+function ukDateKey(ts){ return new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/London',year:'numeric',month:'2-digit',day:'2-digit'}).format(ts); }
+function ukHour(ts){ return +new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/London',hour:'2-digit',hourCycle:'h23'}).format(ts); }
+// Logs one engagement event for the current team. `type` is one of login/view/leg_click/
+// bet_attempt/bet_placed. Cheap and called often (every nav click, every odds tap) so it only
+// ever touches `S.usage` and rides the existing DEBOUNCED save() — same "low-stakes action"
+// convention batch 6 established for chat/counters, not the saveNow() used for anything
+// financially sensitive. No-ops if there's no logged-in team (e.g. pre-login state) or the
+// state tree hasn't loaded yet.
+function logUsage(type, tab){
+  if(!me||!S||!S.usage) return;
+  const at=Date.now(), tid=me.id;
+  S.usage.events.push(tab?{at,team:tid,type,tab}:{at,team:tid,type});
+  if(S.usage.events.length>4000) S.usage.events=S.usage.events.slice(-4000);
+  const dk=ukDateKey(at);
+  if(!S.usage.daily[dk]) S.usage.daily[dk]={};
+  if(!S.usage.daily[dk][tid]) S.usage.daily[dk][tid]={logins:0,views:0,legClicks:0,betsBuilt:0,betsPlaced:0};
+  const bucket=S.usage.daily[dk][tid];
+  if(type==='login') bucket.logins++;
+  else if(type==='view') bucket.views++;
+  else if(type==='leg_click') bucket.legClicks++;
+  else if(type==='bet_attempt') bucket.betsBuilt++;
+  else if(type==='bet_placed') bucket.betsPlaced++;
+  if(!S.usage.hourly[tid]) S.usage.hourly[tid]={};
+  const h=ukHour(at);
+  S.usage.hourly[tid][h]=(S.usage.hourly[tid][h]||0)+1;
+  S.usage.lastSeen[tid]=at;
+  save();
 }
 // Client-side-only gate: stops the app's own UI from calling an admin action for a non-admin
 // session (e.g. a stray button reachable by URL/state manipulation). This is NOT real
@@ -1790,6 +1846,37 @@ function pnlSparklineSvg(teamId){
     <path d="${path}" fill="none" stroke="${color}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>
     <circle cx="${lastX}" cy="${lastY}" r="3.4" fill="${color}"/>
   </svg>`;
+}
+// Hand-built inline-SVG bar chart, same "no charting library" convention as the sparkline above
+// — used by the Back Office Usage card for the daily-activity trend and hour-of-day histogram.
+// Fixed per-bar pixel width (not percentage/preserveAspectRatio-stretched) wrapped in the same
+// overflow-x:auto pattern batches 23/25 already use for anything that can run wider than a phone
+// screen, rather than squashing bars unreadably thin. `labels`/`values` are parallel arrays;
+// `opts.labelEvery` thins x-axis labels for long series (e.g. 30 daily bars) so they don't
+// collide. Returns a plain "no data" message rather than an empty/broken chart when every value
+// is zero.
+function usageBarChartSvg(labels, values, opts){
+  opts=opts||{};
+  const n=values.length;
+  if(!n||!values.some(v=>v>0)) return '<p class="muted small">No data yet.</p>';
+  const max=Math.max(1,...values);
+  const barW=opts.barW||18, gap=opts.gap||10, H=100, PAD=6, BOTTOM=22;
+  const W=PAD*2+n*(barW+gap)-gap;
+  const color=opts.color||'var(--teal)';
+  const labelEvery=opts.labelEvery||1;
+  const bars=values.map((v,i)=>{
+    const h=Math.max(v>0?2:0,(v/max)*(H-BOTTOM-PAD));
+    const x=PAD+i*(barW+gap);
+    const y=H-BOTTOM-h;
+    const showLabel=(i%labelEvery===0)||i===n-1;
+    return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW}" height="${h.toFixed(1)}" rx="2" fill="${color}"><title>${esc(String(labels[i]))}: ${v}</title></rect>`
+      +(v>0?`<text x="${(x+barW/2).toFixed(1)}" y="${(y-4).toFixed(1)}" font-size="9" fill="var(--text)" text-anchor="middle">${v}</text>`:'')
+      +(showLabel?`<text x="${(x+barW/2).toFixed(1)}" y="${H-6}" font-size="9" fill="var(--muted)" text-anchor="middle">${esc(String(labels[i]))}</text>`:'');
+  }).join('');
+  return `<div style="overflow-x:auto"><svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Usage bar chart">
+    <line x1="${PAD}" y1="${H-BOTTOM}" x2="${W-PAD}" y2="${H-BOTTOM}" stroke="var(--line)" stroke-width="1"/>
+    ${bars}
+  </svg></div>`;
 }
 /* Batch 9: scenario-based max exposure (worst/best net house impact), replacing the old flat
    gross sum. Match-winner legs on the same match are correlated (e.g. two players backing
@@ -2457,6 +2544,11 @@ function slipViolatesIntegrity(legs, myTeamId){
 }
 
 function submitBet({gwId, legs, effOdds, stake, viaAlgo, boostPct, freeBetAmount, message, duplicateOf}){
+  // Usage tracking: logs every submit attempt regardless of outcome (covers the manual builder,
+  // Algo bundles, season and bespoke bets — every caller routes through here) — Back Office's
+  // "built vs placed" conversion is bet_attempt count vs the bet_placed count logged below, once
+  // the bet actually clears every validation gate.
+  logUsage('bet_attempt');
   // Batch 28: a season-market bet has no gwId — legs are ALL type:'season' (batch 27's
   // settleSeasonBet() requires that uniformity, and addSeasonLeg() below never mixes a season
   // leg into the gameweek `slip`), so it skips the gw/bettableNow gating entirely and instead
@@ -2513,6 +2605,7 @@ function submitBet({gwId, legs, effOdds, stake, viaAlgo, boostPct, freeBetAmount
     history:[{by:me.id, role:'player', action:'placed'+(viaAlgo?' via The Algo':'')+(mode==='inplay'?' (in-play)':''), stake, odds:effOdds, message:message||'', at:now}],
   };
   S.bets.push(bet);
+  logUsage('bet_placed');
   // NOTE: previously there was also a separate db.ref(ROOT+'/bets').push(bet) write here
   // "for concurrent safety". That was the actual root cause of the Bet Review "accept/reject
   // doesn't remove the bet" bug: save()/saveNow() below already does a full db.ref(ROOT).set(S)
@@ -2677,12 +2770,12 @@ function addMatchLeg(gwId,matchId,pick){
   const label=pick==='draw'?`Draw — ${team(m.home).name} v ${team(m.away).name}`:`${team(pick==='home'?m.home:m.away).name} to WIN v ${team(pick==='home'?m.away:m.home).name}`;
   const leg={type:'match',gwId,matchId,pick,odds:boosted??m.odds[pick],label:label+(boosted?' 🔥BOOSTED':'')};
   if(i>-1) slip[i]=leg; else slip.push(leg);
-  render();
+  render(); logUsage('leg_click');
 }
 
 function addSpecialLeg(leg){
   slipDuplicateOf=null; // batch 14: see addMatchLeg
-  slip.push(leg); render();
+  slip.push(leg); render(); logUsage('leg_click');
 }
 
 // Batch 20: first manual UI caller of addSpecialLeg — picks an admin-added special market
@@ -5840,6 +5933,89 @@ function submitManualGrant(){
 }
 
 /* ================================================================
+   HOUSE · BACK OFFICE — Usage & Engagement
+   ================================================================
+   Pure computation over S.usage (see logUsage() for what's written there) for the Back Office
+   "📊 Usage & Engagement" card. Sums the permanent S.usage.daily buckets across a trailing
+   window of UK calendar days per team (never touches the capped raw `events[]` log — that stays
+   just a recent-activity detail feed, not the source of these totals, so numbers stay correct
+   even once old raw events roll off), plus all-time S.usage.lastSeen/hourly for "who's gone
+   quiet" and the time-of-day chart. Rows come back sorted least-recently-active first — that
+   ordering IS the nudge list, not a display nicety. */
+function usageSummary(days){
+  days = days || 14;
+  const dateKeys = [];
+  for(let i=days-1;i>=0;i--) dateKeys.push(ukDateKey(Date.now()-i*86400000));
+  const daily = S.usage.daily||{};
+  const lastSeen = S.usage.lastSeen||{};
+  const rows = S.teams.map(t=>{
+    let logins=0, views=0, legClicks=0, betsBuilt=0, betsPlaced=0;
+    dateKeys.forEach(dk=>{
+      const b=daily[dk]&&daily[dk][t.id];
+      if(!b) return;
+      logins+=b.logins||0; views+=b.views||0; legClicks+=b.legClicks||0; betsBuilt+=b.betsBuilt||0; betsPlaced+=b.betsPlaced||0;
+    });
+    return {team:t, logins, views, legClicks, betsBuilt, betsPlaced,
+      conversion: betsBuilt?Math.round(betsPlaced/betsBuilt*100):null,
+      lastSeen: lastSeen[t.id]||null};
+  }).sort((a,b)=>(a.lastSeen||0)-(b.lastSeen||0));
+  const dailyTotals = dateKeys.map(dk=>{
+    const day=daily[dk]||{};
+    return Object.values(day).reduce((s,b)=>s+(b.logins||0)+(b.views||0)+(b.legClicks||0)+(b.betsPlaced||0),0);
+  });
+  const dailyLabels = dateKeys.map(dk=>new Date(dk+'T12:00:00Z').toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit'}));
+  const hourly = S.usage.hourly||{};
+  const hourTotals = Array.from({length:24},(_,h)=>Object.values(hourly).reduce((s,byHour)=>s+(byHour[h]||0),0));
+  const todayBucket = daily[dateKeys[dateKeys.length-1]]||{};
+  return {
+    rows, dailyLabels, dailyTotals, hourTotals,
+    activeToday: Object.keys(todayBucket).length,
+    loginsToday: Object.values(todayBucket).reduce((s,b)=>s+(b.logins||0),0),
+    betsPlacedToday: Object.values(todayBucket).reduce((s,b)=>s+(b.betsPlaced||0),0),
+    days,
+  };
+}
+const QUIET_MS = 7*86400000; // 7 days with no login — the actual "nudge them" threshold
+function usageOfficeCard(){
+  const u=usageSummary(14);
+  const totalLogins14d = u.rows.reduce((s,r)=>s+r.logins,0);
+  const totalPlaced14d = u.rows.reduce((s,r)=>s+r.betsPlaced,0);
+  const totalBuilt14d = u.rows.reduce((s,r)=>s+r.betsBuilt,0);
+  return `<div class="card glow">
+    <h3>📊 Usage &amp; Engagement</h3>
+    <p class="muted small">Who's actually using the app, and when — use this to spot who needs a nudge. Counts are live from the moment this feature shipped; nobody has history before that.</p>
+    <div class="kpis">
+      <div class="kpi"><div class="l">Active today</div><div class="v">${u.activeToday}/${S.teams.length}</div></div>
+      <div class="kpi"><div class="l">Logins today</div><div class="v">${u.loginsToday}</div></div>
+      <div class="kpi"><div class="l">Bets placed today</div><div class="v">${u.betsPlacedToday}</div></div>
+      <div class="kpi"><div class="l">14d build→place</div><div class="v">${totalBuilt14d?Math.round(totalPlaced14d/totalBuilt14d*100)+'%':'—'}</div></div>
+    </div>
+    <hr class="hr">
+    <p><b>Per-player engagement</b> <span class="muted small">— sorted least-recently-active first. "Built" = hit Place with a completed slip (includes ones blocked by a validation check); "Placed" = actually went through.</span></p>
+    <div style="overflow-x:auto"><table><tr><th>Team</th><th>Last seen</th><th>Logins (14d)</th><th>Legs clicked</th><th>Built</th><th>Placed</th><th>Build→Place</th></tr>
+    ${u.rows.map(r=>{
+      const quiet = !r.lastSeen || (Date.now()-r.lastSeen)>QUIET_MS;
+      return `<tr>
+        <td><b>${esc(r.team.name)}</b> <span class="muted small">${esc(r.team.owner)}</span></td>
+        <td class="small">${r.lastSeen?timeAgo(r.lastSeen):'never'}${quiet?' <span class="pill st-pending">⚠ quiet</span>':''}</td>
+        <td class="small mono">${r.logins}</td>
+        <td class="small mono">${r.legClicks}</td>
+        <td class="small mono">${r.betsBuilt}</td>
+        <td class="small mono">${r.betsPlaced}</td>
+        <td class="small mono">${r.conversion==null?'—':r.conversion+'%'}</td>
+      </tr>`;
+    }).join('')}
+    </table></div>
+    <hr class="hr">
+    <p><b>Daily activity — last ${u.days} days</b> <span class="muted small">(logins + page views + odds clicks + bets placed, all teams combined)</span></p>
+    ${usageBarChartSvg(u.dailyLabels, u.dailyTotals, {labelEvery:2, color:'var(--cyan)'})}
+    <p style="margin-top:14px"><b>Time of day</b> <span class="muted small">— all-time, all teams, UK local time. Use this to time nudges/announcements for when people are actually around.</span></p>
+    ${usageBarChartSvg(Array.from({length:24},(_,h)=>h), u.hourTotals, {labelEvery:3, color:'var(--violet)', barW:14, gap:6})}
+    <p class="muted small" style="margin-top:8px">Total: ${totalLogins14d} login(s) in the last ${u.days} days across all teams.</p>
+  </div>`;
+}
+
+/* ================================================================
    HOUSE · BACK OFFICE
    ================================================================ */
 function vOffice(){
@@ -5851,6 +6027,7 @@ function vOffice(){
     <div class="kpi"><div class="l">Live bets</div><div class="v">${live.length}</div></div>
     <div class="kpi"><div class="l">All-time bets</div><div class="v">${S.bets.length}</div></div>
   </div>
+  ${usageOfficeCard()}
   <div class="card">
     <h3>🔑 All team PINs</h3>
     <p class="muted small">Only you and Jack can see these.</p>
@@ -6439,7 +6616,7 @@ function render(){
     render._rt=setTimeout(render,60000);
   }
 }
-function go(tab){ activeTab=tab; render(); window.scrollTo(0,0); }
+function go(tab){ activeTab=tab; render(); window.scrollTo(0,0); logUsage('view',tab); }
 
 /* ================================================================
    INIT
