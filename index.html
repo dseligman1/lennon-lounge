@@ -4015,36 +4015,6 @@ function sendChat(){
   setTimeout(()=>{ const i=document.getElementById('chatInp'); if(i) i.focus(); },30);
 }
 
-/* ---- Settings ---- */
-function vUserSettings(){
-  const myPin=authPins[me.id]||'——';
-  return `<h2>Settings</h2><div class="sub">Your account, your rules.</div>
-  <div class="card">
-    <h3>👤 ${esc(me.name)}</h3>
-    <p class="muted small">Manager: ${esc(me.owner)} ${me.admin?'· 🏠 House admin':''}</p>
-    <hr class="hr">
-    <h3>🔑 Change your PIN</h3>
-    <p class="muted small" style="margin-bottom:12px">PINs are 6 digits. Use something memorable — the house can see all PINs in Back Office.</p>
-    <div class="formrow">
-      <div><label>Current PIN</label><input id="curPin" type="password" inputmode="numeric" maxlength="6" style="width:140px" placeholder="••••••"></div>
-      <div><label>New PIN (6 digits)</label><input id="newPin" type="password" inputmode="numeric" maxlength="6" style="width:140px" placeholder="••••••"></div>
-      <button class="btn" onclick="doChangePin()">Update PIN</button>
-    </div>
-    ${me.admin?`<div class="helpbox" style="margin-top:10px">Your current PIN: <b class="mono">${esc(myPin)}</b></div>`:''}
-  </div>
-  <div class="card"><h3>🚪 Session</h3>
-    <button class="btn secondary" onclick="logout()">Log out</button>
-  </div>`;
-}
-
-function doChangePin(){
-  const cur=document.getElementById('curPin').value.trim();
-  const nw=document.getElementById('newPin').value.trim();
-  if(cur!==authPins[me.id]){ toast('Current PIN is wrong',true); return; }
-  if(!/^\d{6}$/.test(nw)){ toast('New PIN must be exactly 6 digits',true); return; }
-  changePin(nw).then(()=>toast('PIN updated 🔑')).catch(()=>toast('Failed to update PIN',true));
-}
-
 // ── PART 4: Admin Views + Render + Init ──────────────────────────────
 /* ================================================================
    PART 4 — Admin Views, Render, Init
@@ -4133,14 +4103,6 @@ function vUserSettings(){
       <button class="btn" onclick="submitPinChange()">Save PIN</button>
     </div>
   </div>
-  ${me.admin?`<div class="card">
-    <h3>🔗 FPL League ID</h3>
-    <p class="muted small">The numeric ID from your league URL at draft.premierleague.com/league/<b>ID</b>/standings</p>
-    <div class="formrow" style="margin-top:10px">
-      <div><input id="fplLeagueIdSet" value="${esc(S.fpl.leagueId||'')}" placeholder="e.g. 123456" style="width:160px"></div>
-      <button class="btn small" onclick="S.fpl.leagueId=document.getElementById('fplLeagueIdSet').value.trim();save();toast('League ID saved')">Save</button>
-    </div>
-  </div>`:''}
   <div class="card">
     <h3>🚪 Session</h3>
     <button class="btn secondary" onclick="logout()">Log out</button>
