@@ -1712,3 +1712,126 @@ Back Office, to know who to nudge.
   exactly the seeded logins/built/placed/conversion numbers — confirming the sort order, the
   quiet-flag threshold, and the per-team aggregation math are all correct, not just crash-free.
   Commit pending.
+
+---
+
+## ROUND 9 — odds model recalibration + explainability, 2026-09-11
+
+Real GW4 production draft data (screenshot from Dan, Odds Setter) showed batch 48's model
+running far too hot: match odds swinging as wide as 1.07/4.29 and draws pricing at 23-28
+across every single fixture, when the user's own worked examples (used to calibrate batch 48
+in the first place) describe a typical match sitting close to ~1.75-1.8 either side with a
+12-16 draw, only rarely moving wider for a genuinely lopsided matchup. Batch 48's per-example
+calibration checks passed in isolation but the model still runs far too hot across a real
+6-fixture gameweek — needs a harder variance ceiling, not just anchor-point tuning. Also:
+batch 48 weighted recent player-level FPL `form` fairly heavily in `squadExpected()`, which
+the user has now explicitly said is backwards — squad composition/quality ("the players they
+have") should dominate, recent hot/cold streaks (both team-level H2H recency and player-level
+`form`) should be a secondary nudge, not a primary driver. Same model owner as batch 48 (Opus
+5, high effort) for the recalibration + new explainability work; a small, unrelated Settings
+fix goes to Sonnet 5 (batch 53) since it's real "other changes", not model work. Both batches
+run in isolated worktrees this round — batch 48 already proved a shared working tree collides
+with the other Claude Code session Dan confirmed is legitimately active on this repo.
+
+- [ ] 52. (Opus 5, high effort) **Recalibrate the odds model's variance + reweight squad-over-
+  form + add per-match "why these odds" explainability + a general Back Office explainer.**
+  Four things, all genuinely "the model" per the user's own framing — do them together, in the
+  same batch, since the explainability work needs to read the exact internal factors your
+  recalibration produces.
+  **(1) Variance recalibration — the main fix.** Real numbers from GW4 (screenshot, quote it
+  back in your retrospective so there's a before/after): Dunney Monsters v Fride FC 1.17/25.96/3.3,
+  Huxley v KapilaMockingbirds 2.04/22.97/1.51, Inter Rowe-Z v The Adders FC 2.03/22.97/1.51,
+  Henry's Heroes v The Murovers 1.23/24.89/2.9, Blanks Bruisers v Disco Dave's Dodgers
+  1.7/22.72/1.77, Selig's Shakers v Roundabout Rangers 4.29/27.9/1.07 — at `oddsCompetitiveness`
+  whatever it's currently set to in production (check it, state it in your report). Target
+  behaviour, stated as hard bounds to verify against, not vibes: for a normal/typical matchup,
+  home and away odds should sit close to **~1.75-1.8** (the user explicitly said anchor nearer
+  1.75 than the old 1.8), moving modestly either side on real strength differences; dropping
+  below **~1.5** or rising above **~2.0-2.1** should be rare, reserved for a genuine, real
+  mismatch (e.g. one squad missing several key players against a full-strength opponent) — not
+  the default outcome for an ordinary form/squad gap the way GW4 shows. Draws should typically
+  sit **12-16**, essentially never in the 20s+ the screenshot shows, and only push toward the
+  wider end of a sane range (~16-18ish, use your judgement, but keep a hard sane ceiling) for a
+  genuinely lopsided match — never spiral toward 25-28 as the default. Find the actual mechanism
+  producing today's excess variance rather than just re-tuning constants blind — worth checking,
+  in order: (a) whether `projectTeams()`'s squad-relative multiplier and `teamFormProj()`'s
+  recency-weighted form are compounding (two independently-swinging signals multiplying against
+  each other) rather than blending, producing more combined swing than either alone justifies;
+  (b) whether `SD`/`SD_DIFF`'s scale is well-matched to the actual spread of real per-team
+  projections this league produces, since `phi(D/SD_DIFF)` amplifies a modest real point gap
+  into a large probability skew if the scale is off; (c) whether the evidence-based shrink on
+  `D` is compressing enough at GW4's low sample size (early season = low evidence = should shrink
+  HARD toward a near-even prior, not let squad/form swings through mostly unshrunk); (d) whether
+  `leagueDrawRate()`'s gaussian taper crushes `pD` toward its 2% floor too easily whenever there's
+  any real projection gap at all — that's very likely the direct cause of every draw in the
+  screenshot pricing 23-28 despite `houseEdgePct()` being independently verified correct in batch
+  48. Fix the actual mechanism, then re-verify against all 6 real GW4 fixtures above (pull them
+  from the actual current Firebase draft data if you have a way to read it read-only, or
+  reconstruct equivalent squad/form/fixture inputs in your harness closely matching what
+  produced those 6 numbers) and report clean before/after pairs for each. **(2) Reweight squad
+  composition over recent form/streaks.** Explicit user instruction, quoted: "make sure you
+  don't weight player form (game-week player form, like [recency]) too highly over the actual
+  players they currently have... it doesn't necessarily mean that just because you've won the
+  last two games and someone's lost the last two games, you would actually beat them. It all
+  comes down primarily to the players they have." This touches two places: `squadExpected()`
+  currently does `0.65*form + 0.35*ppg` per player — flip the balance so the more stable
+  season-quality signal (`ppg`/`tp`) dominates and the volatile recent-form figure is the minor
+  modifier, not the other way round (exact split is your call — reason about it and document
+  why, this isn't asking for a specific number, just the right ordering of dominance). Separately,
+  reconsider `projectTeams()`'s framing generally — batch 48 built it as "form sets the level,
+  squad nudges it ±13-17%"; the user's ask suggests squad composition should be closer to the
+  PRIMARY signal for what a team is actually capable of this gameweek, with recency-weighted H2H
+  form as the smaller adjustment on top (not necessarily a full inversion — use judgement, a
+  team's H2H record still carries real information, e.g. captaincy/bench-boost decisions and
+  variance the raw squad numbers can't see — but the user has been explicit that squad quality
+  should not be secondary to a two-game streak). Explain your final weighting choice plainly in
+  the retrospective. **(3) Per-match "why these odds" explainability in Bet Builder.** New pure
+  function, e.g. `matchPricingRationale(state, gwId, matchId)`, returning 2-3 short plain-English
+  bullet points (plus optionally a one-line headline) built from the SAME factors that actually
+  drove that match's projection — fixture ease/difficulty for each squad, key
+  injuries/doubts (name the specific unavailable/doubtful player if there is a standout one,
+  not just a count), a top-scoring player facing a notably hard fixture, and/or a real
+  recent-form trend — matching the user's own example almost exactly: *"Selig has much better
+  fixtures, with four home games against easy teams, whereas Huxley has three injuries and his
+  highest-scoring player has a difficult fixture."* Wire this into `vGwBoard`/wherever a fixture
+  row is clickable in Bet Builder: clicking a match/fixture opens a small popup or expandable
+  panel (reuse an existing modal pattern in this app — `#betModal`/`#squadModal` are the two
+  precedents, grep and follow one) headed something like "Why these odds?" showing those bullets.
+  Keep it honest — if there isn't a genuinely notable factor for a bullet slot (e.g. no injuries,
+  fixtures roughly even), say so plainly or omit the bullet rather than inventing padding.
+  **(4) General model explainer in Back Office.** Near the `oddsCompetitiveness` slider (batch
+  48's "📏 Limits & edge" addition), add real explanatory copy in plain language — what the model
+  actually weighs and roughly how much each factor matters (squad quality primary, recent
+  form/results secondary, fixture difficulty adjustment, house-edge slider explained in one line)
+  — accurate to what THIS batch actually ships, not batch 48's original design, since you're
+  changing the weighting. A collapsed `<details>`/expandable "How are these odds calculated?"
+  is a reasonable pattern already used elsewhere in this app (grep `<details>` for the house
+  style) — reuse it rather than inventing new UI chrome. **Do not touch**: `houseEdgePct()`'s
+  10%-floor/28%-ceiling logic itself (batch 48 already calibrated and verified that against the
+  user's own examples — the problem is the FAIR PROBABILITY going into it, not the edge applied
+  on top), `officialOddsCheck()`/batch 49's flag, or batch 50's scheduler logic (though if your
+  recalibration changes `MODEL` constants or function shapes batch 50's Node port references,
+  flag exactly what changed so a follow-up can re-port it — don't try to edit the workflow
+  yourself unless it's trivial). Verify: the usual brace/paren/bracket/backtick balance check,
+  the 6-fixture real-GW4 before/after comparison described above, a harness sweep across a wider
+  range of synthetic team/squad strength gaps (not just the 6 real ones) confirming the new
+  bounds hold generally and not just on this one lucky gameweek, and a manual trace confirming
+  the Bet Builder explainer renders sensible, honest bullets (not hallucinated padding) for at
+  least 2-3 different real fixture shapes (a close one, a lopsided one, one with a real
+  injury/doubt in the seed data).
+
+- [ ] 53. (Sonnet 5, medium-high effort) **Remove league-code editing from player Settings.**
+  Small, contained, independent of batch 52. `vUserSettings()` (grep it — note there are
+  currently TWO functions with this exact name in index.html; only the second/later one, ~line
+  4104, is live since JS keeps the last declaration and the first is dead code, worth deleting
+  too if it's a clean one-line removal but not required) has a "🔗 FPL League ID" card
+  (~line 4136-4143) gated behind `me.admin` that lets an admin directly overwrite `S.fpl.leagueId`
+  with a raw `onclick` — no `confirm()`, no `audit()` log entry, no re-sync trigger — a quiet
+  duplicate of the proper, safeguarded League ID field already in Back Office's FPL Sync card
+  (~line 6067, part of the real sync flow). User's explicit ask: "remove the functionality where
+  they can edit the league code... it obviously can mess up the entire sync." Remove this card
+  from `vUserSettings()` entirely — the canonical, safe place to change the league ID stays Back
+  Office, untouched. Don't add a read-only display of it either unless that's trivial and clearly
+  harmless — the ask is removal, not a reduced version. Verify: balance check, and a quick grep
+  confirming no other code path reads `fplLeagueIdSet` (the input id you're deleting) so nothing
+  else silently breaks.
