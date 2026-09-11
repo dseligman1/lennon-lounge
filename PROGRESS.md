@@ -1820,7 +1820,7 @@ with the other Claude Code session Dan confirmed is legitimately active on this 
   least 2-3 different real fixture shapes (a close one, a lopsided one, one with a real
   injury/doubt in the seed data).
 
-- [ ] 53. (Sonnet 5, medium-high effort) **Remove league-code editing from player Settings.**
+- [x] 53. (Sonnet 5, medium-high effort) **Remove league-code editing from player Settings.**
   Small, contained, independent of batch 52. `vUserSettings()` (grep it — note there are
   currently TWO functions with this exact name in index.html; only the second/later one, ~line
   4104, is live since JS keeps the last declaration and the first is dead code, worth deleting
@@ -1835,3 +1835,24 @@ with the other Claude Code session Dan confirmed is legitimately active on this 
   harmless — the ask is removal, not a reduced version. Verify: balance check, and a quick grep
   confirming no other code path reads `fplLeagueIdSet` (the input id you're deleting) so nothing
   else silently breaks.
+  **Retrospective:** Removed the whole "🔗 FPL League ID" card (was ~line 4136-4143, gated on
+  `me.admin` but living inside the shared player Settings page everyone reaches the same way) from
+  the live `vUserSettings()`, including its raw `onclick="S.fpl.leagueId=...;save();..."` — no
+  read-only replacement added, per the "ask is removal" instruction. Grep confirmed `fplLeagueIdSet`
+  was referenced nowhere else in index.html, so nothing else breaks. Back Office's real, safeguarded
+  League ID field (`fplLeagueId`, part of the FPL Sync card, ~line 6029 after this edit) is fully
+  untouched — confirmed by grepping every remaining `leagueId` occurrence in the file. Bonus cleanup:
+  also deleted the dead, never-called first `vUserSettings()` (the earlier declaration JS was
+  discarding anyway, since it keeps only the last) plus its only caller, `doChangePin()`, which
+  became orphaned once that block was gone — a clean, self-contained removal, no other references
+  to `curPin`/`newPin`(input)/`doChangePin` remained afterward (`changePin(newPin)` at line 1117 is
+  an unrelated function with its own local parameter name). Verification: brace/paren/bracket count
+  balanced before and after ({ 2926/2926, ( 6426/6426, [ 643/643), backtick count even (1000); manual
+  trace of the remaining `vUserSettings()` markup confirms correct div/card nesting straight through
+  to the closing template literal. Skipped the headless-Edge smoke check — the app boots against a
+  real Firebase project and requires a PIN login before any Settings view renders, so a meaningful
+  stub would be more than the "quick, don't over-invest" bar this batch called for; the manual trace
+  + balance check the task explicitly allows for a change this size covered it instead. Net: 38 lines
+  deleted, 0 added. Commit 48e6479 in worktree `agent-a853f73432268c408`
+  (branch `worktree-agent-a853f73432268c408`). Outstanding for the orchestrator: the
+  "copy index.html to ../lennon-lounge-v2.html" step, skipped as ambiguous from a nested worktree.
