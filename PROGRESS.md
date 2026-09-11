@@ -1534,7 +1534,108 @@ commit hash when done.
   flagged for the orchestrator to sync once this branch is merged, rather than risk a racy write to
   a shared file from a worktree that doesn't have batch 48's concurrent changes). Commit `4339178`.
 
-- [ ] 50. (Sonnet 5, medium-high effort) **Auto-populate Odds Setter 21h before cutoff.**
+- [x] 50. (Sonnet 5, medium-high effort) **Auto-populate Odds Setter 21h before cutoff — DONE,
+  commit `74edfa5`.** Ran in an isolated worktree; discovered on start that batches 48/49 hadn't
+  reached this worktree's branch yet (they landed on `main-push` at `5376cc6`, ahead of this
+  worktree's `bff86d7` base) — fast-forward merged (`git merge 5376cc6 --ff-only`, clean, no
+  conflicts, nothing of this worktree's own lost) before starting, per the orchestrator's
+  instruction to read what 48/49 actually shipped rather than guess.
+  **Schedule decision.** No new `schedule:` trigger added — a different session had already added
+  an hourly self-throttled one (`bff86d7`, "Add FPL status pill to Settler tab, auto-sync +
+  self-throttled schedule") before this batch started. Its throttle only does a full sync within
+  2h-before/1h-after a deadline or on a matchday — both narrower windows than "21h before", which
+  sits entirely outside them — so a plain reuse would mean this feature could never fire. Widened
+  the SAME `if ((TRIGGER_EVENT||'schedule')==='schedule')` gate with a third OR condition,
+  `oddsDue`, computed from one extra lightweight `readFirebase('lennon-lounge/gameweeks', token)`
+  call (same cost class as the existing matchday fixtures check right above it) feeding
+  `oddsWindowDue(nearestDraftGw(gws), now)`. **Window chosen: 20-22h before cutoff** (a 2h band,
+  not a single instant) — "~21h" at hourly-cron granularity needs some slack, and a band means the
+  existing hourly tick reliably lands inside it at least once (typically twice) even if a run is
+  late or skipped; `oddsAutoSuggestedAt` makes a second hit a no-op, so the wider band costs
+  nothing extra in effect, only in how often the *check* runs.
+  **Cost flagged plainly, as asked:** this widening means 1-2 extra full-sync runs per gameweek
+  (squad/lineup fetches — a fetch per manager — plus the extra Firebase reads/writes below) that
+  the existing throttle would otherwise have skipped outright, on top of whatever it already runs
+  for deadline/matchday. Modest (a handful of GitHub Actions minutes per gameweek, once a week),
+  but real and recurring — worth Dan's awareness, not something to wave through silently.
+  **The model port.** `.github/workflows/fpl-sync.yml` gained a ~300-line hand-maintained Node port
+  of batch 48's PURE scoring/pricing functions (`MODEL`, `ODDS_EDGE`, `phi`/`pOver`/`SD`/`SD_DIFF`,
+  `edgedOdds`, `houseEdgePct`, `teamResults`/`teamFormProj`, `playerAvailability`/
+  `squadMinutesContext`/`playerStartShare`/`playerFixtureMult`/`squadExpected`, `projectTeams`,
+  `leagueDrawRate`/`fairMatchProbs`, `recOdds`, `extremeScoreProbs`, `suggestSpecialOdds`) — copied
+  field-for-field from index.html with ONE structural change throughout: `squadIds`/`lineupIds`/
+  `plFixturesFor`/`clubFixture` take an explicit `state` param instead of reading the browser's
+  global `S` (index.html's own versions quietly rely on `state===S`, which only holds in the
+  browser). Deliberately NOT ported: `specialMarketDefaultLine()` (only used when the admin first
+  *creates* a market — this Action, like `rerecommend()`/`rerecommendMarket()` in-app, only ever
+  resets an *existing* market's `.odds`, never its `.line`) and `teamAvg()` (display-only). A
+  16-entry `SPECIAL_MARKET_KIND` map mirrors `SPECIAL_MARKET_TEMPLATES`' ids→`{kind,dir}` only —
+  `suggestSpecialOdds()` never reads `tpl.line`/`tpl.lineOffset`, so nothing else was needed.
+  New `recomputeGwOdds(state,g)` is the Node equivalent of clicking "↺ Reset all to recommended" —
+  maps `g.matches`/`g.specialMarkets` through `recOdds`/`suggestSpecialOdds`, replacing only
+  `.odds` on each element, everything else (ids, results, lines, labels) passed through untouched.
+  **Orchestration.** New `maybeAutoSuggestOdds(token)` runs at the end of every full sync
+  (whichever condition triggered it): reads the whole `lennon-lounge` state fresh, finds
+  `nearestDraftGw()` (same selection as `vOddSetter()`'s `nextDraft` — lowest `event`, `status==
+  'draft'`, has a `deadline`), and self-gates independently of why the run happened — a manual
+  `workflow_dispatch` outside the window is a safe no-op, not a forced fire. On a genuine hit:
+  `recomputeGwOdds()`, then a **targeted PATCH** to `lennon-lounge/gameweeks/{key}` with exactly
+  `{matches, specialMarkets, oddsAutoSuggestedAt}` — no `status` key in the payload at all, so this
+  path is structurally incapable of publishing a gameweek, not just conventionally careful about
+  it. New `gwFirebaseKey()` resolves that key by matching `g.id`, handling both a true JSON array
+  and RTDB's sparse-object-with-string-keys shape (getting this wrong would silently PATCH the
+  wrong gameweek) — array position is NOT trusted. Notification: new `pushNotif(teamId,type,msg,
+  token)` + `pushToFirebase()` (a POST, Firebase's actual push-key semantics, vs. every other write
+  in this file which is a PATCH merge) mirror index.html's own `pushNotif()` object shape
+  ({id,type,msg,ts,read}) field-for-field, sent to `lennon-lounge-notifs/{teamId}` for
+  `ADMIN_TEAM_IDS=['selig','rowez']` — hardcoded to mirror `TEAMS[].admin===true` in index.html
+  (there being only two admins and no `admin` flag carried in the workflow's own slimmed `TEAMS`
+  array); flagged inline to keep in sync by hand if that ever changes.
+  **index.html**: `oddsCard()`'s draft card now shows a line — "🤖 Auto-suggested {timeAgo(...)} by
+  the FPL Sync Action ... — not yet reviewed" — when `g.oddsAutoSuggestedAt` is set, reusing the
+  existing `timeAgo()` helper rather than inventing a new formatter. Deliberately left un-cleared
+  by manual edits/`rerecommend()` — it's a factual "this was auto-populated at time X" record, not
+  a review-status flag, so there's nothing to invalidate when the admin tweaks a price afterward.
+  **Verified.** Brace/paren/bracket/backtick balance on the full `index.html` (`{`2853/2853
+  `(`6299/6299 `[`611/611, 964 backticks) and on the workflow's extracted embedded script
+  (`{`284/284 `(`712/712 `[`88/88, 78 backticks) — both balanced (no node/python in this
+  environment, same established grep method). Built a **42-assertion headless-Edge
+  (`--headless=new --dump-dom`) harness**, Firebase and the FPL network layer both mocked (in-
+  memory `readFirebase`/`writeToFirebase`/`pushNotif` stand-ins recording every call; zero live
+  network or DB contact), pasting the ported code **verbatim** from the workflow file rather than
+  retyping it. Coverage: pricing-math sanity (a hand-derived 56-vs-46 zero-history case matches
+  `fairMatchProbs()` to within 1%; `houseEdgePct` anchors at 20/10/1 exactly reproduce 10.0/16.3/
+  28.0 and the curve is monotonic; `edgedOdds` floors a near-certainty at exactly 1.05;
+  `playerFixtureMult` differentiates easy/hard/blank/double fixtures correctly; an injured 6-of-11
+  squad projects below an identical-form healthy squad; all 16 special-market templates price to
+  finite numbers ≥1.05) plus the **window/idempotency suite the spec specifically asked for**:
+  fires exactly once on a draft gameweek squarely in the 20-22h window; never touches a draft
+  40h out or 2h out (outside the band either direction); never touches an open gameweek even when
+  it sits inside the window (only `status==='draft'` is eligible at all); the write payload is
+  exactly `{matches,specialMarkets,oddsAutoSuggestedAt}` with **no `status` key present** on every
+  fire; re-running against the just-stamped gameweek (simulating the next hourly tick) fires zero
+  additional writes/notifications; the nearest-by-event draft governs even when a later, in-window
+  draft exists and the nearest one doesn't qualify (matches `vOddSetter()`'s `nextDraft` semantics
+  exactly); `gwFirebaseKey()` resolves the correct child key on both array- and sparse-object-
+  shaped `gameweeks` nodes; exactly 2 admin notifications (selig+rowez, no one else) fire on a real
+  hit; recomputed match odds actually differentiate two different-baseline teams (not flat noise).
+  **42/42 passed, `TESTOK:true`.** Harness file (`batch50_harness.html`, a temp-dir scratch file)
+  deleted after the run, not committed.
+  **Caveats for the orchestrator to double-check before merging.** (1) The port's fidelity to
+  batch 48's actual `index.html` functions rests on a careful line-by-line transcription plus the
+  hand-derived-math cross-check above (which matched to within 1%) — it was NOT verified by
+  actually loading `index.html` and diffing outputs side-by-side (no shared-module path exists
+  between a browser file and this Node Action), so a byte-level parity check is still worth doing
+  if there's time. (2) `ADMIN_TEAM_IDS` is a hardcoded mirror of `selig`/`rowez` — if the admin
+  roster ever changes in index.html's `TEAMS`, this file needs a matching hand-edit; nothing
+  enforces the two staying in sync. (3) The 20-22h window is a deliberate 2h band, not a literal
+  "21h" point-in-time — see the schedule-decision note above for why. (4) Recurring GitHub Actions
+  cost genuinely increases (flagged above and in the commit message) — not large, but not zero,
+  and worth Dan knowing it's there. (5) Skipped the `index.html` → `../lennon-lounge-v2.html` sync
+  copy step, same as batch 49's finding (ambiguous/risky from a nested worktree) — outstanding for
+  the orchestrator after merge. Not pushed — committed locally only.
+
+  Original spec follows.
   **Do this AFTER batch 48 lands** (needs its actual function names/shape — read what 48 shipped,
   don't guess). `.github/workflows/fpl-sync.yml` currently has NO schedule trigger at all
   (`workflow_dispatch` only, manual button) — add a `schedule:` cron (hourly is a reasonable
