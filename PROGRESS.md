@@ -1733,8 +1733,201 @@ fix goes to Sonnet 5 (batch 53) since it's real "other changes", not model work.
 run in isolated worktrees this round — batch 48 already proved a shared working tree collides
 with the other Claude Code session Dan confirmed is legitimately active on this repo.
 
-- [ ] 52. (Opus 5, high effort) **Recalibrate the odds model's variance + reweight squad-over-
-  form + add per-match "why these odds" explainability + a general Back Office explainer.**
+- [x] 52. (Opus 5, high effort) **Recalibrate the odds model's variance + reweight squad-over-
+  form + add per-match "why these odds" explainability + a general Back Office explainer —
+  DONE, commit `56ad13e`.** Run in an isolated worktree (`worktree-agent-ad37df7d8aa83aa80`),
+  per the round header — no repeat of batch 48's wiped-file incident.
+
+  **First, the reconstruction — because you can't fix what you can't reproduce.** Production
+  Firebase isn't readable from a headless harness, so the GW4 inputs were rebuilt by inverting
+  the screenshot. Back-calculating the six books (`0.837/odds` summed to 1.0 on all six) pins the
+  house edge at **16.3%, i.e. `oddsCompetitiveness` 10, the default — confirmed, and stated here
+  as the spec asked**. The draw prices then pin `leagueDrawRate()` at **exactly 0.036842**, which
+  is `(0 + 0.07×20)/(18 + 20)` — i.e. **18 settled matches and zero ties**, exactly GW1-3 of a
+  12-team league. From there a fitting pass (feeding `recOdds()` a synthetic `projMap` and
+  bisecting) gave the projection gap batch 48 needed for each fixture: **+17.1, −5.0, −4.9,
+  +14.2, +0.6, −22.9 points**, off a 12-team projection spread of **38.8 → 61.6**. A seeded
+  12-team state (3 gameweeks of H2H scores, 180 FPL players, injuries, minutes, a GW4 PL fixture
+  list with real FDR spread) was then solved backwards to produce those projections, and it
+  **reproduces all six published triples to within a penny** under the unmodified batch-48 code
+  (`git show HEAD:index.html` is built into the harness as the before-reference, so before/after
+  run on byte-identical seed data). The form/squad split within each team is a reconstruction
+  choice — squad quality was made *positively correlated with form level* (the realistic story,
+  and the conservative one, since it preserves the gaps rather than flattering the new model).
+
+  **Root cause — four mechanisms stacking, not one.** The spec listed four candidates; all four
+  were real, and the biggest one wasn't the draw.
+  **(a) `projectTeams()` MULTIPLIED two correlated signals** — `proj = formProj × (1 + SQUAD_W×
+  (rel−1))`. Form and squad quality are the same information twice over (a good squad is *why* a
+  manager has been scoring), so multiplying them compounds rather than combines. Now blended:
+  each signal is expressed as a **deviation in points from the league's own level** and the two
+  are combined as a weighted average with weights summing to 1 — the correct operation on two
+  estimates of the same quantity, and the only framing in which "squad first, form second" is
+  even expressible.
+  **(b) The evidence shrink was invented, and it was wrong by a factor of ~7.** `SHRINK_MIN 0.55`
+  / `SHRINK_K 3` treated **75%** of a three-game gap as real. With `FORM_DECAY 0.82` the weights
+  are (1, .82, .67), so the effective sample size is **n_eff = 2.92 games**; with a per-week
+  scoring SD of 15 the standard error on a team's form level is **~5.5 points**, which is about
+  the *entire* observed spread between the league's best and worst manager at GW4. New
+  `formReliability(ids, form)` is the textbook empirical-Bayes / James-Stein answer and needs no
+  new tuning constant, because it reads the answer off the league's own data: observed cross-team
+  variance − mean sampling variance = τ², and each team's deviation is believed at τ²/(τ² + its
+  own sampling variance). On the GW4 reconstruction: varObs 16.5, meanNoise 32.3 → τ² floored at
+  4 → **form deviations believed at 11%, not 75%**. `teamFormProj()` now also returns `neff` and
+  `att` (the share of the posterior that came from results rather than the hand-set
+  `S.stats[].base` prior) so the sampling variance can be computed properly for both halves.
+  It self-corrects: the harness's 20-gameweek run has varObs 28.1 against meanNoise 15.0 →
+  τ² 13.2 → **47%**, so a league whose managers genuinely diverge gets its form signal back.
+  **(c) The draw.** `leagueDrawRate()` was reading this league's *true* tie rate (0/18 blended to
+  3.7%), and 3.7% at a 16.3% edge **is** a 22.7 — the gaussian taper then stretched the lopsided
+  ones to 27.9. Batch 48 flagged this honestly and asked Dan to decide; he has. The estimate
+  stays honest (same 0.07/20-game blend, so the number still means what it says), and it is
+  `fairMatchProbs()` that now treats it as a **±`DRAW_TILT` (10%) nudge around `DRAW_BASE`
+  (0.068)**, clamped to `[DRAW_P_MIN 0.050, DRAW_P_MAX 0.070]`. Deliberately *not* done by
+  inflating `DRAW_PRIOR_N` until the estimate itself came out at 7% — that would have hidden a
+  business decision inside a statistic. **A real flaw the harness caught late:** the first version
+  *did* use a heavy prior, and the 20-gameweek test showed every draw pinning to the band floor at
+  16.41 as the league's own (tie-free) sample eventually dominated. The tilt-around-an-anchor
+  shape is stable across 3 and 20 gameweeks alike.
+  **(d) Nothing capped the book.** New `MODEL.GAP_SOFTCAP` (4.2 pts) applies `D = cap·tanh(raw/
+  cap)` in `fairMatchProbs()`: small gaps pass through essentially unchanged, large ones saturate.
+  That's the shape a posterior mean genuinely takes under a heavy-tailed prior on the true gap — a
+  20-point projected gap between two 12-team Draft managers is far more likely to be model error
+  than a real edge — and it is stated in the code as what it is: one named constant expressing
+  Dan's own rail (widest book ~1.52/2.12, ordinary ~1.78) rather than that rail being smeared
+  across five constants. The batch-48 shrink was *removed* from `fairMatchProbs()` rather than
+  re-tuned, because with (b) in place applying it there too would shrink twice.
+
+  **Before → after, the six real GW4 fixtures** (both columns from the same harness, same seed,
+  competitiveness 10; the "before" column is the committed batch-48 code and matches Dan's
+  screenshot to within a penny on every line):
+
+  | fixture | batch 48 (screenshot) | batch 52 |
+  |---|---|---|
+  | DUNNEY MONSTERS v Fride FC | 1.17 / 25.96 / 3.30 | **1.56 / 14.45 / 2.04** |
+  | HUXLEY v KapilaMockingbirds | 2.04 / 22.97 / 1.51 | **1.99 / 14.18 / 1.60** |
+  | Inter Rowe-Z v The Adders FC | 2.03 / 22.97 / 1.51 | **1.91 / 13.88 / 1.66** |
+  | Henry's Heroes v The Murovers | 1.23 / 24.89 / 2.90 | **1.60 / 14.20 / 1.99** |
+  | Blanks Bruisers v Disco Dave's Dodgers | 1.70 / 22.72 / 1.77 | **1.73 / 13.70 / 1.83** |
+  | Selig's Shakers v Roundabout Rangers | 4.29 / 27.90 / 1.07 | **1.94 / 13.99 / 1.63** |
+
+  Match sides went from a 1.07-4.29 range to **1.56-2.04**; draws from 22.7-27.9 to
+  **13.70-14.45**. The 12-team projection spread went from 38.8-61.6 (SD 6.66) to 46.9-51.9
+  (SD 1.58). A genuinely level fixture prices **1.78 / 13.67 / 1.78**, and the slider preview's
+  dead-even book at setting 10 is **1.79 / 12.30 / 1.79** — which is Dan's own "1.8/1.8/12"
+  worked example to the penny, the same calibration batch 48 was built against, now reached
+  across a whole gameweek instead of only in isolation.
+
+  **The squad-vs-form reweighting, and why those numbers.** Dan's instruction was about ordering,
+  not a specific split, so both places the ordering lived were inverted.
+  *Per player:* `MODEL.FORM_BLEND` **0.65 → 0.30** in `squadExpected()` — season `ppg` (the stable
+  estimate of a player's scoring rate) now leads at 70% and FPL's 30-day `form` is the 30%
+  modifier. `form` keeps a real share rather than being zeroed because it carries genuinely new
+  information a season average can't see: a player who has just moved into the XI, onto penalties,
+  or into a new role. *Per team:* new `MODEL.SQUAD_W 0.70` / `FORM_W 0.30`. The multiplier that
+  converts squad strength into points is now explicit — `MODEL.SQUAD_TRANSFER 0.45`, a regression
+  coefficient, not a clamp: an XI summing 15% above the league's average XI does **not** score 15%
+  more, because every manager still starts eleven, Draft has no captaincy multiplier, bonus and
+  autosubs land unevenly, and `form`/FDR explain only a modest slice of any single week's returns.
+  Putting that discount in a named coefficient is more honest than burying it in
+  `SQUAD_REL_MIN/MAX` (which are untouched at [0.75, 1.30] and now act purely as an outlier
+  guard, with a new `PROJ_DEV_MAX` ±14% rail behind them). **Net effect at GW4: the H2H record is
+  worth about 3% of a price and the squad about 97%** — because 0.30 is then multiplied again by
+  the 0.11 reliability. That is a stronger inversion than "squad primary, form secondary" sounds,
+  and it is deliberate: it is the arithmetic of exactly what Dan said, that two wins in a row is
+  not evidence you'd beat someone. By GW21 the same code gives form ~16% of the price, which is
+  the right direction of travel.
+
+  **(3) Per-fixture explainability.** New pure `matchPricingRationale(state, gwId, matchId)`
+  (right after `recOdds()`), returning a headline, 2-4 bullets and the priced numbers. Six
+  candidate factors — fixture-difficulty gap, blank gameweeks, injuries/doubts *naming* the
+  standout absentee, the crowned top scorer walking into a 4-5 difficulty tie, overall squad
+  strength, and the recent-results trend — each with its own inclusion threshold and a weight, so
+  the bullets shown are the ones actually carrying the price. **Honesty is enforced, not hoped
+  for:** a factor that doesn't clear its threshold produces no bullet, a league with no squad data
+  says exactly that and emits nothing else, and the harness asserts that no bullet claims an
+  absence for a team that has none and that a fixture with no injuries gets no injury bullet.
+  Real output on the seeded lopsided fixture, which is close to Dan's own example sentence:
+  *"DUNNEY MONSTERS have much the kinder week of real-life fixtures — their likely XI averages
+  3.0/5 for difficulty against Fride FC's 4.6/5." / "Fride FC's highest scorer A. Corwin has a
+  hard one — away at Club 4, rated 5/5."* And on the three-injury fixture: *"HUXLEY have 3 players
+  out injured or suspended — Q. Corwin, their highest scorer this season, is unavailable."*
+  followed by *"HUXLEY have been scoring more lately (59 a week against KapilaMockingbirds's 51
+  over the last 3) — but on only 3 games that's mostly luck, so it barely moves the price."* —
+  which is the model explaining its own new weighting to the person betting into it.
+  Wired in as a **third mode on the existing `#squadModal`** (`openWhyOdds()` → `whyOddsBody()`,
+  alongside batch 29's `single`/`compare`), behind a `❓ Why these odds?` button next to the
+  existing `⚔ Squads` button on every `vGwBoard()` fixture row — so there is still exactly one
+  squad-modal open/close mechanism. Two deliberate details: it shows the **published** price, not
+  the model's suggestion, and says so out loud when the house has moved a price by hand (>5%
+  drift), because explaining a number a player can't bet would be worse than no explanation.
+  **(4) Back Office explainer.** A collapsed `<details>` "🧮 How are these odds calculated?"
+  directly under the `oddsCompetitiveness` slider, in the house `<details>` style already used
+  throughout. It reads its percentages live off `MODEL` so it can't drift from the code, ranks
+  the three inputs in the order the model actually uses them, explains the gap cap, states in one
+  line that the slider changes nothing except the margin, and — the part worth keeping — says
+  plainly that the 12-16 draw band sits **above** fair value and that the house should expect to
+  win more on drawn-market turnover than the headline edge implies. `compPreviewText()` was
+  rebuilt off the live model rather than batch 48's hardcoded 46.5/7/46.5, and its second example
+  is now the **widest book the model will ever print**, which is the number an admin actually
+  wants when deciding how competitive to be. Odds Setter's form-data panel copy was corrected too
+  — it still described form as leading.
+
+  **Verified.** Brace/paren/bracket/backtick balance on the full file (baseline HEAD `{`2938/2938
+  `(`6455/6455 `[`645/645 1006 backticks; after `{`3037/3037 `(`6716/6716 `[`685/685 1058
+  backticks, all balanced). Then a **53-assertion headless-Edge (`--dump-dom`) harness** — both
+  Firebase CDN `<script src>` tags stripped and replaced by a stub (the builder exits 1 rather
+  than proceeding if either tag isn't found), `initApp()` short-circuited, `save`/`saveNow`/
+  `saveFields`/`startListener`/`toast`/`audit` stubbed: **53/53 passed, TESTOK:true, zero
+  `window.onerror` catches**, zero network or DB contact. Coverage: the six real fixtures against
+  hard bounds; a **30-cell synthetic sweep** over form gaps 0-26 pts × squad-quality gaps 0-40%
+  (sides stay 1.53-2.10, draws 13.47-14.76, and the level cell prices 1.78/1.78); four
+  deliberate extremes (10 of 15 injured, an entire squad blanking, a 20-v-80 scoring gap, and all
+  of it at once) which top out at **2.12/1.52** — the rail holds and is reached, not breached; a
+  20-gameweek late-season run proving form earns weight back (11% → 47%) while prices stay in
+  band; blank-gameweek handling still moving a projection (51.9 → 46.1); graceful degradation with
+  no squad data / no event / no results at all; the full competitiveness curve 1-20 with
+  monotonicity, clamping and junk input; the **≥10% realised-margin guarantee re-proven across 9
+  probabilities × 20 settings (worst case exactly 10.00%)**; all 16 special-market templates
+  pricing to finite legal numbers with `algoEdgePct` proven still not to move them; the
+  explainability anti-hallucination assertions above; and a real DOM round-trip rendering
+  `vGwBoard()`, `whyOddsBody()`, `vOffice()` and `vOddSetter()` with no `undefined`/`NaN` leakage,
+  plus both `rerecommend()` paths resetting to the new model.
+
+  **Caveats and follow-ups, plainly.**
+  1. **Batch 50's Node port in `.github/workflows/fpl-sync.yml` is now stale and MUST be
+     re-ported** — not edited here, per the orchestrator's instruction, and it is not a
+     one-constant change. It needs: the whole new `MODEL` object (`FORM_BLEND` 0.30, `SQUAD_W`
+     0.70, new `FORM_W`, `SQUAD_TRANSFER`, `SCORE_SD`, `TALENT_SD_MIN/MAX`, `BASE_NOISE_VAR`,
+     `PROJ_DEV_MAX`, `DRAW_BASE` 0.068, `DRAW_PRIOR_N` back to 20, new `DRAW_TILT`, `DRAW_SPREAD`
+     10, `DRAW_P_MIN/MAX`, `GAP_SOFTCAP`; `SHRINK_MIN`/`SHRINK_K` deleted), the new
+     `formReliability()` function, the rewritten `teamFormProj()` return shape (`neff`/`att`),
+     the rewritten `projectTeams()` body, and the rewritten `fairMatchProbs()` body. Nothing else
+     in the workflow changes. **Until it's re-ported the Action's 21h-before-cutoff auto-suggest
+     will still write batch 48's wide numbers into the draft** — no real-money exposure, because
+     that path is draft-only and an admin still clicks Publish (and can hit "↺ Reset all to
+     recommended", which runs the *browser's* new model), but it will look wrong until fixed.
+  2. **`top_score`/`bottom_score` and the other specials now price much flatter**, because they
+     read `projectTeams()`' projections and those are deliberately far less spread (SD 6.66 →
+     1.58). In the harness the strongest team's top-score price moved from a wide outlier to
+     8.06 against a flat-field 10.0. That's honest — if the model genuinely can't separate the
+     teams, top score really is near-uniform — but it is a visible change to how those markets
+     feel, and it's the one place where compressing the projection has a downside worth watching.
+  3. The **12-16 draw band is a house-policy price, not a fair one.** True exact-tie rate is
+     ~2-4%; fair would be 25-40. The margin runs in the house's favour, the code says so in three
+     places and the Back Office explainer says so to the admin, but it should be a conscious
+     ongoing choice rather than something that quietly becomes invisible.
+  4. At the extreme slider ends the stated 1.52/2.12 rail moves with the edge (at setting 1 a
+     near-even fixture prices 1.49; at setting 20 the widest prices 2.30). The rail is defined at
+     the normal setting — that's the edge doing its job, not the model.
+  5. `suggestSeasonOdds()` (batch 27) **still** prices off `algoEdgePct` — batch 48's caveat (1),
+     still out of scope, still worth a small contained follow-up.
+  6. **The `index.html` → `../lennon-lounge-v2.html` copy was skipped** (ambiguous from a nested
+     worktree, same as batches 49/50) — outstanding for the orchestrator. Nothing pushed: the
+     worktree branch is `worktree-agent-ad37df7d8aa83aa80`, commits `56ad13e` (code) and this
+     PROGRESS.md entry.
+
+  Original spec follows.
   Four things, all genuinely "the model" per the user's own framing — do them together, in the
   same batch, since the explainability work needs to read the exact internal factors your
   recalibration produces.
