@@ -156,6 +156,341 @@ jobs:
             });
           }
 
+          // POST = Firebase's "push" semantics (server generates a unique child key). Used only for
+          // the admin notification below — everything else in this file is a targeted PATCH merge.
+          function pushToFirebase(path, data, token) {
+            const dbHost = DB_URL.replace('https://','').replace(/\/$/, '');
+            return new Promise((resolve, reject) => {
+              const body = JSON.stringify(data);
+              const req = https.request({
+                hostname: dbHost, path: `/${path}.json`,
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Content-Length': Buffer.byteLength(body),
+                  'Authorization': `Bearer ${token}`
+                }
+              }, res => {
+                let d = '';
+                res.on('data', c => d += c);
+                res.on('end', () => { console.log(`POST ${path}: ${res.statusCode}`); resolve(d); });
+              });
+              req.on('error', reject);
+              req.write(body);
+              req.end();
+            });
+          }
+          async function pushNotif(teamId, type, msg, token) {
+            // Mirrors pushNotif() in index.html field-for-field: {id, type, msg, ts, read}, pushed
+            // to lennon-lounge-notifs/{teamId}. Written directly via the REST POST above since this
+            // Action has no Firebase SDK, only the same service-account REST calls used everywhere
+            // else in this file.
+            const notif = { id: Date.now() + '_' + Math.random().toString(36).slice(2), type, msg, ts: Date.now(), read: false };
+            return pushToFirebase(`lennon-lounge-notifs/${teamId}`, notif, token);
+          }
+          function asArr(x) { return Array.isArray(x) ? x : (x ? Object.values(x) : []); }
+
+          /* ================================================================
+             BATCH 50 — PORT of batch 48's deep odds model (index.html), pure-scoring/pricing half
+             only. This is a hand-maintained PORT, not a shared module: index.html has no build step
+             and this Action runs in Node with no access to the browser file at all, so the only way
+             to reuse the model here is to copy the pure math across, same "mirrors field for field"
+             convention ingestFplSquads()'s own header comment already establishes for this file.
+             MUST be kept in sync by hand with index.html's MODEL/ODDS_EDGE/projectTeams/
+             fairMatchProbs/houseEdgePct/recOdds/suggestSpecialOdds/edgedOdds/extremeScoreProbs any
+             time a future batch changes the model there — nothing here recalibrates itself.
+             Deliberately NOT ported: specialMarketDefaultLine() (only used when the admin first
+             CREATES a market in the Loader UI — this Action only ever resets the .odds on markets
+             that already exist, exactly like rerecommend()/rerecommendMarket() in the app, never
+             their .line), teamAvg()/the "avg" display figure (display-only, not used in pricing). */
+          const MODEL = {
+            FORM_DECAY: 0.82, FORM_PRIOR_W: 1.5, FORM_BLEND: 0.65, FDR_SENS: 0.075,
+            DOUBLE_MULT: 1.8, MIN_MINUTES_SHARE: 0.35, SQUAD_W: 0.55,
+            SQUAD_REL_MIN: 0.75, SQUAD_REL_MAX: 1.30,
+            DRAW_BASE: 0.07, DRAW_PRIOR_N: 20, DRAW_SPREAD: 25,
+            SHRINK_MIN: 0.55, SHRINK_K: 3, XI: 11
+          };
+          const SD = 15;
+          const SD_DIFF = SD * Math.SQRT2;
+          const phi = x => 1 / (1 + Math.exp(-1.702 * x));
+          const pOver = (line, avg) => 1 - phi((line - avg) / SD);
+          const ODDS_EDGE = { MIN: 10, MID: 16.3, MAX: 28 };
+          const FPL_AVAIL = { a: 1, d: 0.6, i: 0, s: 0, u: 0, n: 0 };
+
+          function edgedOdds(fairP, edgePct) {
+            const k = 1 - edgePct / 100;
+            const pMax = Math.min(.97, k / 1.05);
+            const fair = 1 / Math.min(pMax, Math.max(.03, fairP));
+            return Math.max(1.05, Math.floor(fair * k * 100) / 100);
+          }
+          function houseEdgePct(settings) {
+            let s = Math.round(Number(settings && settings.oddsCompetitiveness));
+            if (isNaN(s)) s = 10;
+            s = Math.max(1, Math.min(20, s));
+            const e = s <= 10 ? ODDS_EDGE.MAX - (s - 1) * (ODDS_EDGE.MAX - ODDS_EDGE.MID) / 9
+                              : ODDS_EDGE.MID - (s - 10) * (ODDS_EDGE.MID - ODDS_EDGE.MIN) / 10;
+            return Math.max(ODDS_EDGE.MIN, Math.min(ODDS_EDGE.MAX, Math.round(e * 10) / 10));
+          }
+          function squadIds(state, teamId) { return asArr(((state.fpl || {}).squads || {})[teamId]); }
+          function lineupIds(state, teamId) { return asArr(((state.fpl || {}).lineups || {})[teamId]); }
+          function plFixturesFor(state, ev) { return asArr(((state.fpl || {}).plFixtures || {})[ev]); }
+          function clubFixture(state, plTeamId, ev) {
+            if (!plTeamId || !ev) return null;
+            const list = plFixturesFor(state, ev).filter(f => f && (f.h === plTeamId || f.a === plTeamId));
+            if (!list.length) return null;
+            const f = list[0], home = f.h === plTeamId;
+            return { home, fdr: Number(home ? f.hd : f.ad) || 0, count: list.length };
+          }
+          function teamResults(state, tid, beforeEvent) {
+            const out = [];
+            const gws = asArr(state.gameweeks);
+            const localEvents = new Set(gws.filter(g => g && g.event && asArr(g.matches).some(m => m.result)).map(g => g.event));
+            asArr(state.history).forEach(h => {
+              if (localEvents.has(h.event)) return;
+              if (h.a === tid) out.push({ event: Number(h.event) || 0, pts: h.ap });
+              if (h.b === tid) out.push({ event: Number(h.event) || 0, pts: h.bp });
+            });
+            gws.forEach(g => asArr(g.matches).forEach(m => {
+              if (!m.result) return;
+              if (m.home === tid) out.push({ event: Number(g.event) || 0, pts: m.result.homePts });
+              if (m.away === tid) out.push({ event: Number(g.event) || 0, pts: m.result.awayPts });
+            }));
+            const cut = Number(beforeEvent) || 0;
+            return out.filter(r => !cut || !r.event || r.event < cut).sort((a, b) => (b.event || 0) - (a.event || 0));
+          }
+          function teamFormProj(state, tid, beforeEvent) {
+            const res = teamResults(state, tid, beforeEvent);
+            const base = (state.stats && state.stats[tid] && state.stats[tid].base) || 50;
+            let sw = MODEL.FORM_PRIOR_W, sx = base * MODEL.FORM_PRIOR_W;
+            res.forEach((r, i) => { const wt = Math.pow(MODEL.FORM_DECAY, i); sw += wt; sx += wt * (Number(r.pts) || 0); });
+            return { proj: sx / sw, weight: sw - MODEL.FORM_PRIOR_W, n: res.length };
+          }
+          function playerAvailability(p) {
+            const st = (p && p.st) || 'a';
+            if (st === 'i' || st === 's' || st === 'u' || st === 'n') return 0;
+            const cp = (p && p.cp != null) ? Number(p.cp) : null;
+            if (cp != null && !isNaN(cp)) return Math.max(0, Math.min(1, cp / 100));
+            return FPL_AVAIL[st] != null ? FPL_AVAIL[st] : 1;
+          }
+          function squadMinutesContext(state) {
+            const P = (state.fpl && state.fpl.players) || {};
+            let max = 0; Object.keys(P).forEach(k => { const m = Number(P[k] && P[k].mn) || 0; if (m > max) max = m; });
+            return { maxMinutes: max, games: max > 0 ? Math.max(1, Math.round(max / 90)) : 0 };
+          }
+          function playerStartShare(p, ctx) {
+            if (!ctx || !ctx.games) return 1;
+            const mn = Number(p && p.mn) || 0;
+            return Math.max(MODEL.MIN_MINUTES_SHARE, Math.min(1, mn / (90 * ctx.games)));
+          }
+          function playerFixtureMult(state, club, ev) {
+            if (!ev) return 1;
+            const fx = clubFixture(state, club, ev);
+            if (!fx) return 0;
+            let m = 1 + (3 - (Number(fx.fdr) || 3)) * MODEL.FDR_SENS;
+            if (fx.count > 1) m *= MODEL.DOUBLE_MULT;
+            return Math.max(0.5, m);
+          }
+          function squadExpected(state, tid, ev) {
+            const P = (state.fpl && state.fpl.players) || {};
+            const ids = squadIds(state, tid);
+            if (!ids.length) return null;
+            const ctx = squadMinutesContext(state);
+            const haveFx = ev ? plFixturesFor(state, ev).length > 0 : false;
+            const named = new Set(lineupIds(state, tid).map(Number));
+            const rows = ids.map(id => {
+              const p = P[id] || P[String(id)]; if (!p) return null;
+              const form = Number(p.f) || 0, ppg = Number(p.ppg) || 0;
+              const basePts = form > 0 ? MODEL.FORM_BLEND * form + (1 - MODEL.FORM_BLEND) * ppg : ppg;
+              const av = playerAvailability(p);
+              const fm = haveFx ? playerFixtureMult(state, Number(p.t) || 0, ev) : 1;
+              return { id: Number(id), xp: Math.max(0, basePts * av * playerStartShare(p, ctx) * fm), av };
+            }).filter(Boolean);
+            if (!rows.length) return null;
+            const namedRows = rows.filter(r => named.has(r.id));
+            const xi = namedRows.length >= MODEL.XI ? namedRows : rows.slice().sort((a, b) => b.xp - a.xp).slice(0, MODEL.XI);
+            return { xp: xi.reduce((s, r) => s + r.xp, 0), n: xi.length, squadSize: rows.length,
+                     doubts: rows.filter(r => r.av > 0 && r.av < 1).length, out: rows.filter(r => r.av === 0).length };
+          }
+          function projectTeams(state, ev) {
+            const ids = asArr(state.teams).map(t => t.id);
+            const form = {}, sq = {};
+            ids.forEach(tid => { form[tid] = teamFormProj(state, tid, ev); sq[tid] = squadExpected(state, tid, ev); });
+            const withSq = ids.filter(tid => sq[tid]);
+            const sqMean = withSq.length ? withSq.reduce((s, tid) => s + sq[tid].xp, 0) / withSq.length : 0;
+            const out = {};
+            ids.forEach(tid => {
+              const f = form[tid];
+              let rel = 1;
+              if (sqMean > 0 && sq[tid]) rel = Math.max(MODEL.SQUAD_REL_MIN, Math.min(MODEL.SQUAD_REL_MAX, sq[tid].xp / sqMean));
+              out[tid] = { proj: Math.max(5, f.proj * (1 + MODEL.SQUAD_W * (rel - 1))), formProj: f.proj, weight: f.weight, n: f.n, squad: sq[tid] || null, squadRel: rel };
+            });
+            return out;
+          }
+          function leagueDrawRate(state) {
+            let d = 0, n = 0;
+            const gws = asArr(state.gameweeks);
+            const localEvents = new Set(gws.filter(g => g && g.event && asArr(g.matches).some(m => m.result)).map(g => g.event));
+            asArr(state.history).forEach(h => { if (localEvents.has(h.event)) return; n++; if (h.ap === h.bp) d++; });
+            gws.forEach(g => asArr(g.matches).forEach(m => { if (!m.result) return; n++; if (m.result.homePts === m.result.awayPts) d++; }));
+            return (d + MODEL.DRAW_BASE * MODEL.DRAW_PRIOR_N) / (n + MODEL.DRAW_PRIOR_N);
+          }
+          function fairMatchProbs(state, homeId, awayId, ev, projMap) {
+            const P = projMap || projectTeams(state, ev);
+            const a = P[homeId] || { proj: 50, weight: 0 }, b = P[awayId] || { proj: 50, weight: 0 };
+            const evid = Math.min(a.weight || 0, b.weight || 0);
+            const shrink = MODEL.SHRINK_MIN + (1 - MODEL.SHRINK_MIN) * (evid / (evid + MODEL.SHRINK_K));
+            const D = (a.proj - b.proj) * shrink;
+            const pD = Math.max(0.02, Math.min(0.20, leagueDrawRate(state) * Math.exp(-Math.pow(D / MODEL.DRAW_SPREAD, 2) / 2)));
+            const pHrel = phi(D / SD_DIFF);
+            return { home: (1 - pD) * pHrel, draw: pD, away: (1 - pD) * (1 - pHrel) };
+          }
+          function recOdds(state, homeId, awayId, ev, projMap) {
+            const p = fairMatchProbs(state, homeId, awayId, ev, projMap);
+            const edge = houseEdgePct(state.settings);
+            return { home: edgedOdds(p.home, edge), draw: edgedOdds(p.draw, edge), away: edgedOdds(p.away, edge) };
+          }
+          function extremeScoreProbs(projs, sign) {
+            const mus = projs.map(m => sign * m);
+            if (!mus.length) return [];
+            const lo = Math.min.apply(null, mus) - 4 * SD, hi = Math.max.apply(null, mus) + 4 * SD, steps = 160, h = (hi - lo) / steps;
+            const out = mus.map(() => 0);
+            const dens = (x, mu) => Math.exp(-Math.pow((x - mu) / SD, 2) / 2) / (SD * Math.sqrt(2 * Math.PI));
+            for (let k = 0; k <= steps; k++) {
+              const x = lo + k * h, wt = (k === 0 || k === steps) ? 0.5 : 1;
+              const cdf = mus.map(mu => Math.min(1 - 1e-9, Math.max(1e-9, phi((x - mu) / SD))));
+              let prod = 1; for (let i = 0; i < cdf.length; i++) prod *= cdf[i];
+              for (let i = 0; i < mus.length; i++) out[i] += wt * h * dens(x, mus[i]) * (prod / cdf[i]);
+            }
+            const tot = out.reduce((a, b) => a + b, 0);
+            return tot > 0 ? out.map(v => v / tot) : out.map(() => 1 / out.length);
+          }
+          // Minimal template lookup: only the pricing inputs suggestSpecialOdds() actually reads
+          // (tpl.kind, tpl.dir) — it never reads tpl.line/tpl.lineOffset (those only feed
+          // specialMarketDefaultLine(), the admin's market-CREATION helper, deliberately not
+          // ported — see the block comment above). Mirrors index.html's SPECIAL_MARKET_TEMPLATES
+          // ids/kinds/dirs; add an entry here if a future batch adds a template there.
+          const SPECIAL_MARKET_KIND = {
+            top_scorer: { kind: 'top_score' }, bottom_scorer: { kind: 'bottom_score' },
+            haul_35: { kind: 'haul' }, haul_45: { kind: 'haul' }, haul_55: { kind: 'haul' }, haul_65: { kind: 'haul' },
+            pts_over: { kind: 'team_pts', dir: 'over' }, pts_under: { kind: 'team_pts', dir: 'under' },
+            form_spike: { kind: 'team_pts', dir: 'over' }, off_day: { kind: 'team_pts', dir: 'under' },
+            shootout: { kind: 'match_total', dir: 'over' }, stalemate: { kind: 'match_total', dir: 'under' },
+            banker: { kind: 'haul' }, beat_par: { kind: 'team_pts', dir: 'over' },
+            disaster: { kind: 'team_pts', dir: 'under' }, blowout: { kind: 'match_total', dir: 'over' }
+          };
+          function suggestSpecialOdds(state, gwObj, tpl, params) {
+            const ev = gwObj ? gwObj.event : null;
+            const edge = houseEdgePct(state.settings);
+            const fixtures = gwObj ? asArr(gwObj.matches).filter(m => m.home && m.away) : [];
+            const P = projectTeams(state, ev);
+            const pr = tid => (P[tid] && P[tid].proj) || 50;
+            if (tpl.kind === 'top_score' || tpl.kind === 'bottom_score') {
+              const tids = [...new Set(fixtures.flatMap(m => [m.home, m.away]))];
+              if (!tids.length || !params.teamId) return null;
+              const idx = tids.indexOf(params.teamId);
+              if (idx < 0) return null;
+              const ps = extremeScoreProbs(tids.map(pr), tpl.kind === 'top_score' ? 1 : -1);
+              return edgedOdds(ps[idx], edge);
+            }
+            if (tpl.kind === 'haul') {
+              if (!params.teamId || params.line == null) return null;
+              return edgedOdds(pOver(params.line - 0.5, pr(params.teamId)), edge);
+            }
+            if (tpl.kind === 'team_pts') {
+              if (!params.teamId || params.line == null) return null;
+              const proj = pr(params.teamId);
+              const p = tpl.dir === 'under' ? 1 - pOver(params.line, proj) : pOver(params.line, proj);
+              return edgedOdds(p, edge);
+            }
+            if (tpl.kind === 'match_total') {
+              if (params.line == null) return null;
+              const m = fixtures.find(x => x.id === params.matchId);
+              if (!m) return null;
+              const tot = pr(m.home) + pr(m.away);
+              const p = tpl.dir === 'under' ? phi((params.line - tot) / SD_DIFF) : 1 - phi((params.line - tot) / SD_DIFF);
+              return edgedOdds(p, edge);
+            }
+            return null;
+          }
+          // Resets one draft gameweek's match + special-market odds to the model's current output —
+          // the Node equivalent of clicking "↺ Reset all to recommended" (rerecommend() in
+          // index.html). Only ever touches .odds fields; ids/results/lines/labels/status untouched.
+          function recomputeGwOdds(state, g) {
+            const PJ = projectTeams(state, g.event);
+            const matches = asArr(g.matches).map(m => ({ ...m, odds: recOdds(state, m.home, m.away, g.event, PJ) }));
+            const specialMarkets = asArr(g.specialMarkets).map(m => {
+              const tpl = SPECIAL_MARKET_KIND[m.templateId];
+              if (!tpl) return m;
+              const sug = suggestSpecialOdds(state, g, tpl, { teamId: m.teamId, matchId: m.matchId, line: m.line });
+              return { ...m, odds: Math.max(1.05, Number(sug) || 1.05) };
+            });
+            return { matches, specialMarkets };
+          }
+
+          /* ================================================================
+             BATCH 50 — 21h-before-cutoff odds auto-suggest window
+             ================================================================
+             "21 hours before cutoff" at hourly-cron granularity (±30min per the spec) is widened to
+             a 2h band (20-22h out) rather than a single instant, so the existing hourly schedule (see
+             the self-throttle note at the top of this file) reliably lands inside it at least once —
+             typically twice — even if one tick is late or skipped. oddsAutoSuggestedAt makes a second
+             hit in the same window a no-op, so the wider band costs nothing but a couple of extra
+             hourly full-sync runs per gameweek that would previously have been skipped outright (this
+             window sits well outside the existing 2h-before/1h-after deadline throttle) — see the
+             schedule block below and PROGRESS.md for the added GitHub Actions cost this implies. */
+          const ODDS_AUTOSUGGEST_WINDOW_START_H = 22; // window opens this many hours before cutoff
+          const ODDS_AUTOSUGGEST_WINDOW_END_H = 20;   // window closes this many hours before cutoff
+          function nearestDraftGw(gws) {
+            return asArr(gws).filter(g => g && g.status === 'draft' && g.deadline).sort((a, b) => (a.event || 0) - (b.event || 0))[0] || null;
+          }
+          function oddsWindowDue(g, now) {
+            if (!g || g.oddsAutoSuggestedAt) return false;
+            const hoursOut = (g.deadline - now) / 3600000;
+            return hoursOut <= ODDS_AUTOSUGGEST_WINDOW_START_H && hoursOut >= ODDS_AUTOSUGGEST_WINDOW_END_H;
+          }
+          // Locates the Firebase child key for a gameweek by its `id` field, without assuming
+          // `gameweeks` is a contiguous JSON array — RTDB can return a sparse list as an object
+          // keyed by string index instead. Getting this wrong would PATCH the wrong gameweek.
+          function gwFirebaseKey(rawGameweeks, gwId) {
+            if (Array.isArray(rawGameweeks)) {
+              const i = rawGameweeks.findIndex(x => x && x.id === gwId);
+              return i >= 0 ? String(i) : null;
+            }
+            const keys = Object.keys(rawGameweeks || {});
+            return keys.find(k => rawGameweeks[k] && rawGameweeks[k].id === gwId) || null;
+          }
+          async function maybeAutoSuggestOdds(token) {
+            const state = await readFirebase('lennon-lounge', token);
+            if (!state) { console.log('Odds auto-suggest: could not read app state, skipping.'); return; }
+            const rawGws = state.gameweeks;
+            const g = nearestDraftGw(rawGws);
+            if (!g) { console.log('Odds auto-suggest: no draft gameweek with a deadline — nothing to do.'); return; }
+            const now = Date.now();
+            if (g.oddsAutoSuggestedAt) {
+              console.log(`Odds auto-suggest: ${g.name || g.id} already auto-suggested at ${new Date(g.oddsAutoSuggestedAt).toISOString()} — skipping.`);
+              return;
+            }
+            if (!oddsWindowDue(g, now)) {
+              const hoursOut = ((g.deadline - now) / 3600000).toFixed(1);
+              console.log(`Odds auto-suggest: nearest draft ${g.name || g.id} is ${hoursOut}h from cutoff — outside the ${ODDS_AUTOSUGGEST_WINDOW_END_H}-${ODDS_AUTOSUGGEST_WINDOW_START_H}h window, skipping.`);
+              return;
+            }
+            const key = gwFirebaseKey(rawGws, g.id);
+            if (key == null) { console.log('Odds auto-suggest: could not re-locate gameweek by id, skipping.'); return; }
+            const { matches, specialMarkets } = recomputeGwOdds(state, g);
+            const stampedAt = Date.now();
+            // Targeted PATCH to just this gameweek's odds fields — never touches `status`, never
+            // touches any other gameweek. Draft stays draft; nothing becomes bettable.
+            await writeToFirebase(`lennon-lounge/gameweeks/${key}`, { matches, specialMarkets, oddsAutoSuggestedAt: stampedAt }, token);
+            console.log(`Odds auto-suggest: recomputed ${matches.length} match(es) and ${specialMarkets.length} special market(s) for ${g.name || g.id}, cutoff in ${((g.deadline - now) / 3600000).toFixed(1)}h — status stays 'draft'.`);
+            // Admin-only notification. ADMIN_TEAM_IDS mirrors TEAMS[].admin===true in index.html
+            // (selig/rowez) — keep in sync by hand if the admin roster ever changes there.
+            const ADMIN_TEAM_IDS = ['selig', 'rowez'];
+            for (const teamId of ADMIN_TEAM_IDS) {
+              await pushNotif(teamId, 'odds_auto_suggested', `🤖 Odds auto-suggested for ${g.name || g.id} — review before publishing (cutoff ${new Date(g.deadline).toISOString()}).`, token);
+            }
+          }
+
           async function main() {
             if (!LEAGUE_ID) { console.log('No FPL_LEAGUE_ID set — skipping'); return; }
 
@@ -191,11 +526,23 @@ jobs:
                 });
               } catch (e) { console.log('Matchday check failed, syncing anyway to be safe:', e.message); }
 
-              if (!nearDeadline && !isMatchday) {
-                console.log('Not near a deadline and no fixtures today — skipping this scheduled run, no Firebase writes.');
+              // Batch 50: 21h-before-cutoff odds auto-suggest sits well outside the 2h-before/1h-
+              // after deadline window above and isn't a matchday signal either, so without this it
+              // would never get a chance to fire — every scheduled tick in that window would just
+              // skip with zero writes. One small extra Firebase GET, same cost class as the fixtures
+              // check just above; only actually triggers a full sync during the ~2h/gameweek window
+              // where a draft gameweek is genuinely due and hasn't already been auto-suggested.
+              let oddsDue = false;
+              try {
+                const gws = await readFirebase('lennon-lounge/gameweeks', token);
+                oddsDue = oddsWindowDue(nearestDraftGw(gws), now);
+              } catch (e) { console.log('Odds auto-suggest window check failed, treating as not due:', e.message); }
+
+              if (!nearDeadline && !isMatchday && !oddsDue) {
+                console.log('Not near a deadline, no fixtures today, and no draft gameweek in its odds auto-suggest window — skipping this scheduled run, no Firebase writes.');
                 return;
               }
-              console.log(`Proceeding with full sync (nearDeadline=${!!nearDeadline}, isMatchday=${isMatchday}).`);
+              console.log(`Proceeding with full sync (nearDeadline=${!!nearDeadline}, isMatchday=${isMatchday}, oddsDue=${oddsDue}).`);
             }
 
             // Live in-play points for the current gameweek, for the "in-play" odds/results view.
@@ -407,6 +754,16 @@ jobs:
             }
 
             await writeToFirebase('lennon-lounge/fpl', fplPatch, token);
+
+            // ================= Batch 50: odds auto-suggest =================
+            // Runs at the end of every full sync (whichever condition triggered it — near-deadline,
+            // matchday, odds-window, or a manual workflow_dispatch). Self-gates on the same window +
+            // oddsAutoSuggestedAt idempotency check regardless of why this run happened, so a manual
+            // "Run workflow" click outside the window is a safe no-op, not a forced early fire.
+            // Never fatal to the sync above: fixtures/results/standings/squads already landed.
+            try { await maybeAutoSuggestOdds(token); }
+            catch (e) { console.log('Odds auto-suggest step failed (non-fatal, rest of sync stands):', e.message); }
+
             console.log('FPL sync complete');
           }
 

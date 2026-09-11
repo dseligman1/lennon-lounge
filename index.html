@@ -5247,6 +5247,7 @@ function oddsCard(g,isDraft){
       <h3 style="margin:0">📅 ${esc(g.name)} ${isDraft?'<span class="pill st-pending">DRAFT</span>':'<span class="pill st-accepted">LIVE</span>'}</h3>
       <span class="deadline">⏱ Cutoff ${fmtDT(g.deadline)}</span>
     </div>
+    ${isDraft&&g.oddsAutoSuggestedAt?`<div class="muted small" style="margin-bottom:6px">🤖 Auto-suggested ${timeAgo(g.oddsAutoSuggestedAt)} by the FPL Sync Action (21h-before-cutoff run) — not yet reviewed. Tweak or "↺ Reset all to recommended" as normal, then Publish when ready.</div>`:''}
     <div class="muted small" style="margin-bottom:6px">🔥 Big boost (+2.0, any outcome): ${boostedGwCount}/${MAX_BIG_BOOST_GWS} gameweeks active · ⭐ Small boost (+0.1, any team's win): one per gameweek</div>
     <div style="overflow-x:auto"><table><tr><th>Fixture</th><th>Home</th><th>Draw</th><th>Away</th><th>Rec</th><th></th></tr>
     ${g.matches.map(m=>{
