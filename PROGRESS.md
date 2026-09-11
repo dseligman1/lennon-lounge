@@ -2049,3 +2049,63 @@ with the other Claude Code session Dan confirmed is legitimately active on this 
   deleted, 0 added. Commit 48e6479 in worktree `agent-a853f73432268c408`
   (branch `worktree-agent-a853f73432268c408`). Outstanding for the orchestrator: the
   "copy index.html to ../lennon-lounge-v2.html" step, skipped as ambiguous from a nested worktree.
+
+---
+
+## ROUND 10 — re-port the recalibrated model into the auto-suggest workflow, URGENT
+
+Batch 50 ported batch 48's ORIGINAL odds model into `.github/workflows/fpl-sync.yml` so the
+21h-before-cutoff auto-suggest job can compute draft odds without a browser. Batch 52 then
+fixed that same model in `index.html` (real production data was running far too hot — see its
+retrospective above) but explicitly left the workflow's copy stale, flagged as a follow-up.
+That follow-up is now time-critical: confirmed directly from a live run's logs
+(`gh run view <id> --log`, run `34581005026`, timestamp `2026-09-11T08:48:44Z`) — `"Odds
+auto-suggest: nearest draft GW 4 is 27.9h from cutoff — outside the 20-22h window, skipping."`
+GW4's cutoff is Sat 13 Sept 13:40 UK time, so the 20-22h-before window is **today, Fri 11 Sept,
+~15:40-17:40 UK time**, and the hourly cron's first tick inside it is **16:00 UK time today**.
+`g.oddsAutoSuggestedAt` is NOT yet set on GW4 (confirmed in the same log line — it didn't hit
+the "already auto-suggested, skipping" branch), so nothing bad has been written yet, but if
+this batch doesn't land before ~16:00 UK today, that run WILL write GW4's draft odds using the
+OLD too-wide model (stays a draft, never live/bettable, but wrong until an admin manually hits
+"↺ Reset all to recommended" in Odds Setter, which already uses the correct model in the
+browser). Land this well before 16:00 UK.
+
+- [ ] 54. (Sonnet 5, medium-high effort) **Re-port the recalibrated model into
+  `.github/workflows/fpl-sync.yml`.** This is a faithful port, not new design — batch 52 already
+  did the hard math and documented every change in its retrospective (read it in full, it's the
+  "- [x] 52." entry directly above this section). Replace the workflow's stale `MODEL`
+  const and every function it feeds — `teamResults`, `teamFormProj`/whatever recency-weighting
+  function batch 52 renamed or added (it introduced `formReliability()`, an empirical-Bayes/
+  James-Stein shrink — grep index.html for it, this is new since batch 50's port and currently
+  has NO equivalent in the workflow at all), `squadExpected`/`playerAvailability`/
+  `playerStartShare`/`playerFixtureMult`, `projectTeams` (batch 52's key structural fix: no
+  longer MULTIPLIES the squad ratio and form together — grep for exactly how it now blends them
+  as point deviations before porting, don't guess from memory), `leagueDrawRate`/whatever now
+  computes the draw anchor+tilt (batch 52 replaced pricing off the raw observed tie rate with a
+  `DRAW_BASE` house anchor tilted ±`DRAW_TILT` by the real rate — grep `DRAW_BASE`/`DRAW_TILT`/
+  `DRAW_SPREAD`/`DRAW_P_MIN`/`DRAW_P_MAX` in index.html's current `MODEL` const, ~line 1488, and
+  copy every value exactly), `fairMatchProbs`, `houseEdgePct`/`edgedOdds`, `recOdds`,
+  `suggestSpecialOdds`, `extremeScoreProbs`, `specialMarketDefaultLine` — whatever the actual set
+  of functions in index.html's pricing engine is now (grep, don't trust this list as exhaustive,
+  the spec's job is to point you at the right area, not enumerate every function perfectly).
+  The workflow file's own header comments (grep "BATCH 50" / "MUST be kept in sync by hand")
+  mark exactly where this ported block lives and which index.html functions it claims to mirror
+  — use that as your checklist and update the comment to say "BATCH 52" or similar once ported,
+  so the next drift is easier to spot. Also port the new `GAP_SOFTCAP` tanh-squash behaviour if
+  it lives in a function you're already porting (it should — check `fairMatchProbs`/`recOdds`).
+  Do NOT change `oddsWindowDue()`/`maybeAutoSuggestOdds()`/the window constants/the
+  idempotency-stamp logic — that's batch 50's scheduling logic and is correct and untouched by
+  batch 52; only the pricing math it CALLS needs replacing. Verify: brace/paren/bracket/backtick
+  balance on the workflow's embedded JS (the established method), then re-run something close to
+  batch 50's original harness (Firebase + FPL network mocked) but now asserting the PORTED
+  numbers match index.html's real output for the same 6 real GW4 fixtures batch 52 reported
+  (Dunney v Fride, Huxley v KapilaMockingbirds, Inter Rowe-Z v The Adders, Henry's Heroes v The
+  Murovers, Blanks Bruisers v Disco Dave's, Selig's Shakers v Roundabout Rangers — batch 52's
+  retrospective has the exact expected numbers) — a straight numeric comparison, not just "does
+  it run". This is the single most important check in this batch: a port that runs without
+  crashing but silently reproduces the old numbers (or new-but-wrong numbers) is worse than no
+  port at all, since it would look fixed without being fixed. Move efficiently — this is genuinely
+  time-sensitive (see the URGENT header above), but do not skip the numeric verification to save
+  time; a wrong port shipped fast is worse than a correct port shipped in 45 minutes instead of 20.
+  Commit format and PROGRESS.md update per the usual per-batch conventions (see "Batch details"
+  near the end of this file).
