@@ -4,11 +4,14 @@ on:
   # Fires every hour, every day — cheap to declare and, thanks to the self-throttle at the top of
   # main() below, cheap to run: most of these ticks do one lightweight fetch, decide nothing on
   # FPL could have changed, and exit in a couple of seconds with zero Firebase writes. The full
-  # sync only actually runs within 2h before / 1h after a gameweek deadline, or on a day real PL
-  # fixtures are being played — using FPL's own live deadline/fixture data rather than a
-  # hardcoded matchday guess, so it self-corrects every week even when fixtures get rearranged.
-  # workflow_dispatch (the "Run workflow" button / Back Office → FPL Sync shortcut) always forces
-  # a full sync regardless of the throttle.
+  # sync actually runs within 2h before / 1h after a gameweek deadline, on a day real PL fixtures
+  # are being played, OR (added 2026-09-22, see gwPendingSync below) any hour there's still an
+  # open, FPL-linked gameweek whose deadline passed 6h+ ago but whose scores haven't landed in
+  # local history yet — that last one is what keeps retrying past a missed/delayed hourly tick
+  # instead of permanently stranding a finished gameweek. Uses FPL's own live deadline/fixture
+  # data rather than a hardcoded matchday guess, so it self-corrects every week even when
+  # fixtures get rearranged. workflow_dispatch (the "Run workflow" button / Back Office → FPL
+  # Sync shortcut) always forces a full sync regardless of the throttle.
   schedule:
     - cron: '0 * * * *'
   workflow_dispatch:
@@ -504,6 +507,34 @@ jobs:
             const hoursOut = (g.deadline - now) / 3600000;
             return hoursOut <= ODDS_AUTOSUGGEST_WINDOW_START_H && hoursOut >= ODDS_AUTOSUGGEST_WINDOW_END_H;
           }
+
+          /* ================================================================
+             Stranded-gameweek catch-up (fixed 2026-09-22)
+             ================================================================
+             isMatchday/nearDeadline above are both keyed off real-world kickoff time, but what
+             the Settler tab actually needs is the draft league's own per-match `finished` flag
+             (history, built from details.matches[].finished below) — and that can lag the real
+             final whistle by well over a day while bonus points / provisional stats settle.
+             Observed 2026-09-19/21: GW5's last kickoff was Sun 15:30 UTC, matchday detection
+             (same-day + 3h-post-kickoff) had gone false by Mon 00:03 UTC, and nothing ever
+             checked again — 24 history results stayed frozen for two full days even though the
+             GW had genuinely finished, because the one hourly tick that should have landed just
+             after full-time either ran late or was skipped by GitHub's scheduler and by the next
+             tick the window had already closed. Mirrors fplScoresReady() in index.html so the
+             two "is this gameweek done" checks (server throttle vs. Settler tab) never disagree.
+             Self-limiting: stops firing once history catches up OR the admin settles the
+             gameweek (status leaves 'open') — whichever comes first. */
+          function gwScoresReady(state, g) {
+            const real = asArr(g.matches).filter(m => m && m.home && m.away);
+            if (!real.length) return true;
+            const hs = asArr(state.history).filter(h => h.event === g.event);
+            const have = real.filter(m => hs.some(h => (h.a === m.home && h.b === m.away) || (h.a === m.away && h.b === m.home))).length;
+            return have === real.length;
+          }
+          function gwPendingSync(state, now) {
+            return asArr(state.gameweeks).some(g => g && g.status === 'open' && g.event && g.deadline
+              && (now - g.deadline) > 6 * 3600000 && !gwScoresReady(state, g));
+          }
           // Locates the Firebase child key for a gameweek by its `id` field, without assuming
           // `gameweeks` is a contiguous JSON array — RTDB can return a sparse list as an object
           // keyed by string index instead. Getting this wrong would PATCH the wrong gameweek.
@@ -588,17 +619,18 @@ jobs:
               // skip with zero writes. One small extra Firebase GET, same cost class as the fixtures
               // check just above; only actually triggers a full sync during the ~2h/gameweek window
               // where a draft gameweek is genuinely due and hasn't already been auto-suggested.
-              let oddsDue = false;
+              let oddsDue = false, pendingSync = false;
               try {
-                const gws = await readFirebase('lennon-lounge/gameweeks', token);
-                oddsDue = oddsWindowDue(nearestDraftGw(gws), now);
-              } catch (e) { console.log('Odds auto-suggest window check failed, treating as not due:', e.message); }
+                const state = await readFirebase('lennon-lounge', token);
+                oddsDue = oddsWindowDue(nearestDraftGw(state && state.gameweeks), now);
+                pendingSync = !!(state && gwPendingSync(state, now));
+              } catch (e) { console.log('Odds auto-suggest / stranded-gameweek check failed, treating as not due:', e.message); }
 
-              if (!nearDeadline && !isMatchday && !oddsDue) {
-                console.log('Not near a deadline, no fixtures today, and no draft gameweek in its odds auto-suggest window — skipping this scheduled run, no Firebase writes.');
+              if (!nearDeadline && !isMatchday && !oddsDue && !pendingSync) {
+                console.log('Not near a deadline, no fixtures today, no draft gameweek in its odds auto-suggest window, and no open gameweek waiting on stale scores — skipping this scheduled run, no Firebase writes.');
                 return;
               }
-              console.log(`Proceeding with full sync (nearDeadline=${!!nearDeadline}, isMatchday=${isMatchday}, oddsDue=${oddsDue}).`);
+              console.log(`Proceeding with full sync (nearDeadline=${!!nearDeadline}, isMatchday=${isMatchday}, oddsDue=${oddsDue}, pendingSync=${pendingSync}).`);
             }
 
             // Live in-play points for the current gameweek, for the "in-play" odds/results view.
