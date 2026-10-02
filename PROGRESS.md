@@ -1,5 +1,11 @@
 # Lennon Lounge v2 — Feature Build Progress
 
+> **Current local setup (2026-10-02):** the only working copy is this repo, cloned at
+> `Documents\Claude\Projects\lennon-lounge\code` on Dan's machine. Work on `main` and
+> push to `origin main`. The `Downloads` paths, the "copy to lennon-lounge-v2.html" step
+> and the `main-push` / `master` branch notes below are historical (previous machine)
+> and no longer apply.
+
 This file is the single source of truth for the multi-batch feature build requested
 2026-08-17. Each batch is implemented by a dedicated agent, committed to git on its
 own, and checked off here. If a session ends mid-build, the next session should:
