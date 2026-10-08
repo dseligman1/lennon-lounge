@@ -1,0 +1,9 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "lennon-lounge":        { ".read": "auth != null", ".write": "auth != null" },
+    "lennon-lounge-auth":   { ".read": "auth != null", ".write": "auth != null" },
+    "lennon-lounge-notifs": { ".read": "auth != null", ".write": "auth != null" }
+  }
+}

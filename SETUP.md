@@ -260,24 +260,22 @@ the cutoff is calculated directly as that kickoff − 80 min, no FPL deadline in
 
 ---
 
-## Step 7 — Lock down Firebase (when ready) — and a plain-language security note
+## Step 7 — Lock down Firebase (anonymous sign-in + rules)
 
-Once everything is working, go to Firebase Console → Realtime Database → **Rules** and replace with:
+1. Firebase Console → **Authentication → Get started → Sign-in method → Anonymous → Enable**.
+   (Free. Users see nothing — the app signs each browser in silently.)
+2. Open the live app once and check it still loads and you can log in with your PIN.
+3. Firebase Console → Realtime Database → **Rules** → paste the contents of
+   `database.rules.json` (in this repo) → **Publish**.
 
-```json
-{
-  "rules": {
-    ".read": true,
-    ".write": true
-  }
-}
-```
+These rules only let signed-in app sessions read/write the three app nodes, and deny
+everything else. The GitHub Actions (FPL sync, backups) use the service account, which
+bypasses rules, so they keep working.
 
-**Be clear-eyed about what this means.** With these rules, *anyone* who has the app's URL can
-read and write the entire database directly — with or without a PIN, admin or not — by simply
-opening their browser's dev tools console (F12) and either calling one of the app's own
-functions (e.g. typing `resetAll()`) or sending a raw request to the database URL, which is
-sitting in plain sight in the page's source. The app adds a `requireAdmin()` check in front of
+**Be clear-eyed about what this means.** This blocks bots and strangers hitting the raw database
+URL. But anyone who opens the app itself is silently signed in, so they can still read and write
+the whole database — with or without a PIN, admin or not — by opening their browser's dev tools
+console (F12) and calling one of the app's own functions (e.g. typing `resetAll()`). The app adds a `requireAdmin()` check in front of
 its highest-risk actions (wiping data, accepting/rejecting/settling bets, publishing odds,
 changing settings) so the *app's own UI* won't let a non-admin session trigger them by
 accident — but that check runs in the browser, not on the server, so it stops casual/accidental

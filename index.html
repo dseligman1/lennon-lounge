@@ -18,6 +18,7 @@
 <!-- Firebase SDK (compat v9) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 
 <style>
   :root{
@@ -6955,6 +6956,11 @@ async function initApp(){
   const loadingEl=document.getElementById('loginLoading');
   if(loadingEl) loadingEl.style.display='block';
   try{
+    // Invisible anonymous sign-in so the database rules can require "auth != null" — this
+    // blocks bots that scan for open Firebase URLs. Non-fatal: if Anonymous sign-in isn't
+    // enabled in the Firebase console yet, the app carries on as before.
+    try{ await firebase.auth().signInAnonymously(); }
+    catch(e){ console.warn('Anonymous sign-in failed:', e); }
     await loadAuth();
     renderTeamGrid();
     setupPinInputs();
