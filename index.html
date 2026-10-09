@@ -600,6 +600,16 @@
   .pst{position:relative;width:1000px;height:1414px;overflow:hidden;box-sizing:border-box;padding:42px 44px 30px;display:flex;flex-direction:column;gap:12px;font-family:Inter,system-ui,sans-serif;color:var(--text);
     background:radial-gradient(620px 500px at 100% 0%,rgba(255,45,120,.40),rgba(255,45,120,0) 70%),radial-gradient(700px 600px at 0% 32%,rgba(155,92,255,.38),rgba(155,92,255,0) 70%),radial-gradient(640px 420px at 50% 108%,rgba(0,217,255,.22),rgba(0,217,255,0) 70%),linear-gradient(180deg,#160026,#0b0014)}
   .pst *{box-sizing:border-box}
+  .pst.pst-fit1{gap:8px}
+  .pst.pst-fit1 .pst-row{padding:4px 0 3px}
+  .pst.pst-fit1 .pst-res{padding:4px 0}
+  .pst.pst-fit1 .pst-card p,.pst.pst-fit1 .pst-why,.pst.pst-fit1 .pst-bline{font-size:13.5px}
+  .pst.pst-fit2 .pst-why{display:none}
+  .pst.pst-fit2 .pst-gw{font-size:104px}
+  .pst.pst-fit2 .pst-live{font-size:40px}
+  .pst.pst-fit3 .pst-roast{font-size:12.5px}
+  .pst.pst-fit3 .pst-fine{font-size:11.5px}
+  .pst.pst-fit3 .pst-btn{padding:8px 22px}
   .pst h5{margin:0;font-family:'Archivo Black',sans-serif;font-weight:400;letter-spacing:.06em}
   .pst-top{display:flex;justify-content:space-between;align-items:center}
   .pst-brand{font-family:'Archivo Black',sans-serif;font-size:28px;letter-spacing:.06em;color:var(--teal)}
@@ -6081,56 +6091,83 @@ function setHousePick(gwId,val){
 }
 
 /* ---------- jokes ---------- */
-// One line per fixture, "no mercy" level. Candidates come from each team's stats with a
-// priority; the strongest unused one wins, so the same team or line never repeats on a poster.
+// Possessive for names: "Fride FC's", "Disco Dave's Dodgers'".
+const posterPoss=n=>/s$/i.test(n)?n+"'":n+"'s";
+// Wording rotation: the gameweek number picks which variant of a joke is used (offset per team
+// and joke type), so the same situation two weeks running never gets the same words, and
+// skips any variant already used on this poster.
+const posterHash=str=>[...String(str)].reduce((h,c)=>h+c.charCodeAt(0),0);
+function posterVariant(lines, key, seed, used){
+  const start=Math.abs(seed)%lines.length;
+  for(let k=0;k<lines.length;k++){ const j=(start+k)%lines.length; if(!used.has(key+':'+j)){ used.add(key+':'+j); return lines[j]; } }
+  return null;
+}
+// One line per fixture, "no mercy" level. Each candidate has a `key` (the joke type); a poster
+// uses each joke type at most once and roasts each team at most once, and each type has several
+// wordings picked by the gameweek's seed, so a team that stays top for weeks gets a new line.
 function posterTeamRoasts(s, ctx){
   const T=s.t.name, O=s.t.owner, out=[];
-  const add=(pri,lines)=>out.push({pri, team:s.t.id, lines});
-  if(s.pos===ctx.n) add(9,[`${T}: bottom of the league and somehow still the loudest in the group chat.`,`${T} are ${ctx.n}th of ${ctx.n}. There's no relegation in the Lounge. There is shame.`]);
-  if(s.pfRank===ctx.n&&s.p) add(8,[`${T}: ${s.pf} points in ${s.p} games. That's not a team, it's a cry for help.`]);
-  if(s.streakRes==='L'&&s.streak>=3) add(8,[`${T} have lost ${s.streak} on the bounce. Someone check on ${O}.`,`${s.streak} defeats in a row for ${T}. ${O} has started blaming the wifi.`]);
-  if(s.last&&ctx.lastLow===s.t.id) add(8,[`${T} scored ${s.last.pts} last week. A score so low FPL sent a welfare check.`]);
-  if(s.streakRes==='W'&&s.streak>=3) add(7,[`${T} have won ${s.streak} in a row. Unbearable. Somebody stop them.`]);
-  if(s.pos-s.pfRank>=4) add(7,[`${T}: ${posterOrd(s.pfRank)} for points, ${posterOrd(s.pos)} in the table. The fixture computer hates ${O}.`]);
-  if(s.pfRank-s.pos>=4) add(7,[`${T}: ${posterOrd(s.pos)} in the table with only the ${posterOrd(s.pfRank)}-best points total. Daylight robbery.`]);
-  if(s.pos===1) add(6,[`${T} top the table. Enjoy it, ${O}. It won't last.`]);
-  if(s.last&&s.last.pts<35&&ctx.lastLow!==s.t.id) add(5,[`${T} managed ${s.last.pts} last week. ${O}'s bench would have done better. It probably did.`]);
-  if(s.last&&ctx.lastTop===s.t.id) add(5,[`${T} dropped ${s.last.pts} last week. Peaked too early, surely.`]);
-  add(1,[`${T}: ${posterOrd(s.pos)} in the table. Nobody is scared of you, ${O}.`,`${T}: ${posterOrd(s.pos)}, form ${s.form.join('')||'none'}. Aggressively mid.`]);
+  const add=(key,pri,lines)=>out.push({key, pri, team:s.t.id, lines});
+  if(s.pos===ctx.n) add('bottom',9,[`${T}: bottom of the league and somehow still the loudest in the group chat.`,`${T} are ${ctx.n}th of ${ctx.n}. There's no relegation in the Lounge. There is shame.`,`${T} are propping up the table. ${O} says it's a long season. It is now.`]);
+  if(s.pfRank===ctx.n&&s.p) add('lowpf',8,[`${T}: ${s.pf} points in ${s.p} games. That's not a team, it's a cry for help.`,`${T} have the fewest points in the league (${s.pf}). ${O} is calling it a rebuild.`]);
+  if(s.streakRes==='L'&&s.streak>=3) add('lstreak',8,[`${T} have lost ${s.streak} on the bounce. Someone check on ${O}.`,`${s.streak} defeats in a row for ${T}. ${O} has started blaming the wifi.`,`${T}: ${s.streak} straight defeats. ${O}'s wildcard can't come soon enough.`]);
+  if(s.last&&ctx.lastLow===s.t.id) add('lastlow',8,[`${T} scored ${s.last.pts} last week. A score so low FPL sent a welfare check.`,`${s.last.pts} points last week for ${T}. The lowest in the league. ${O} has gone very quiet.`]);
+  if(s.streakRes==='W'&&s.streak>=3) add('wstreak',7,[`${T} have won ${s.streak} in a row. Unbearable. Somebody stop them.`,`${s.streak} wins on the spin for ${T}. ${O} is now impossible to talk to.`,`${T} on a ${s.streak}-game winning run. The rest of you should be embarrassed.`]);
+  if(s.pos-s.pfRank>=4) add('unlucky',7,[`${T}: ${posterOrd(s.pfRank)} for points, ${posterOrd(s.pos)} in the table. The fixture computer hates ${O}.`,`${T} have the ${posterOrd(s.pfRank)}-most points but sit ${posterOrd(s.pos)}. ${O} is drafting a complaint.`]);
+  if(s.pfRank-s.pos>=4) add('robbery',7,[`${T}: ${posterOrd(s.pos)} in the table with only the ${posterOrd(s.pfRank)}-best points total. Daylight robbery.`,`${T} are ${posterOrd(s.pos)} on the ${posterOrd(s.pfRank)}-best points total. ${O} has been lucky and knows it.`]);
+  if(s.pos===1) add('top',6,[`${T} top the table. Enjoy it, ${O}. It won't last.`,`${T} are top. Altitude sickness usually kicks in about now.`,`Top of the league: ${T}. ${O} has already updated their WhatsApp bio.`,`${T} lead the way. Everyone else, sort it out.`]);
+  if(s.last&&s.last.pts<35&&ctx.lastLow!==s.t.id) add('lowweek',5,[`${T} managed ${s.last.pts} last week. ${O}'s bench would have done better. It probably did.`,`${s.last.pts} points last week from ${T}. ${O} is blaming the captain. ${O} picked the captain.`]);
+  if(s.last&&ctx.lastTop===s.t.id) add('lasttop',5,[`${T} dropped ${s.last.pts} last week. Peaked too early, surely.`,`${T} scored ${s.last.pts} last week. Enjoy it, ${O}. That was your one.`]);
+  add('mid',1,[`${T}: ${posterOrd(s.pos)} in the table. Nobody is scared of you, ${O}.`,`${T}: ${posterOrd(s.pos)}, form ${s.form.join('')||'none'}. Aggressively mid.`,`${T} are ${posterOrd(s.pos)}. Not good, not bad, just there.`,`${posterOrd(s.pos)} place for ${T}. ${O} calls it "consolidating".`,`${T}: ${posterOrd(s.pos)}. The definition of a team that exists.`,`${T} sit ${posterOrd(s.pos)}. ${O} insists the underlying numbers are good.`]);
   return out;
 }
 function posterFixtureRoasts(fixtures, TS, ctx, rng){
-  const usedTeams=new Set(), usedLines=new Set();
+  const usedTeams=new Set(), usedKeys=new Set(), usedLines=new Set(), ev=ctx.ev||0;
   return fixtures.map(fx=>{
     const cands=[...posterTeamRoasts(TS.st[fx.home],ctx), ...posterTeamRoasts(TS.st[fx.away],ctx)];
     const fav=fx.homeFav?fx.home:fx.away, dog=fx.homeFav?fx.away:fx.home;
-    if(TS.st[fav].pos-TS.st[dog].pos>=4) cands.push({pri:10, team:fav, lines:[`The Algo makes ${TS.st[fav].t.name} (${posterOrd(TS.st[fav].pos)}) favourites over ${TS.st[dog].t.name} (${posterOrd(TS.st[dog].pos)}). Genius or a cry for help.`]});
-    const ok=cands.filter(c=>!usedTeams.has(c.team)).sort((a,b)=>b.pri-a.pri||rng()-0.5);
-    const pick=ok[0]||cands.sort((a,b)=>b.pri-a.pri)[0];
-    let line=posterPick(rng,pick.lines.filter(l=>!usedLines.has(l)))||pick.lines[0];
-    usedTeams.add(pick.team); usedLines.add(line);
+    const F=TS.st[fav], D=TS.st[dog];
+    if(F.pos-D.pos>=4) cands.push({key:'algofav', pri:10, team:fav, lines:[`The Algo makes ${F.t.name} (${posterOrd(F.pos)}) favourites over ${D.t.name} (${posterOrd(D.pos)}). Genius or a cry for help.`,`${F.t.name} (${posterOrd(F.pos)}) are favourites against ${D.t.name} (${posterOrd(D.pos)}). The Algo has seen something you haven't.`]});
+    const fresh=c=>!usedTeams.has(c.team)&&(c.key==='mid'||!usedKeys.has(c.key))&&c.lines.some((l,j)=>!usedLines.has(c.key+':'+j));
+    const ok=cands.filter(fresh).sort((a,b)=>b.pri-a.pri||rng()-0.5);
+    const pick=ok[0]||cands.filter(c=>c.key==='mid')[0];
+    const line=posterVariant(pick.lines, pick.key, ev+posterHash(pick.key), usedLines)||pick.lines[0];
+    usedTeams.add(pick.team); usedKeys.add(pick.key);
     return line;
   });
 }
-function posterResultRoast(r, rng){
+// One line per result; each joke type once per recap (`used` is shared across the poster).
+function posterResultRoast(r, rng, used, ev){
   const W=team(r.winId), L=team(r.loseId);
-  const Wn=W?W.name:'?', Ln=L?L.name:'?', LO=L?L.owner:'someone';
-  if(r.draw) return posterPick(rng,[`A draw. ${fmtOdds(r.drawOdds)} at the bookies. Did anyone back it? Course not.`,`Level on ${r.wp}. Nobody wins, everybody's annoyed.`]);
-  if(r.upset) return `${Wn} won at ${fmtOdds(r.winOdds)}. The Algo would like a word.`;
-  if(r.lp<30) return posterPick(rng,[`${Ln} scored ${r.lp}. ${LO}, are you OK?`,`${r.lp} points from ${Ln}. ${LO} has some explaining to do.`]);
-  if(r.wp-r.lp>=20) return `${Wn} put ${Ln} in the bin, ${r.wp}–${r.lp}.`;
-  if(r.wp-r.lp<=4) return `${Wn} by ${r.wp-r.lp}. ${LO} will be staring at that bench all week.`;
-  return posterPick(rng,[`${Wn} beat ${Ln}. ${LO} will find something to complain about.`,`Routine for ${Wn}. Less routine for ${LO}'s mood.`]);
+  const Wn=W?W.name:'?', Ln=L?L.name:'?', LO=L?L.owner:'someone', m=r.wp-r.lp;
+  const cands=[];
+  if(r.draw) cands.push(['draw',[`A draw. ${fmtOdds(r.drawOdds)} at the bookies. Did anyone back it? Course not.`,`Level on ${r.wp}. Nobody wins, everybody's annoyed.`]]);
+  if(r.upset) cands.push(['upset',[`${Wn} won at ${fmtOdds(r.winOdds)}. The Algo would like a word.`,`Upset: ${Wn} won at ${fmtOdds(r.winOdds)}. The Algo is reviewing its life choices.`]]);
+  if(r.lp<30) cands.push(['low',[`${Ln} scored ${r.lp}. ${LO}, are you OK?`,`${r.lp} points from ${Ln}. ${LO} has some explaining to do.`]]);
+  if(m>=20) cands.push(['thrash',[`${Wn} put ${Ln} in the bin, ${r.wp}–${r.lp}.`,`${Wn} ${r.wp}, ${Ln} ${r.lp}. Somebody stop the fight.`]]);
+  if(!r.draw&&m<=4) cands.push(['close',[`${Wn} by ${m}. ${LO} will be staring at that bench all week.`,`${m} points in it. ${LO} is replaying every transfer in their head.`]]);
+  if(!r.draw) cands.push(['plain',[`${Wn} beat ${Ln}. ${LO} will find something to complain about.`,`Routine for ${Wn}. Less routine for ${posterPoss(LO)} mood.`,`Three points to ${Wn}. ${LO} has gone quiet in the group chat.`,`${Ln} lose to ${Wn}. ${posterPoss(LO)} transfers: bold. Results: not.`,`${Wn} win by ${m}. ${LO} would like to talk about the referee. There is no referee.`,`${Wn} ${r.wp}, ${Ln} ${r.lp}. ${LO} is already blaming the captaincy.`,`${Wn} take the points. ${LO} takes the banter.`,`${Ln} beaten by ${Wn}. ${LO} is calling it "a learning week".`,`${Wn} ${r.wp}–${r.lp}. ${LO} has muted this chat.`,`${Wn} got the job done. ${LO} got a reality check.`,`Another one for ${Wn}. Another excuse incoming from ${LO}.`,`${Wn} beat ${Ln} by ${m}. ${LO} insists the xG was on their side.`]]);
+  for(const [key,lines] of cands){
+    if(key!=='plain'&&used.has(key)) continue;
+    const line=posterVariant(lines, key, (ev||0)*5+posterHash(key), used);
+    if(line){ used.add(key); return line; }
+  }
+  return `${Wn} beat ${Ln}.`;
 }
-function posterFinePrint(rng, bottomName){
+function posterFinePrint(rng, bottomName, seed){
   const lines=[
-    `Odds correct at time of publishing and subject to change, much like ${bottomName}'s tactics.`,
+    `Odds correct at time of publishing and subject to change, much like ${posterPoss(bottomName)} tactics.`,
     `Past performance of ${bottomName} is no guide to anything, including future performance of ${bottomName}.`,
     `The Algo is never wrong. When it is, that's variance.`,
     `No managers were harmed in the making of these odds. Several were mildly insulted.`,
-    `Any resemblance between ${bottomName} and a football team is purely coincidental.`
+    `Any resemblance between ${bottomName} and a football team is purely coincidental.`,
+    `Terms and conditions apply. Nobody has read them, least of all the Algo.`,
+    `Prices may go down as well as up. ${bottomName} only go down.`,
+    `Gamble responsibly. Pick your captain irresponsibly.`,
+    `Screenshots of this poster may be used against you in the group chat.`,
+    `The house always wins. The house would like that on record.`
   ];
-  return `18+. ${posterPick(rng,lines)} Only bet what you can afford to lose.`;
+  return `18+. ${lines[Math.abs(seed)%lines.length]} Only bet what you can afford to lose.`;
 }
 
 /* ---------- poster HTML ---------- */
@@ -6143,18 +6180,28 @@ function posterCta(tag, big, small){
 const posterTop=()=>`<div class="pst-top"><span class="pst-brand">LENNON <b>LOUNGE</b></span><span class="pst-chip">SEASON 26/27</span></div>`;
 const posterTag=(edition,g)=>(edition==='odds'?'gw':'r')+(g.event||g.id.replace(/\D/g,''));
 
+// Settled matches this season with a clear favourite, and how many the underdog won.
+function posterUpsetCount(){
+  let n=0, won=0;
+  S.gameweeks.forEach(g=>{ if(g.status!=='settled') return; g.matches.forEach(m=>{
+    if(!m.result||!m.odds||m.result.homePts===m.result.awayPts||m.odds.home===m.odds.away) return;
+    const hw=m.result.homePts>m.result.awayPts; n++;
+    if(hw?m.odds.home>m.odds.away:m.odds.away>m.odds.home) won++;
+  }); });
+  return {n, won};
+}
 function posterData(edition, g){
   const TS=posterTeamStats(S);
   const rng=posterRng(g.id+':'+edition);
   const bottom=TS.rows[TS.rows.length-1].t.name;
-  return {TS, rng, fine:posterFinePrint(rng,bottom), tag:posterTag(edition,g)};
+  return {TS, rng, fine:posterFinePrint(rng,bottom,(g.event||0)*3+(edition==='recap'?5:0)), tag:posterTag(edition,g)};
 }
 
 function posterOddsHtml(g){
   const {TS,rng,fine,tag}=posterData('odds',g);
   const lastG=posterLastSettled(S,g.event);
   const awards=lastG?posterAwards(lastG):[];
-  const ctx={n:TS.n, lastTop:(awards.find(a=>a.k==='legend')||{}).id, lastLow:(awards.find(a=>a.k==='spoon')||{}).id};
+  const ctx={n:TS.n, ev:g.event||0, lastTop:(awards.find(a=>a.k==='legend')||{}).id, lastLow:(awards.find(a=>a.k==='spoon')||{}).id};
   const fixtures=g.matches.filter(m=>m.home&&m.away&&TS.st[m.home]&&TS.st[m.away]).map(m=>{
     const h=posterPrice(g,m,'home'), d=posterPrice(g,m,'draw'), a=posterPrice(g,m,'away');
     return {m, home:m.home, away:m.away, h, d, a, homeFav:h.v<=a.v};
@@ -6173,7 +6220,9 @@ function posterOddsHtml(g){
     if(L.pf>O.pf) longWhy=`They've scored more points than ${O.t.name} this season (${L.pf} v ${O.pf}).`;
     else if(lw>=ow) longWhy=`${lw} wins in their last ${L.form.length}, ${lw>ow?'more than':'as many as'} ${O.t.name}.`;
     else if(L.last&&O.last&&L.last.pts>O.last.pts) longWhy=`Outscored ${O.t.name} last week (${L.last.pts} v ${O.last.pts}).`;
-    else longWhy=`Only ${O.pf-L.pf} points behind ${O.t.name} all season. Stranger things have happened.`;
+    else if(O.pf-L.pf<=25) longWhy=`Only ${O.pf-L.pf} points behind ${O.t.name} all season. Stranger things have happened.`;
+    else { const pct=Math.round(100/long.odds); const ups=posterUpsetCount();
+      longWhy=`The Algo gives them about ${pct}%.${ups.n?` Underdogs have won ${ups.won} of ${ups.n} games this season.`:''}`; }
   }
   const hp=posterHousePick(g);
   let hpHtml='<p>No pick this week.</p>', hpOdds='—';
@@ -6228,7 +6277,7 @@ function posterOddsHtml(g){
     </div>
     <div class="pst-trio">
       <div class="pst-card c-teal"><h5>BANKER DOUBLE</h5><b>${dbl?fmtOdds(dbl):'—'}</b>${dbl?`<p><b>${esc(team(banker[0].id).name)} + ${esc(team(banker[1].id).name)}.</b> £10 returns ${GBP(10*banker[0].odds*banker[1].odds)}.</p>`:'<p>Not enough games.</p>'}</div>
-      <div class="pst-card c-pink"><h5>LONG SHOT</h5><b>${long?fmtOdds(long.odds):'—'}</b>${long?`<p><b>${esc(team(long.id).name)}</b> v ${esc(team(long.opp).name)}. ${esc(longWhy)}</p>`:''}</div>
+      <div class="pst-card c-pink"><h5>${long&&long.odds<2.5?'UNDERDOG PICK':'LONG SHOT'}</h5><b>${long?fmtOdds(long.odds):'—'}</b>${long?`<p><b>${esc(team(long.id).name)}</b> v ${esc(team(long.opp).name)}. ${esc(longWhy)}</p>`:''}</div>
       <div class="pst-card c-gold"><h5>${esc(hpName.toUpperCase())}'S PICK (FADE IT)</h5><b>${hpOdds}</b>${hpHtml}</div>
     </div>
     <div class="pst-low">
@@ -6274,6 +6323,7 @@ function posterRecapHtml(g){
   const next=S.gameweeks.filter(x=>(x.status==='open'||x.status==='draft')&&(x.event||0)>(g.event||0)).sort((a,b)=>(a.event||0)-(b.event||0))[0];
   const trow=(r,i)=>{ const mv=(posBefore[r.t.id]||i+1)-(i+1); return `<div class="pst-tr"><span class="p">${i+1}</span><span class="mv ${mv>0?'up':mv<0?'dn':''}">${mv>0?'▲'+mv:mv<0?'▼'+(-mv):'–'}</span><b>${esc(r.t.name)}</b>${posterDots(TS.st[r.t.id].form)}<em>${r.pts}</em></div>`; };
   const half=Math.ceil(after.length/2);
+  const usedJokes=new Set();
   return `<div class="pst pst-recap">
     ${posterTop()}
     <div class="pst-hero"><div class="pst-gw">${esc(g.name.replace(/\s+/g,''))}</div><div class="pst-live">THE<br>RECAP</div>
@@ -6284,7 +6334,7 @@ function posterRecapHtml(g){
         <span class="h${!r.draw&&r.homeWin?' win':''}">${esc(team(r.m.home).name)}</span>
         <span class="sc${!r.draw&&r.homeWin?' win':''}">${r.hp}</span><span class="dash">–</span><span class="sc${!r.draw&&!r.homeWin?' win':''}">${r.ap}</span>
         <span class="a${!r.draw&&!r.homeWin?' win':''}">${esc(team(r.m.away).name)}</span>
-        <p class="pst-roast">${esc(posterResultRoast(r,rng))}</p></div>`).join('')}
+        <p class="pst-roast">${esc(posterResultRoast(r,rng,usedJokes,g.event))}</p></div>`).join('')}
     </div>
     <div class="pst-mid">
       <div class="pst-awards"><h5>THE AWARDS</h5><div class="pst-stamps big">${stamps.map(a=>posterStamp(a,false)).join('')}</div></div>
@@ -6307,7 +6357,7 @@ function posterCaption(edition, g){
     return [`🚨 ${g.name.toUpperCase()} ODDS ARE LIVE 🚨`,
       `⏱ Deadline: ${fmtDT(g.deadline)}`,
       bankerTxt?`🔒 Banker double: ${bankerTxt} @ ${bankerOdds}`:'',
-      longTeam?`🎯 Long shot: ${longTeam} @ ${longOdds}`:'',
+      longTeam?`🎯 ${pick('.c-pink h5')==='LONG SHOT'?'Long shot':'Underdog pick'}: ${longTeam} @ ${longOdds}`:'',
       vs.length===2?`🥊 Matchup of the week: ${vs[0]} v ${vs[1]}`:'',
       `👉 Bet here: ${posterLink(tag+'-wa')}`].filter(Boolean).join('\n');
   }
@@ -6340,7 +6390,11 @@ async function buildPosterDom(edition, gwId){
   stage.innerHTML=edition==='odds'?posterOddsHtml(g):posterRecapHtml(g);
   stage.querySelectorAll('canvas[data-qr]').forEach(drawPosterQr);
   if(document.fonts&&document.fonts.ready) await document.fonts.ready;
-  return stage.firstElementChild;
+  // Shrink-to-fit: a long week (long names, wordy reasons) can run past the page, so step down
+  // through three tighter layouts until it fits.
+  const root=stage.firstElementChild;
+  for(let i=1;i<=3&&root.scrollHeight>root.clientHeight+1;i++) root.classList.add('pst-fit'+i);
+  return root;
 }
 async function renderPoster(edition, gwId){
   const root=await buildPosterDom(edition, gwId);
@@ -6359,6 +6413,10 @@ function posterFileBase(){ return `lennon-lounge-${posterState.tag}-${posterStat
 async function openPoster(edition, gwId){
   if(!requireAdmin()) return;
   const g=gw(gwId); if(!g) return;
+  if(edition==='odds'&&g.status==='open'){
+    const hp=posterHousePick(g);
+    if(hp&&hp.auto){ g.housePick={by:hp.by, matchId:hp.matchId, pick:hp.pick}; save(); }
+  }
   posterState={edition, gwId, tag:posterTag(edition,g), loading:true, error:null};
   renderPosterModal();
   try{

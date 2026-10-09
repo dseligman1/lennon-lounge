@@ -2225,3 +2225,12 @@ image + PDF + caption, odds edition + Monday recap.
   Odds Setter button, standings and the login/ref queue all work with no console errors.
   Not tested on a real phone: the Share button uses the Web Share API with a file.
   Samples: `../outputs/2026-10-09-gw6-odds-poster-sample.png`, `../outputs/2026-10-09-gw5-recap-poster-sample.png`.
+- [x] 56. **Poster variety pass (after a 4-week test run).** Rendered odds posters GW6–9 and recaps
+  GW6–8 with simulated GW6–8 scores (seeded, around the Algo projection; GW7–9 re-priced by
+  `recOdds()`). Fixes from what that showed: each joke type used once per poster; wordings rotate by
+  gameweek (`posterVariant`), so no line shape repeats week to week on either edition (checked);
+  ~70 roast lines, 10 fine-print gags, 12 general recap lines; `posterPoss()` for names ending in s;
+  long shot uses the season's underdog record when the points gap is big and is labelled "UNDERDOG
+  PICK" under 2.50; the default admin pick is saved when an open gameweek's poster is made, so the
+  record builds; shrink-to-fit (`pst-fit1..3`) if a week runs long. Samples:
+  `../outputs/2026-10-09-poster-samples.html` + `../outputs/2026-10-09-poster-samples/`.
