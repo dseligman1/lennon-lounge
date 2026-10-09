@@ -586,6 +586,146 @@
   input[type=number]::-webkit-inner-spin-button,
   input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
   input[type=number]{-moz-appearance:textfield}
+  /* Weekly poster (2026-10-09). Drawn off-screen at a fixed 1000×1414 (A4 ratio) and rasterised
+     by html2canvas, so: px units only, no background-clip:text, filters or clip-path (html2canvas
+     can't draw them). #posterModal follows the #betModal pattern. */
+  #posterStage{position:absolute;left:-20000px;top:0;width:1000px;pointer-events:none}
+  #posterModalOverlay{position:fixed;inset:0;z-index:73;background:rgba(0,0,0,.62);display:none}
+  #posterModalOverlay.open{display:block}
+  #posterModal{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.97);width:640px;max-width:94vw;max-height:90vh;overflow-y:auto;z-index:74;background:rgba(15,0,28,.98);backdrop-filter:blur(20px);border:1px solid var(--line);border-radius:20px;padding:22px;display:none;box-shadow:var(--shadow);transition:transform .15s}
+  #posterModal.open{display:block;transform:translate(-50%,-50%) scale(1)}
+  .poster-preview{display:block;width:100%;max-width:440px;margin:0 auto;border-radius:10px;border:1px solid var(--line)}
+  .poster-wait{padding:60px 0;text-align:center;color:var(--muted);font-weight:700}
+
+  .pst{position:relative;width:1000px;height:1414px;overflow:hidden;box-sizing:border-box;padding:42px 44px 30px;display:flex;flex-direction:column;gap:12px;font-family:Inter,system-ui,sans-serif;color:var(--text);
+    background:radial-gradient(620px 500px at 100% 0%,rgba(255,45,120,.40),rgba(255,45,120,0) 70%),radial-gradient(700px 600px at 0% 32%,rgba(155,92,255,.38),rgba(155,92,255,0) 70%),radial-gradient(640px 420px at 50% 108%,rgba(0,217,255,.22),rgba(0,217,255,0) 70%),linear-gradient(180deg,#160026,#0b0014)}
+  .pst *{box-sizing:border-box}
+  .pst h5{margin:0;font-family:'Archivo Black',sans-serif;font-weight:400;letter-spacing:.06em}
+  .pst-top{display:flex;justify-content:space-between;align-items:center}
+  .pst-brand{font-family:'Archivo Black',sans-serif;font-size:28px;letter-spacing:.06em;color:var(--teal)}
+  .pst-brand b{font-weight:400;color:var(--text)}
+  .pst-chip{font-size:17px;font-weight:800;letter-spacing:.14em;border:2px solid rgba(255,255,255,.3);padding:5px 14px;border-radius:99px}
+  .pst-hero{display:flex;align-items:flex-end;gap:24px}
+  .pst-gw{font-family:'Archivo Black',sans-serif;font-size:122px;line-height:.8;letter-spacing:-4px;color:var(--teal);text-shadow:0 0 30px rgba(0,255,135,.5)}
+  .pst-live{font-family:'Archivo Black',sans-serif;font-size:46px;line-height:.92;color:var(--pink);text-shadow:0 0 26px rgba(255,45,120,.6)}
+  .pst-dl{margin-left:auto;text-align:right;display:flex;flex-direction:column;gap:4px;padding-bottom:4px}
+  .pst-dl span{font-size:16px;font-weight:800;letter-spacing:.16em;color:var(--muted)}
+  .pst-dl b{font-family:'Archivo Black',sans-serif;font-weight:400;font-size:24px;color:var(--gold);white-space:nowrap}
+  .pst-coupon{background:rgba(255,255,255,.06);border:2px solid rgba(255,255,255,.12);border-radius:22px;padding:6px 20px}
+  .pst-row{display:grid;grid-template-columns:1fr 96px 96px 96px;gap:12px 12px;row-gap:2px;align-items:center;padding:6px 0 5px;border-top:2px solid rgba(255,255,255,.08)}
+  .pst-row.pst-hd{border-top:0;padding:6px 0 4px;font-size:15px;font-weight:800;letter-spacing:.14em;color:var(--muted)}
+  .pst-row.pst-hd span{text-align:center}
+  .pst-row.pst-hd span:first-child{text-align:left}
+  .pst-names{min-width:0;display:flex;flex-direction:column;gap:2px;text-transform:uppercase}
+  .pst-h{font-size:20px;line-height:1.12}
+  .pst-h b{font-weight:900}
+  .pst-a{font-size:17px;line-height:1.12;color:var(--muted);font-weight:700}
+  .pst-a em{font-style:normal;color:var(--violet);margin-right:4px}
+  .pst-names i{font-style:normal;font-size:14px;color:var(--violet);font-weight:800;margin-left:8px;letter-spacing:.06em}
+  .pst-form{display:inline-flex;gap:4px;margin-left:10px;vertical-align:middle}
+  .pst-dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,.25)}
+  .pst-dot.w{background:var(--teal)}.pst-dot.l{background:var(--pink)}.pst-dot.d{background:var(--gold)}
+  .pst-row>.pst-roast{grid-column:1/-1;margin:0;font-size:14px}
+  .pst-roast{margin:3px 0 0;font-size:15px;line-height:1.25;text-transform:none;color:var(--orange);font-weight:600;font-style:italic}
+  .pst-o{text-align:center;font-weight:900;font-size:22px;padding:6px 0;border-radius:13px;background:rgba(255,255,255,.08)}
+  .pst-o.fav{background:var(--teal);color:#0b0014;box-shadow:0 0 20px rgba(0,255,135,.5)}
+  .pst-o.dr{background:transparent;color:var(--muted);font-weight:700;font-size:21px}
+  .pst-o.boost{border:3px solid var(--gold);padding:6px 0}
+  .pst-trio{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  .pst-card{border-radius:20px;padding:14px 16px;background:rgba(255,255,255,.05);border:2.5px solid;display:flex;flex-direction:column;gap:4px}
+  .pst-card h5{font-size:16px;line-height:1.1}
+  .pst-card>b{font-family:'Archivo Black',sans-serif;font-weight:400;font-size:34px;line-height:1}
+  .pst-card p{margin:0;font-size:14.5px;line-height:1.28}
+  .pst-card.c-teal{border-color:var(--teal)}.pst-card.c-teal h5,.pst-card.c-teal>b{color:var(--teal)}
+  .pst-card.c-pink{border-color:var(--pink)}.pst-card.c-pink h5,.pst-card.c-pink>b{color:var(--pink)}
+  .pst-card.c-gold{border-color:var(--gold)}.pst-card.c-gold h5,.pst-card.c-gold>b{color:var(--gold)}
+  .pst-low{display:grid;grid-template-columns:1fr 300px;gap:14px}
+  .pst-cta{margin-top:auto}
+  .pst-spot{border-radius:20px;padding:14px 18px;background:linear-gradient(115deg,rgba(255,201,49,0) 0,rgba(255,201,49,0) 62%,rgba(255,201,49,.12) 62%,rgba(255,201,49,.12) 68%,rgba(255,201,49,0) 68%),rgba(255,255,255,.05);border:2.5px solid var(--gold);display:flex;flex-direction:column;gap:8px}
+  .pst-spot h5{font-size:18px;color:var(--gold);text-align:center;letter-spacing:.14em}
+  .pst-vs{display:grid;grid-template-columns:1fr 64px 1fr;gap:10px;align-items:center}
+  .pst-vs .l,.pst-vs .r{border-radius:14px;padding:9px 12px;display:flex;flex-direction:column;gap:2px;text-align:center}
+  .pst-vs .l{background:linear-gradient(160deg,#ff2d78,#a3104a)}
+  .pst-vs .r{background:linear-gradient(160deg,#00d9ff,#0a6c8a);color:#0b0014}
+  .pst-vs b{font-family:'Archivo Black',sans-serif;font-weight:400;font-size:22px;line-height:1.02;text-transform:uppercase}
+  .pst-vs small{font-size:14px;font-weight:800}
+  .pst-vs span{font-family:'Archivo Black',sans-serif;font-size:26px;color:#0b0014;background:var(--gold);width:64px;height:64px;border-radius:50%;display:flex;align-items:center;justify-content:center}
+  .pst-tape{width:100%;border-collapse:collapse;font-size:17px}
+  .pst-tape td,.pst-tape th{padding:3px 6px;border-top:1.5px solid rgba(255,255,255,.1)}
+  .pst-tape td{font-weight:800;width:40%}
+  .pst-tape td:first-child{text-align:right;color:var(--pink)}
+  .pst-tape td:last-child{text-align:left;color:var(--cyan)}
+  .pst-tape th{font-size:13px;letter-spacing:.14em;color:var(--muted);font-weight:800;text-align:center}
+  .pst-tape .pst-form{margin-left:0}
+  .pst-why{margin:0;font-size:14.5px;line-height:1.3;color:var(--text)}
+  .pst-why b{color:var(--gold)}
+  .pst-side{border-radius:20px;padding:14px 16px;background:rgba(255,255,255,.05);border:2px solid rgba(255,255,255,.14);display:flex;flex-direction:column;gap:4px}
+  .pst-side h5{font-size:16px;color:var(--cyan);letter-spacing:.12em;margin-bottom:2px}
+  .pst-side h5.aw{margin-top:8px;color:var(--gold)}
+  .pst-mt{display:grid;grid-template-columns:26px 1fr auto;gap:6px;font-size:15.5px;align-items:baseline}
+  .pst-mt span{color:var(--muted);font-weight:800}
+  .pst-mt b{font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pst-mt em{font-style:normal;font-weight:900;color:var(--teal)}
+  .pst-mt.gap{display:block;height:1.5px;margin:3px 0;background:rgba(255,255,255,.14)}
+  .pst-stamps{display:flex;flex-direction:column;gap:7px}
+  .pst-stamp.sm{padding:3px 9px}
+  .pst-stamp.sm small{display:none}
+  .pst-stamp{border:3px double;border-radius:8px;padding:5px 10px;display:flex;flex-direction:column;transform:rotate(-2.5deg)}
+  .pst-stamp:nth-child(2){transform:rotate(1.8deg)}
+  .pst-stamp:nth-child(3){transform:rotate(-1.2deg)}
+  .pst-stamp b{font-family:'Archivo Black',sans-serif;font-weight:400;font-size:15px;letter-spacing:.08em;line-height:1.1}
+  .pst-stamp span{font-size:14px;font-weight:800;line-height:1.2}
+  .pst-stamp small{font-size:12.5px;font-weight:600;opacity:.85}
+  .pst-stamp.s-gold{border-color:var(--gold);color:var(--gold)}
+  .pst-stamp.s-pink{border-color:var(--pink);color:var(--pink)}
+  .pst-stamp.s-orange{border-color:var(--orange);color:var(--orange)}
+  .pst-stamp.s-cyan{border-color:var(--cyan);color:var(--cyan)}
+  .pst-stamp.s-teal{border-color:var(--teal);color:var(--teal)}
+  .pst-cta{display:flex;gap:18px;align-items:stretch}
+  .pst-btn{flex:1;display:flex;flex-direction:column;justify-content:center;gap:4px;background:linear-gradient(90deg,#ff2d78,#9b5cff);color:#fff;border-radius:22px;padding:12px 26px;box-shadow:0 0 34px rgba(255,45,120,.5)}
+  .pst-btn b{font-family:'Archivo Black',sans-serif;font-weight:400;font-size:38px;line-height:1}
+  .pst-url{font-size:20px;font-weight:800;text-decoration:underline;text-underline-offset:4px}
+  .pst-btn small{font-size:14px;font-weight:600;opacity:.9}
+  .pst-qrbox{display:flex;flex-direction:column;align-items:center;gap:3px;background:#fff;border-radius:16px;padding:8px 8px 5px}
+  .pst-qr{width:104px;height:104px;display:block}
+  .pst-qrbox small{font-size:12px;font-weight:900;letter-spacing:.14em;color:#0b0014}
+  .pst-fine{font-size:13px;line-height:1.35;color:var(--muted)}
+  /* recap */
+  .pst-results{background:rgba(255,255,255,.06);border:2px solid rgba(255,255,255,.12);border-radius:22px;padding:8px 22px 4px}
+  .pst-res-hd{font-size:15px;font-weight:800;letter-spacing:.16em;color:var(--muted);padding:4px 0 6px}
+  .pst-res{display:grid;grid-template-columns:1fr 62px 20px 62px 1fr;gap:10px;row-gap:3px;align-items:center;padding:6px 0;border-top:2px solid rgba(255,255,255,.08)}
+  .pst-res .h,.pst-res .a{font-size:21px;font-weight:700;text-transform:uppercase;color:var(--muted);line-height:1.15}
+  .pst-res .h{text-align:right}
+  .pst-res .win{color:var(--text);font-weight:900}
+  .pst-res .sc{font-family:'Archivo Black',sans-serif;font-size:27px;text-align:center;color:var(--muted);background:rgba(255,255,255,.07);border-radius:12px;padding:3px 0}
+  .pst-res .sc.win{background:var(--teal);color:#0b0014}
+  .pst-res .dash{text-align:center;color:var(--muted);font-size:22px}
+  .pst-res .pst-roast{grid-column:1/-1;text-align:center;margin:0}
+  .pst-mid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .pst-awards,.pst-bets{border-radius:20px;padding:14px 18px;background:rgba(255,255,255,.05);border:2.5px solid var(--gold);display:flex;flex-direction:column;gap:8px}
+  .pst-bets{border-color:var(--cyan)}
+  .pst-awards h5{font-size:18px;color:var(--gold);letter-spacing:.12em}
+  .pst-bets h5{font-size:18px;color:var(--cyan);letter-spacing:.12em}
+  .pst-stamps.big{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .pst-stamps.big .pst-stamp b{font-size:14.5px}
+  .pst-bk{display:flex;justify-content:space-between;font-size:17px;border-bottom:1.5px solid rgba(255,255,255,.1);padding-bottom:4px}
+  .pst-bk span{color:var(--muted);font-weight:700}
+  .pst-bk b{font-weight:900}
+  .pst-bline{margin:2px 0 0;font-size:15.5px;line-height:1.3}
+  .pst-bline .t{color:var(--teal)}.pst-bline .p{color:var(--pink)}
+  .pst-nobets{margin:auto 0;font-size:24px;line-height:1.25;font-weight:700}
+  .pst-nobets b{color:var(--pink);font-family:'Archivo Black',sans-serif;font-weight:400;font-size:34px}
+  .pst-table{border-radius:20px;padding:12px 18px;background:rgba(255,255,255,.05);border:2px solid rgba(255,255,255,.14)}
+  .pst-table h5{font-size:17px;color:var(--cyan);letter-spacing:.12em;margin-bottom:6px}
+  .pst-table .cols{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+  .pst-tr{display:grid;grid-template-columns:26px 38px 1fr auto 34px;gap:6px;align-items:center;font-size:16px;padding:4px 0;border-top:1.5px solid rgba(255,255,255,.08)}
+  .pst-tr .p{font-weight:900;color:var(--muted)}
+  .pst-tr .mv{font-size:12.5px;font-weight:800;color:var(--muted)}
+  .pst-tr .mv.up{color:var(--teal)}.pst-tr .mv.dn{color:var(--pink)}
+  .pst-tr b{font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pst-tr .pst-form{margin-left:0;gap:3px}
+  .pst-tr .pst-dot{width:8px;height:8px}
+  .pst-tr em{font-style:normal;font-weight:900;color:var(--teal);text-align:right}
 </style>
 </head>
 <body>
@@ -675,6 +815,12 @@
      called from render() while it's open so a background sync refreshes it in place. -->
 <div id="squadModalOverlay" onclick="closeSquadModal()"></div>
 <div id="squadModal"><div id="squadModalBody"></div></div>
+
+<!-- Weekly poster (2026-10-09): same fixed/outside-#view pattern as #betModal. #posterStage is the
+     off-screen 1000×1414 canvas html2canvas rasterises — see the WEEKLY POSTER section. -->
+<div id="posterModalOverlay" onclick="closePosterModal()"></div>
+<div id="posterModal"></div>
+<div id="posterStage" aria-hidden="true"></div>
 
 <!-- Batch 24: mobile nav drawer — flat list of every tab (same source as #topbar nav and
      #bottomNav's "More" detour), slides in from the left, dark-glass style matching
@@ -1011,6 +1157,7 @@ function startListener() {
       db.ref(ROOT).set(S);
     } else {
       S = migrate(data);
+      if (me) flushUsageQueue();
     }
     if (me) render();
   }, err => {
@@ -1155,14 +1302,23 @@ function switchUser(tid) {
   if (bn) bn.style.display = '';
   startListener();
   if (S) render();
-  // Usage tracking: no-ops via logUsage()'s own guard on the rare cold-start case where S hasn't
-  // loaded from Firebase yet (startListener() above is async) — that one login goes unlogged
-  // rather than adding complexity to wait for it; every subsequent login/switch has S loaded.
+  // Usage tracking: S is usually still null here (startListener() above is async), so logUsage()
+  // queues this and the listener replays it via flushUsageQueue() once real data has loaded.
   logUsage('login');
   setTimeout(maybeShowPromo, 900);
 }
 
+// Replays queued usage events and any pending poster-link visit. Only ever called from the
+// database listener right after real data loads, never against a placeholder state.
+function flushUsageQueue(){
+  if(!me||!S||!S.usage) return;
+  const q=_usageQueue; _usageQueue=[];
+  q.forEach(e=>logUsage(e.type,e.tab,e.at));
+  logRefVisit();
+}
+
 function logout() {
+  _usageQueue = [];
   if (dbListener) {
     db.ref(ROOT).off('value', dbListener);
     dbListener = null;
@@ -1341,9 +1497,14 @@ function ukHour(ts){ return +new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/L
 // convention batch 6 established for chat/counters, not the saveNow() used for anything
 // financially sensitive. No-ops if there's no logged-in team (e.g. pre-login state) or the
 // state tree hasn't loaded yet.
-function logUsage(type, tab){
-  if(!me||!S||!S.usage) return;
-  const at=Date.now(), tid=me.id;
+// Events that happen before the first database snapshot (always the case for 'login': the
+// listener only starts inside switchUser) are queued and replayed by flushUsageQueue() from the
+// listener, rather than dropped. That drop is why every login count read 0 until 2026-10-09.
+let _usageQueue=[];
+function logUsage(type, tab, atOverride){
+  if(!me) return;
+  if(!S||!S.usage){ if(_usageQueue.length<20) _usageQueue.push({type,tab,at:Date.now()}); return; }
+  const at=atOverride||Date.now(), tid=me.id;
   S.usage.events.push(tab?{at,team:tid,type,tab}:{at,team:tid,type});
   if(S.usage.events.length>4000) S.usage.events=S.usage.events.slice(-4000);
   const dk=ukDateKey(at);
@@ -3491,21 +3652,7 @@ function vResults(){
 function vStandings(){
   const {pnl,house}=computePnl(S);
   const rows=S.teams.map(t=>({t,p:pnl[t.id]||0})).sort((a,b)=>b.p-a.p);
-  const lt={}; S.teams.forEach(t=>lt[t.id]={p:0,w:0,d:0,l:0,pf:0,pts:0});
-  const addRes=(hid,aid,hp,ap)=>{
-    const h=lt[hid],a=lt[aid]; if(!h||!a) return;
-    h.p++;a.p++;h.pf+=hp;a.pf+=ap;
-    if(hp>ap){h.w++;h.pts+=3;a.l++;}
-    else if(hp<ap){a.w++;a.pts+=3;h.l++;}
-    else{h.d++;a.d++;h.pts++;a.pts++;}
-  };
-  const localEvents=new Set(S.gameweeks.filter(g=>g.event&&g.matches.some(m=>m.result)).map(g=>g.event));
-  (S.history||[]).forEach(h=>{ if(!localEvents.has(h.event)) addRes(h.a,h.b,h.ap,h.bp); });
-  S.gameweeks.forEach(g=>g.matches.forEach(m=>{
-    if(!m.result||!m.home||!m.away) return;
-    addRes(m.home,m.away,m.result.homePts,m.result.awayPts);
-  }));
-  const ltRows=S.teams.map(t=>({t,...lt[t.id]})).sort((a,b)=>b.pts-a.pts||b.pf-a.pf);
+  const ltRows=leagueTable(S);
   return `<div class="card">
     <h3>💷 Money table</h3>
     <p class="muted small">Settled bets only. Green = the house owes you. Pink = pay up.</p>
@@ -5704,6 +5851,7 @@ function oddsCard(g,isDraft){
     </div>
     <div class="actions" style="margin-top:10px">
       ${isDraft?`<button class="btn big" onclick="publishGw('${g.id}')">🚀 Publish — release odds &amp; open for betting</button>`:`<button class="btn gold small" onclick="releaseOdds('${g.id}')">📣 Release odds</button>`}
+      <button class="btn secondary small" onclick="openPoster('odds','${g.id}')">${isDraft?'👀 Preview poster':'📣 Poster'}</button>
       <button class="btn secondary small" onclick="rerecommend('${g.id}')">↺ Reset all to recommended</button>
       ${isDraft?`<button class="btn danger small" onclick="delGw('${g.id}')">Delete</button>`:''}
     </div>
@@ -5781,6 +5929,8 @@ function publishGw(gwId){
   audit('published',g.name); save(); render();
   TEAMS.forEach(t=>{ if(!t.admin) pushNotif(t.id,'gw_published',`📅 ${g.name} is LIVE — place your bets before ${fmtDT(g.deadline)} 🔥`); });
   toast(g.name+' is LIVE 🔥');
+  // Weekly poster: publishing is the moment to send it, so open it straight away.
+  setTimeout(()=>openPoster('odds',gwId),500);
 }
 // Batch 21: explicit re-release for an ALREADY open gameweek — e.g. the admin tweaked/reset some
 // odds after publishing and wants to re-notify players + refresh the home-page "new odds" banner
@@ -5793,6 +5943,552 @@ function releaseOdds(gwId){
   TEAMS.forEach(t=>{ if(!t.admin) pushNotif(t.id,'odds_released',`🎯 New odds released for ${g.name} — review before they lock in`); });
   render();
   toast('Odds released — players notified 📣');
+}
+
+/* ================================================================
+   HOUSE · WEEKLY POSTER (2026-10-09)
+   ================================================================
+   One-page promo poster for the WhatsApp group, in two editions:
+   'odds'  — made when a gameweek is published: the coupon (form dots + a roast line per
+             fixture), banker double, long shot, the admin's own pick ("fade it"), matchup of
+             the week with the Algo's reasoning, a mini table and last week's award stamps.
+   'recap' — made when a gameweek is settled: results (with roasts), award stamps, who cashed,
+             and the table with movement.
+   posterHtml() builds plain HTML at a fixed 1000×1414px (A4 ratio) inside the off-screen
+   #posterStage; html2canvas rasterises it to a JPEG and jsPDF wraps that in an A4 PDF whose
+   CTA and QR are real link annotations. All three libraries (html2canvas, jsPDF, the QR
+   generator) are lazy-loaded from cdnjs on first use, so normal app load is untouched.
+   Every link carries ?from=<tag> (captureRefParam/logRefVisit) so the Usage card can count
+   logged-in visits that came from a poster. Jokes are picked from a seed per gameweek +
+   edition, so regenerating the same poster gives the same words.
+   ================================================================ */
+const POSTER_URL='https://dseligman1.github.io/lennon-lounge/';
+const POSTER_W=1000, POSTER_H=1414;
+const POSTER_LIBS={
+  h2c:'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js',
+  pdf:'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
+  qr:'https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js'
+};
+const _libLoads={};
+function loadScriptOnce(src){
+  if(!_libLoads[src]) _libLoads[src]=new Promise((res,rej)=>{
+    const s=document.createElement('script'); s.src=src; s.onload=res;
+    s.onerror=()=>{ delete _libLoads[src]; rej(new Error('Could not load '+src)); };
+    document.head.appendChild(s);
+  });
+  return _libLoads[src];
+}
+const posterLink=tag=>POSTER_URL+'?from='+tag;
+const posterOrd=n=>n+((n%100>10&&n%100<14)?'th':({1:'st',2:'nd',3:'rd'}[n%10]||'th'));
+function posterRng(seed){
+  let h=2166136261;
+  for(const c of String(seed)){ h^=c.charCodeAt(0); h=Math.imul(h,16777619); }
+  if(!h) h=1;
+  return ()=>{ h^=h<<13; h^=h>>>17; h^=h<<5; return ((h>>>0)%100000)/100000; };
+}
+const posterPick=(rng,arr)=>arr[Math.floor(rng()*arr.length)];
+
+// League table (3/1/0, points-for tiebreak) — same merge of S.history + local gameweek results
+// as vStandings(). maxEvent (optional) limits it to results up to that event, for movement arrows.
+function leagueTable(state, maxEvent){
+  const lt={}; state.teams.forEach(t=>lt[t.id]={p:0,w:0,d:0,l:0,pf:0,pts:0});
+  const addRes=(hid,aid,hp,ap)=>{
+    const h=lt[hid],a=lt[aid]; if(!h||!a) return;
+    h.p++;a.p++;h.pf+=hp;a.pf+=ap;
+    if(hp>ap){h.w++;h.pts+=3;a.l++;}
+    else if(hp<ap){a.w++;a.pts+=3;h.l++;}
+    else{h.d++;a.d++;h.pts++;a.pts++;}
+  };
+  const inRange=ev=>maxEvent==null||(ev||0)<=maxEvent;
+  const localEvents=new Set(state.gameweeks.filter(g=>g.event&&g.matches.some(m=>m.result)).map(g=>g.event));
+  (state.history||[]).forEach(h=>{ if(!localEvents.has(h.event)&&inRange(h.event)) addRes(h.a,h.b,h.ap,h.bp); });
+  state.gameweeks.forEach(g=>{ if(!inRange(g.event)) return; g.matches.forEach(m=>{
+    if(!m.result||!m.home||!m.away) return;
+    addRes(m.home,m.away,m.result.homePts,m.result.awayPts);
+  }); });
+  return state.teams.map(t=>({t,...lt[t.id]})).sort((a,b)=>b.pts-a.pts||b.pf-a.pf);
+}
+function posterTeamStats(state){
+  const rows=leagueTable(state);
+  const byPf=[...rows].sort((a,b)=>b.pf-a.pf);
+  const st={};
+  rows.forEach((r,i)=>{
+    const f=teamForm(state,r.t.id,5);
+    let streak=0, streakRes=null;
+    for(let k=f.games.length-1;k>=0;k--){ const x=f.games[k].res; if(streakRes===null) streakRes=x; if(x===streakRes) streak++; else break; }
+    st[r.t.id]={t:r.t, pos:i+1, pts:r.pts, pf:r.pf, p:r.p, w:r.w, pfRank:byPf.findIndex(x=>x.t.id===r.t.id)+1,
+      form:f.games.map(g=>g.res), streak, streakRes, last:f.games[f.games.length-1]||null};
+  });
+  return {rows, st, n:rows.length};
+}
+function posterLastSettled(state, beforeEvent){
+  return state.gameweeks.filter(g=>g.status==='settled'&&g.matches.some(m=>m.result)&&(beforeEvent==null||(g.event||0)<beforeEvent))
+    .sort((a,b)=>(b.event||0)-(a.event||0))[0]||null;
+}
+// The price a player would actually see: flash promo first, then the week's admin boosts.
+function posterPrice(g,m,pick){
+  const base=Number(m.odds&&m.odds[pick])||0;
+  const promo=promoPrice(g.id,m.id,pick), wk=weekBoostPrice(g,m,pick);
+  const v=Number(promo!=null?promo:(wk!=null?wk:base));
+  return {v, boosted:v>base};
+}
+function posterAwards(g){
+  const scores=[];
+  g.matches.forEach(m=>{
+    if(!m.result||!m.home||!m.away) return;
+    const hp=m.result.homePts, ap=m.result.awayPts;
+    scores.push({id:m.home,pts:hp,oppPts:ap,odds:m.odds&&m.odds.home});
+    scores.push({id:m.away,pts:ap,oppPts:hp,odds:m.odds&&m.odds.away});
+  });
+  if(!scores.length) return [];
+  const top=[...scores].sort((a,b)=>b.pts-a.pts)[0], low=[...scores].sort((a,b)=>a.pts-b.pts)[0];
+  const bottler=scores.filter(s=>s.pts<s.oppPts&&s.odds).sort((a,b)=>a.odds-b.odds)[0];
+  const wins=scores.filter(s=>s.pts>s.oppPts);
+  const robbery=[...wins].sort((a,b)=>(a.pts-a.oppPts)-(b.pts-b.oppPts))[0];
+  const thrash=[...wins].sort((a,b)=>(b.pts-b.oppPts)-(a.pts-a.oppPts))[0];
+  const out=[{k:'legend',label:'LOUNGE LEGEND',id:top.id,line:`${top.pts} pts. Top score.`,c:'gold'},
+             {k:'spoon',label:'WOODEN SPOON',id:low.id,line:`${low.pts} pts. Oof.`,c:'pink'}];
+  if(bottler) out.push({k:'bottler',label:'BOTTLER',id:bottler.id,line:`Lost as ${fmtOdds(bottler.odds)} favourites`,c:'orange'});
+  if(robbery&&thrash&&robbery!==thrash) out.push({k:'robbery',label:'DAYLIGHT ROBBERY',id:robbery.id,line:`Won by ${robbery.pts-robbery.oppPts}`,c:'cyan'});
+  if(thrash) out.push({k:'thrash',label:'THRASHING',id:thrash.id,line:`Won by ${thrash.pts-thrash.oppPts}`,c:'teal'});
+  return out;
+}
+// The admin's own pick for a gameweek ("fade it"). Stored as g.housePick once chosen in the
+// poster modal; until then it defaults to the admin backing their own team, which is the joke.
+function posterHousePick(g){
+  const by=me?me.id:'selig';
+  if(g.housePick&&g.housePick.by===by) return g.housePick;
+  const m=g.matches.find(x=>x.home===by||x.away===by);
+  return m?{by, matchId:m.id, pick:m.home===by?'home':'away', auto:true}:null;
+}
+function posterHouseRecord(by){
+  let n=0,c=0;
+  S.gameweeks.forEach(g=>{
+    const hp=g.housePick; if(g.status!=='settled'||!hp||hp.by!==by) return;
+    const m=g.matches.find(x=>x.id===hp.matchId); if(!m||!m.result) return;
+    const r=m.result.homePts>m.result.awayPts?'home':(m.result.homePts<m.result.awayPts?'away':'draw');
+    n++; if(r===hp.pick) c++;
+  });
+  return {n,c};
+}
+function setHousePick(gwId,val){
+  if(!requireAdmin()) return;
+  const g=gw(gwId); if(!g) return;
+  const [matchId,pick]=String(val).split('|');
+  g.housePick={by:me.id, matchId, pick};
+  save();
+  openPoster('odds',gwId);
+}
+
+/* ---------- jokes ---------- */
+// One line per fixture, "no mercy" level. Candidates come from each team's stats with a
+// priority; the strongest unused one wins, so the same team or line never repeats on a poster.
+function posterTeamRoasts(s, ctx){
+  const T=s.t.name, O=s.t.owner, out=[];
+  const add=(pri,lines)=>out.push({pri, team:s.t.id, lines});
+  if(s.pos===ctx.n) add(9,[`${T}: bottom of the league and somehow still the loudest in the group chat.`,`${T} are ${ctx.n}th of ${ctx.n}. There's no relegation in the Lounge. There is shame.`]);
+  if(s.pfRank===ctx.n&&s.p) add(8,[`${T}: ${s.pf} points in ${s.p} games. That's not a team, it's a cry for help.`]);
+  if(s.streakRes==='L'&&s.streak>=3) add(8,[`${T} have lost ${s.streak} on the bounce. Someone check on ${O}.`,`${s.streak} defeats in a row for ${T}. ${O} has started blaming the wifi.`]);
+  if(s.last&&ctx.lastLow===s.t.id) add(8,[`${T} scored ${s.last.pts} last week. A score so low FPL sent a welfare check.`]);
+  if(s.streakRes==='W'&&s.streak>=3) add(7,[`${T} have won ${s.streak} in a row. Unbearable. Somebody stop them.`]);
+  if(s.pos-s.pfRank>=4) add(7,[`${T}: ${posterOrd(s.pfRank)} for points, ${posterOrd(s.pos)} in the table. The fixture computer hates ${O}.`]);
+  if(s.pfRank-s.pos>=4) add(7,[`${T}: ${posterOrd(s.pos)} in the table with only the ${posterOrd(s.pfRank)}-best points total. Daylight robbery.`]);
+  if(s.pos===1) add(6,[`${T} top the table. Enjoy it, ${O}. It won't last.`]);
+  if(s.last&&s.last.pts<35&&ctx.lastLow!==s.t.id) add(5,[`${T} managed ${s.last.pts} last week. ${O}'s bench would have done better. It probably did.`]);
+  if(s.last&&ctx.lastTop===s.t.id) add(5,[`${T} dropped ${s.last.pts} last week. Peaked too early, surely.`]);
+  add(1,[`${T}: ${posterOrd(s.pos)} in the table. Nobody is scared of you, ${O}.`,`${T}: ${posterOrd(s.pos)}, form ${s.form.join('')||'none'}. Aggressively mid.`]);
+  return out;
+}
+function posterFixtureRoasts(fixtures, TS, ctx, rng){
+  const usedTeams=new Set(), usedLines=new Set();
+  return fixtures.map(fx=>{
+    const cands=[...posterTeamRoasts(TS.st[fx.home],ctx), ...posterTeamRoasts(TS.st[fx.away],ctx)];
+    const fav=fx.homeFav?fx.home:fx.away, dog=fx.homeFav?fx.away:fx.home;
+    if(TS.st[fav].pos-TS.st[dog].pos>=4) cands.push({pri:10, team:fav, lines:[`The Algo makes ${TS.st[fav].t.name} (${posterOrd(TS.st[fav].pos)}) favourites over ${TS.st[dog].t.name} (${posterOrd(TS.st[dog].pos)}). Genius or a cry for help.`]});
+    const ok=cands.filter(c=>!usedTeams.has(c.team)).sort((a,b)=>b.pri-a.pri||rng()-0.5);
+    const pick=ok[0]||cands.sort((a,b)=>b.pri-a.pri)[0];
+    let line=posterPick(rng,pick.lines.filter(l=>!usedLines.has(l)))||pick.lines[0];
+    usedTeams.add(pick.team); usedLines.add(line);
+    return line;
+  });
+}
+function posterResultRoast(r, rng){
+  const W=team(r.winId), L=team(r.loseId);
+  const Wn=W?W.name:'?', Ln=L?L.name:'?', LO=L?L.owner:'someone';
+  if(r.draw) return posterPick(rng,[`A draw. ${fmtOdds(r.drawOdds)} at the bookies. Did anyone back it? Course not.`,`Level on ${r.wp}. Nobody wins, everybody's annoyed.`]);
+  if(r.upset) return `${Wn} won at ${fmtOdds(r.winOdds)}. The Algo would like a word.`;
+  if(r.lp<30) return posterPick(rng,[`${Ln} scored ${r.lp}. ${LO}, are you OK?`,`${r.lp} points from ${Ln}. ${LO} has some explaining to do.`]);
+  if(r.wp-r.lp>=20) return `${Wn} put ${Ln} in the bin, ${r.wp}–${r.lp}.`;
+  if(r.wp-r.lp<=4) return `${Wn} by ${r.wp-r.lp}. ${LO} will be staring at that bench all week.`;
+  return posterPick(rng,[`${Wn} beat ${Ln}. ${LO} will find something to complain about.`,`Routine for ${Wn}. Less routine for ${LO}'s mood.`]);
+}
+function posterFinePrint(rng, bottomName){
+  const lines=[
+    `Odds correct at time of publishing and subject to change, much like ${bottomName}'s tactics.`,
+    `Past performance of ${bottomName} is no guide to anything, including future performance of ${bottomName}.`,
+    `The Algo is never wrong. When it is, that's variance.`,
+    `No managers were harmed in the making of these odds. Several were mildly insulted.`,
+    `Any resemblance between ${bottomName} and a football team is purely coincidental.`
+  ];
+  return `18+. ${posterPick(rng,lines)} Only bet what you can afford to lose.`;
+}
+
+/* ---------- poster HTML ---------- */
+const posterDots=form=>`<span class="pst-form">${form.map(r=>`<span class="pst-dot ${r==='W'?'w':r==='L'?'l':'d'}"></span>`).join('')}</span>`;
+const posterStamp=(a,small)=>{ const t=team(a.id); return `<div class="pst-stamp s-${a.c}${small?' sm':''}"><b>${esc(a.label)}</b><span>${esc(t?t.name:'?')}${small?' · '+esc(a.line.split('.')[0]):''}</span><small>${esc(a.line)}</small></div>`; };
+function posterCta(tag, big, small){
+  return `<div class="pst-cta"><div class="pst-btn" data-link="${tag}-pdf"><b>${big}</b><span class="pst-url">dseligman1.github.io/lennon-lounge ↗</span><small>${small}</small></div>
+    <div class="pst-qrbox" data-link="${tag}-qr"><canvas class="pst-qr" data-qr="${posterLink(tag+'-qr')}"></canvas><small>SCAN ME</small></div></div>`;
+}
+const posterTop=()=>`<div class="pst-top"><span class="pst-brand">LENNON <b>LOUNGE</b></span><span class="pst-chip">SEASON 26/27</span></div>`;
+const posterTag=(edition,g)=>(edition==='odds'?'gw':'r')+(g.event||g.id.replace(/\D/g,''));
+
+function posterData(edition, g){
+  const TS=posterTeamStats(S);
+  const rng=posterRng(g.id+':'+edition);
+  const bottom=TS.rows[TS.rows.length-1].t.name;
+  return {TS, rng, fine:posterFinePrint(rng,bottom), tag:posterTag(edition,g)};
+}
+
+function posterOddsHtml(g){
+  const {TS,rng,fine,tag}=posterData('odds',g);
+  const lastG=posterLastSettled(S,g.event);
+  const awards=lastG?posterAwards(lastG):[];
+  const ctx={n:TS.n, lastTop:(awards.find(a=>a.k==='legend')||{}).id, lastLow:(awards.find(a=>a.k==='spoon')||{}).id};
+  const fixtures=g.matches.filter(m=>m.home&&m.away&&TS.st[m.home]&&TS.st[m.away]).map(m=>{
+    const h=posterPrice(g,m,'home'), d=posterPrice(g,m,'draw'), a=posterPrice(g,m,'away');
+    return {m, home:m.home, away:m.away, h, d, a, homeFav:h.v<=a.v};
+  });
+  const roasts=posterFixtureRoasts(fixtures, TS, ctx, rng);
+  const sides=[];
+  fixtures.forEach(fx=>{ sides.push({fx,id:fx.home,opp:fx.away,odds:fx.h.v,fav:fx.homeFav}); sides.push({fx,id:fx.away,opp:fx.home,odds:fx.a.v,fav:!fx.homeFav}); });
+  const favs=sides.filter(s=>s.fav).sort((a,b)=>a.odds-b.odds);
+  const banker=favs.slice(0,2);
+  const dbl=banker.length===2?Math.round(banker[0].odds*banker[1].odds*100)/100:null;
+  const long=sides.filter(s=>!s.fav).sort((a,b)=>b.odds-a.odds)[0];
+  let longWhy='';
+  if(long){
+    const L=TS.st[long.id], O=TS.st[long.opp];
+    const lw=L.form.filter(r=>r==='W').length, ow=O.form.filter(r=>r==='W').length;
+    if(L.pf>O.pf) longWhy=`They've scored more points than ${O.t.name} this season (${L.pf} v ${O.pf}).`;
+    else if(lw>=ow) longWhy=`${lw} wins in their last ${L.form.length}, ${lw>ow?'more than':'as many as'} ${O.t.name}.`;
+    else if(L.last&&O.last&&L.last.pts>O.last.pts) longWhy=`Outscored ${O.t.name} last week (${L.last.pts} v ${O.last.pts}).`;
+    else longWhy=`Only ${O.pf-L.pf} points behind ${O.t.name} all season. Stranger things have happened.`;
+  }
+  const hp=posterHousePick(g);
+  let hpHtml='<p>No pick this week.</p>', hpOdds='—';
+  if(hp){
+    const fx=fixtures.find(f=>f.m.id===hp.matchId);
+    if(fx){
+      hpOdds=fmtOdds(fx[hp.pick==='home'?'h':hp.pick==='away'?'a':'d'].v);
+      const what=hp.pick==='draw'?`The draw in ${team(fx.home).name} v ${team(fx.away).name}`:`${team(hp.pick==='home'?fx.home:fx.away).name} to win`;
+      const rec=posterHouseRecord(hp.by);
+      const own=TS.st[hp.by];
+      const who=(me&&me.owner)||'Daniel';
+      const recLine=rec.n?`${who}'s record: ${rec.c} from ${rec.n}. You know what to do.`:(own?`${who}'s own team has won ${own.w} of ${own.p}. You know what to do.`:'You know what to do.');
+      hpHtml=`<p><b>${esc(what)}.</b> ${esc(recLine)}</p>`;
+    }
+  }
+  const hpName=(me&&me.owner)||'Daniel';
+  const spot=[...fixtures].sort((a,b)=>Math.abs(a.h.v-a.a.v)-Math.abs(b.h.v-b.a.v)||Math.abs(TS.st[a.home].pos-TS.st[a.away].pos)-Math.abs(TS.st[b.home].pos-TS.st[b.away].pos))[0];
+  let spotHtml='';
+  if(spot){
+    const A=TS.st[spot.home], B=TS.st[spot.away];
+    const why=matchPricingRationale(S,g.id,spot.m.id);
+    // First reason only, cut at its dash, in poster voice ("the Algo", not "the model").
+    const bullet=why&&why.bullets&&why.bullets.length?why.bullets[0].split(' — ')[0].replace(/\bthe model\b/gi,'the Algo').replace(/s's\b/g,"s'").replace(/\.?$/,'.'):'';
+    const row=(l,label,r)=>`<tr><td>${l}</td><th>${label}</th><td>${r}</td></tr>`;
+    spotHtml=`<div class="pst-spot">
+      <h5>MATCHUP OF THE WEEK</h5>
+      <div class="pst-vs"><div class="l"><b>${esc(A.t.name)}</b><small>${esc(A.t.owner)}</small></div><span>VS</span><div class="r"><b>${esc(B.t.name)}</b><small>${esc(B.t.owner)}</small></div></div>
+      <table class="pst-tape">
+        ${row(posterOrd(A.pos),'TABLE',posterOrd(B.pos))}
+        ${row(A.pf,'SEASON PTS',B.pf)}
+        ${row(A.last?A.last.pts:'—','LAST WEEK',B.last?B.last.pts:'—')}
+        ${row(`<b>${fmtOdds(spot.h.v)}</b>`,'ODDS',`<b>${fmtOdds(spot.a.v)}</b>`)}
+      </table>
+      ${bullet?`<p class="pst-why"><b>Why the Algo priced it:</b> ${esc(bullet)}</p>`:''}
+    </div>`;
+  }
+  const mini=r=>`<div class="pst-mt"><span>${TS.st[r.t.id].pos}</span><b>${esc(r.t.name)}</b><em>${r.pts}</em></div>`;
+  const stamps=awards.filter(a=>a.k==='legend'||a.k==='spoon');
+  const cell=(p,fav)=>`<span class="pst-o${fav?' fav':''}${p.boosted?' boost':''}">${fmtOdds(p.v)}</span>`;
+  return `<div class="pst pst-odds">
+    ${posterTop()}
+    <div class="pst-hero"><div class="pst-gw">${esc(g.name.replace(/\s+/g,''))}</div><div class="pst-live">ODDS<br>ARE LIVE</div>
+      <div class="pst-dl"><span>DEADLINE</span><b>${esc(fmtDT(g.deadline))}</b></div></div>
+    <div class="pst-coupon">
+      <div class="pst-row pst-hd"><span>${esc(g.name)} · ${fixtures.length} GAMES</span><span>HOME</span><span>DRAW</span><span>AWAY</span></div>
+      ${fixtures.map((fx,i)=>{ const H=TS.st[fx.home], A=TS.st[fx.away]; return `<div class="pst-row">
+        <div class="pst-names"><div class="pst-h"><b>${esc(H.t.name)}</b><i>${posterOrd(H.pos)}</i>${posterDots(H.form)}</div>
+          <div class="pst-a"><em>v</em> ${esc(A.t.name)}<i>${posterOrd(A.pos)}</i>${posterDots(A.form)}</div>
+</div>
+        ${cell(fx.h,fx.homeFav)}${cell(fx.d,false).replace('pst-o','pst-o dr')}${cell(fx.a,!fx.homeFav)}
+        <p class="pst-roast">${esc(roasts[i])}</p></div>`; }).join('')}
+    </div>
+    <div class="pst-trio">
+      <div class="pst-card c-teal"><h5>BANKER DOUBLE</h5><b>${dbl?fmtOdds(dbl):'—'}</b>${dbl?`<p><b>${esc(team(banker[0].id).name)} + ${esc(team(banker[1].id).name)}.</b> £10 returns ${GBP(10*banker[0].odds*banker[1].odds)}.</p>`:'<p>Not enough games.</p>'}</div>
+      <div class="pst-card c-pink"><h5>LONG SHOT</h5><b>${long?fmtOdds(long.odds):'—'}</b>${long?`<p><b>${esc(team(long.id).name)}</b> v ${esc(team(long.opp).name)}. ${esc(longWhy)}</p>`:''}</div>
+      <div class="pst-card c-gold"><h5>${esc(hpName.toUpperCase())}'S PICK (FADE IT)</h5><b>${hpOdds}</b>${hpHtml}</div>
+    </div>
+    <div class="pst-low">
+      ${spotHtml}
+      <div class="pst-side">
+        <h5>THE TABLE</h5>
+        ${TS.rows.slice(0,3).map(mini).join('')}<div class="pst-mt gap"></div>${TS.rows.slice(-3).map(mini).join('')}
+        ${stamps.length?`<h5 class="aw">${lastG?esc(lastG.name).toUpperCase()+' AWARDS':'AWARDS'}</h5><div class="pst-stamps">${stamps.map(a=>posterStamp(a,true)).join('')}</div>`:''}
+      </div>
+    </div>
+    ${posterCta(tag,'👉 TAP HERE TO BET','Or scan the code. Odds close at the deadline.')}
+    <div class="pst-fine">${esc(fine)}</div>
+  </div>`;
+}
+
+function posterRecapHtml(g){
+  const {TS,rng,fine,tag}=posterData('recap',g);
+  const before=leagueTable(S,(g.event||0)-1), after=leagueTable(S,g.event);
+  const posBefore={}, posAfter={};
+  before.forEach((r,i)=>posBefore[r.t.id]=i+1); after.forEach((r,i)=>posAfter[r.t.id]=i+1);
+  const results=g.matches.filter(m=>m.result&&m.home&&m.away).map(m=>{
+    const hp=m.result.homePts, ap=m.result.awayPts, draw=hp===ap, homeWin=hp>ap;
+    const winId=homeWin?m.home:m.away, loseId=homeWin?m.away:m.home;
+    const winOdds=m.odds?(homeWin?m.odds.home:m.odds.away):null, loseOdds=m.odds?(homeWin?m.odds.away:m.odds.home):null;
+    return {m, hp, ap, draw, homeWin, winId, loseId, wp:Math.max(hp,ap), lp:Math.min(hp,ap), winOdds, drawOdds:m.odds&&m.odds.draw, upset:!draw&&winOdds&&loseOdds&&winOdds>loseOdds&&winOdds-loseOdds>=0.3};
+  });
+  const awards=posterAwards(g);
+  const stamps=[awards.find(a=>a.k==='legend'),awards.find(a=>a.k==='spoon'),awards.find(a=>a.k==='bottler'),awards.find(a=>a.k==='robbery')||awards.find(a=>a.k==='thrash')].filter(Boolean);
+  const bets=S.bets.filter(b=>b.gwId===g.id&&['won','lost','void'].includes(b.status));
+  const winners=bets.filter(b=>b.status==='won').sort((a,b)=>(b.settledPayout||0)-(a.settledPayout||0));
+  const losers=bets.filter(b=>b.status==='lost').sort((a,b)=>b.stake-a.stake);
+  const staked=bets.reduce((s,b)=>s+(b.status==='void'?0:b.stake),0);
+  const paid=winners.reduce((s,b)=>s+(b.settledPayout||0),0);
+  const owner=id=>{ const t=team(id); return t?t.owner:'?'; };
+  let betsHtml;
+  if(!bets.length) betsHtml=`<p class="pst-nobets">Bets placed: <b>0</b>. The bookie is bored. Fix that.</p>`;
+  else betsHtml=`
+    <div class="pst-bk"><span>Bets settled</span><b>${bets.length}</b></div>
+    <div class="pst-bk"><span>Staked</span><b>${GBP(staked)}</b></div>
+    <div class="pst-bk"><span>Paid out</span><b>${GBP(paid)}</b></div>
+    ${winners.length?`<p class="pst-bline"><b class="t">WHO CASHED:</b> ${winners.slice(0,3).map(b=>`${esc(owner(b.teamId))} ${GBP(b.settledPayout||0)}`).join(' · ')}</p>`:`<p class="pst-bline"><b class="t">WHO CASHED:</b> Nobody. The house sends its thanks.</p>`}
+    ${losers.length?`<p class="pst-bline"><b class="p">BIGGEST DONATION:</b> ${esc(owner(losers[0].teamId))}, ${GBP(losers[0].stake)} on ${losers[0].legs.length>1?`a ${losers[0].legs.length}-fold`:'a single'} at ${fmtOdds(losers[0].effOdds)}.</p>`:''}`;
+  const next=S.gameweeks.filter(x=>(x.status==='open'||x.status==='draft')&&(x.event||0)>(g.event||0)).sort((a,b)=>(a.event||0)-(b.event||0))[0];
+  const trow=(r,i)=>{ const mv=(posBefore[r.t.id]||i+1)-(i+1); return `<div class="pst-tr"><span class="p">${i+1}</span><span class="mv ${mv>0?'up':mv<0?'dn':''}">${mv>0?'▲'+mv:mv<0?'▼'+(-mv):'–'}</span><b>${esc(r.t.name)}</b>${posterDots(TS.st[r.t.id].form)}<em>${r.pts}</em></div>`; };
+  const half=Math.ceil(after.length/2);
+  return `<div class="pst pst-recap">
+    ${posterTop()}
+    <div class="pst-hero"><div class="pst-gw">${esc(g.name.replace(/\s+/g,''))}</div><div class="pst-live">THE<br>RECAP</div>
+      <div class="pst-dl"><span>${next?'NEXT UP':'FINAL SCORES'}</span><b>${next?esc(next.name)+' · '+esc(fmtDT(next.deadline)):'All settled'}</b></div></div>
+    <div class="pst-results">
+      <div class="pst-res-hd">FULL TIME</div>
+      ${results.map(r=>`<div class="pst-res">
+        <span class="h${!r.draw&&r.homeWin?' win':''}">${esc(team(r.m.home).name)}</span>
+        <span class="sc${!r.draw&&r.homeWin?' win':''}">${r.hp}</span><span class="dash">–</span><span class="sc${!r.draw&&!r.homeWin?' win':''}">${r.ap}</span>
+        <span class="a${!r.draw&&!r.homeWin?' win':''}">${esc(team(r.m.away).name)}</span>
+        <p class="pst-roast">${esc(posterResultRoast(r,rng))}</p></div>`).join('')}
+    </div>
+    <div class="pst-mid">
+      <div class="pst-awards"><h5>THE AWARDS</h5><div class="pst-stamps big">${stamps.map(a=>posterStamp(a,false)).join('')}</div></div>
+      <div class="pst-bets"><h5>THE BETTING</h5>${betsHtml}</div>
+    </div>
+    <div class="pst-table"><h5>THE TABLE</h5><div class="cols"><div>${after.slice(0,half).map((r,i)=>trow(r,i)).join('')}</div><div>${after.slice(half).map((r,i)=>trow(r,i+half)).join('')}</div></div></div>
+    ${posterCta(tag,next?`👉 ${esc(next.name)} ODDS: TAP HERE`:'👉 TAP HERE FOR THE LOUNGE','Or scan the code. Results, bets and banter inside.')}
+    <div class="pst-fine">${esc(fine)}</div>
+  </div>`;
+}
+
+function posterCaption(edition, g){
+  const tag=posterTag(edition,g);
+  if(edition==='odds'){
+    const html=document.querySelector('#posterStage .pst');
+    const pick=sel=>{ const el=html&&html.querySelector(sel); return el?el.textContent.trim():''; };
+    const bankerTxt=pick('.c-teal p b').replace(/\.$/,''), bankerOdds=pick('.c-teal > b');
+    const longTeam=pick('.c-pink p b'), longOdds=pick('.c-pink > b');
+    const vs=html?[...html.querySelectorAll('.pst-vs b')].map(b=>b.textContent.trim()):[];
+    return [`🚨 ${g.name.toUpperCase()} ODDS ARE LIVE 🚨`,
+      `⏱ Deadline: ${fmtDT(g.deadline)}`,
+      bankerTxt?`🔒 Banker double: ${bankerTxt} @ ${bankerOdds}`:'',
+      longTeam?`🎯 Long shot: ${longTeam} @ ${longOdds}`:'',
+      vs.length===2?`🥊 Matchup of the week: ${vs[0]} v ${vs[1]}`:'',
+      `👉 Bet here: ${posterLink(tag+'-wa')}`].filter(Boolean).join('\n');
+  }
+  const aw=posterAwards(g), name=id=>{ const t=team(id); return t?t.name:'?'; };
+  const lg=aw.find(a=>a.k==='legend'), sp=aw.find(a=>a.k==='spoon');
+  return [`📰 ${g.name.toUpperCase()}: THE RECAP`,
+    lg?`🏆 Lounge Legend: ${name(lg.id)} (${lg.line.split(' ')[0]})`:'',
+    sp?`🥄 Wooden Spoon: ${name(sp.id)} (${sp.line.split(' ')[0]})`:'',
+    `Who cashed, who bottled, and the table 👇`,
+    `👉 ${posterLink(tag+'-wa')}`].filter(Boolean).join('\n');
+}
+
+/* ---------- render pipeline + modal ---------- */
+let posterState=null;
+function drawPosterQr(canvas){
+  const q=qrcode(0,'M'); q.addData(canvas.dataset.qr); q.make();
+  const n=q.getModuleCount(), quiet=2, cell=Math.max(4,Math.floor(320/(n+quiet*2)));
+  canvas.width=canvas.height=cell*(n+quiet*2);
+  const c=canvas.getContext('2d');
+  c.fillStyle='#ffffff'; c.fillRect(0,0,canvas.width,canvas.height);
+  c.fillStyle='#0b0014';
+  for(let y=0;y<n;y++) for(let x=0;x<n;x++) if(q.isDark(y,x)) c.fillRect((x+quiet)*cell,(y+quiet)*cell,cell,cell);
+}
+// Builds the poster into #posterStage and returns the root element (no rasterising). Split out
+// so it can be previewed/tested without html2canvas.
+async function buildPosterDom(edition, gwId){
+  const g=gw(gwId); if(!g) throw new Error('Gameweek not found');
+  await loadScriptOnce(POSTER_LIBS.qr);
+  const stage=document.getElementById('posterStage');
+  stage.innerHTML=edition==='odds'?posterOddsHtml(g):posterRecapHtml(g);
+  stage.querySelectorAll('canvas[data-qr]').forEach(drawPosterQr);
+  if(document.fonts&&document.fonts.ready) await document.fonts.ready;
+  return stage.firstElementChild;
+}
+async function renderPoster(edition, gwId){
+  const root=await buildPosterDom(edition, gwId);
+  await loadScriptOnce(POSTER_LIBS.h2c);
+  // Link hotspots for the PDF, in poster pixels, measured before rasterising.
+  const base=root.getBoundingClientRect();
+  const links=[...root.querySelectorAll('[data-link]')].map(el=>{ const r=el.getBoundingClientRect();
+    return {x:r.left-base.left, y:r.top-base.top, w:r.width, h:r.height, url:posterLink(el.dataset.link)}; });
+  const canvas=await html2canvas(root,{scale:1.6, backgroundColor:'#0b0014', logging:false, useCORS:true,
+    width:POSTER_W, height:POSTER_H, windowWidth:1200,
+    onclone:doc=>{ const st=doc.getElementById('posterStage'); if(st){ st.style.left='0'; st.style.top='0'; } }});
+  const blob=await new Promise(res=>canvas.toBlob(res,'image/jpeg',0.92));
+  return {canvas, blob, links};
+}
+function posterFileBase(){ return `lennon-lounge-${posterState.tag}-${posterState.edition==='odds'?'odds':'recap'}`; }
+async function openPoster(edition, gwId){
+  if(!requireAdmin()) return;
+  const g=gw(gwId); if(!g) return;
+  posterState={edition, gwId, tag:posterTag(edition,g), loading:true, error:null};
+  renderPosterModal();
+  try{
+    const out=await renderPoster(edition, gwId);
+    if(!posterState||posterState.gwId!==gwId||posterState.edition!==edition) return;
+    Object.assign(posterState,out,{loading:false, caption:posterCaption(edition,g), url:URL.createObjectURL(out.blob)});
+  }catch(e){
+    console.error('Poster failed:',e);
+    if(posterState) Object.assign(posterState,{loading:false, error:e.message||String(e)});
+  }
+  renderPosterModal();
+}
+function closePosterModal(){
+  if(posterState&&posterState.url) URL.revokeObjectURL(posterState.url);
+  posterState=null;
+  document.getElementById('posterModal').classList.remove('open');
+  document.getElementById('posterModalOverlay').classList.remove('open');
+}
+function renderPosterModal(){
+  const panel=document.getElementById('posterModal'), overlay=document.getElementById('posterModalOverlay');
+  if(!posterState){ panel.classList.remove('open'); overlay.classList.remove('open'); return; }
+  const ps=posterState, g=gw(ps.gwId);
+  let pickSel='';
+  if(ps.edition==='odds'&&g){
+    const hp=posterHousePick(g);
+    const opts=g.matches.filter(m=>m.home&&m.away).flatMap(m=>{
+      const H=team(m.home), A=team(m.away);
+      return [['home',`${H.name} to win`],['draw',`Draw: ${H.name} v ${A.name}`],['away',`${A.name} to win`]].map(([k,l])=>`<option value="${m.id}|${k}"${hp&&hp.matchId===m.id&&hp.pick===k?' selected':''}>${esc(l)}</option>`);
+    }).join('');
+    pickSel=`<div class="formrow" style="margin-bottom:10px"><div style="flex:1"><label>Your pick on the poster ("fade it")${hp&&hp.auto?' · defaults to backing your own team':''}</label>
+      <select onchange="setHousePick('${ps.gwId}',this.value)" ${ps.loading?'disabled':''}>${opts}</select></div></div>`;
+  }
+  const canShare=!ps.loading&&!ps.error&&navigator.canShare&&navigator.canShare({files:[new File([ps.blob],'p.jpg',{type:'image/jpeg'})]});
+  panel.innerHTML=`<div class="betmodal-head">
+      <div><h3 style="margin:0">📣 ${esc(g?g.name:'')} ${ps.edition==='odds'?'odds poster':'recap poster'}</h3>
+        <div class="muted small">For the WhatsApp group. The image shows full size in the chat; the caption and PDF carry the live link.</div></div>
+      <button class="betmodal-close" onclick="closePosterModal()">✕</button></div>
+    ${pickSel}
+    ${ps.loading?`<div class="poster-wait">Making the poster…</div>`:ps.error?`<div class="card"><p><b>Couldn't make the poster.</b> ${esc(ps.error)}</p><p class="muted small">Usually a blocked or slow connection to cdnjs.cloudflare.com. Check your connection and try again.</p><button class="btn small" onclick="openPoster('${ps.edition}','${ps.gwId}')">Try again</button></div>`:`
+      <img class="poster-preview" src="${ps.url}" alt="${esc(g?g.name:'')} poster preview">
+      <div class="actions" style="margin-top:12px">
+        ${canShare?`<button class="btn" onclick="sharePoster()">📲 Share image (caption copied)</button>`:''}
+        <button class="btn ${canShare?'secondary':''}" onclick="downloadPosterImage()">⬇ Image</button>
+        <button class="btn secondary" onclick="downloadPosterPdf()">⬇ PDF (tappable link)</button>
+        <button class="btn secondary" onclick="copyPosterCaption()">📋 Copy caption</button>
+      </div>
+      <label style="margin-top:12px;display:block">Caption</label>
+      <textarea id="posterCaption" readonly rows="6" style="width:100%">${esc(ps.caption)}</textarea>
+      <p class="muted small" style="margin-top:6px">Each link is tagged (${esc(ps.tag)}-wa, -qr, -pdf), so logged-in visits from the poster show up in Back Office → Usage → Poster links.</p>`}`;
+  panel.classList.add('open'); overlay.classList.add('open');
+}
+function posterDownload(blob, name){
+  const a=document.createElement('a'); const u=URL.createObjectURL(blob);
+  a.href=u; a.download=name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(u),4000);
+}
+function downloadPosterImage(){ if(posterState&&posterState.blob) posterDownload(posterState.blob, posterFileBase()+'.jpg'); }
+async function downloadPosterPdf(){
+  if(!posterState||!posterState.canvas) return;
+  try{
+    await loadScriptOnce(POSTER_LIBS.pdf);
+    const doc=new window.jspdf.jsPDF({unit:'mm',format:'a4',orientation:'portrait'});
+    const k=210/POSTER_W;
+    doc.addImage(posterState.canvas.toDataURL('image/jpeg',0.92),'JPEG',0,0,210,POSTER_H*k);
+    posterState.links.forEach(l=>doc.link(l.x*k,l.y*k,l.w*k,l.h*k,{url:l.url}));
+    posterDownload(doc.output('blob'), posterFileBase()+'.pdf');
+  }catch(e){ console.error(e); toast('PDF failed — '+(e.message||e),true); }
+}
+function copyPosterCaption(){
+  if(!posterState) return;
+  const done=()=>toast('Caption copied 📋');
+  const fallback=()=>{ const ta=document.getElementById('posterCaption'); if(ta){ ta.focus(); ta.select(); } toast('Caption selected. Copy it from the box.'); };
+  try{ navigator.clipboard.writeText(posterState.caption).then(done,fallback); }catch(e){ fallback(); }
+}
+function sharePoster(){
+  if(!posterState||!posterState.blob) return;
+  // WhatsApp often drops the text when an image is shared, so the caption goes on the
+  // clipboard first, ready to paste as the message.
+  try{ navigator.clipboard.writeText(posterState.caption).catch(()=>{}); }catch(e){}
+  const file=new File([posterState.blob], posterFileBase()+'.jpg', {type:'image/jpeg'});
+  navigator.share({files:[file], text:posterState.caption}).catch(e=>{ if(e&&e.name!=='AbortError') toast('Share failed — use ⬇ Image instead',true); });
+}
+function posterOfficeCard(){
+  const live=S.gameweeks.filter(g=>g.status==='open').sort((a,b)=>(a.event||0)-(b.event||0));
+  const nextDraft=S.gameweeks.filter(g=>g.status==='draft').sort((a,b)=>(a.event||0)-(b.event||0))[0];
+  const settled=S.gameweeks.filter(g=>g.status==='settled'&&g.matches.some(m=>m.result)).sort((a,b)=>(b.event||0)-(a.event||0)).slice(0,2);
+  return `<div class="card">
+    <h3>📣 Weekly posters</h3>
+    <p class="muted small">One-page posters for the WhatsApp group. The odds poster opens automatically when you publish a gameweek, and the recap opens when you settle one. Make or remake them here any time.</p>
+    <div class="actions">
+      ${live.map(g=>`<button class="btn small" onclick="openPoster('odds','${g.id}')">📣 ${esc(g.name)} odds poster</button>`).join('')}
+      ${!live.length&&nextDraft?`<button class="btn secondary small" onclick="openPoster('odds','${nextDraft.id}')">👀 Preview ${esc(nextDraft.name)} odds poster (draft)</button>`:''}
+      ${settled.map(g=>`<button class="btn secondary small" onclick="openPoster('recap','${g.id}')">📰 ${esc(g.name)} recap</button>`).join('')}
+    </div>
+  </div>`;
+}
+
+/* ---------- poster link tracking ---------- */
+// Runs once on page load: keeps a ?from=<tag> in sessionStorage until someone logs in, then
+// tidies the address bar so a refresh doesn't count twice. Nothing is written to the database
+// here — visitors aren't members until they log in.
+(function captureRefParam(){
+  try{
+    const p=new URLSearchParams(location.search);
+    const r=(p.get('from')||'').toLowerCase().replace(/[^a-z0-9-]/g,'').slice(0,24);
+    if(!r) return;
+    sessionStorage.setItem('ll_from',r);
+    p.delete('from');
+    const q=p.toString();
+    history.replaceState(null,'',location.pathname+(q?'?'+q:'')+location.hash);
+  }catch(e){}
+})();
+// Called only from the database listener once real data has loaded (never against the
+// placeholder freshState() a restored session starts with), so it can't save a blank state.
+function logRefVisit(){
+  let r=null; try{ r=sessionStorage.getItem('ll_from'); }catch(e){}
+  if(!r||!me||!S||!S.usage) return;
+  try{ sessionStorage.removeItem('ll_from'); }catch(e){}
+  if(!S.usage.refs) S.usage.refs={};
+  const x=S.usage.refs[r]||(S.usage.refs[r]={visits:0,teams:{},first:Date.now()});
+  if(!x.teams) x.teams={};
+  x.visits=(x.visits||0)+1; x.teams[me.id]=(x.teams[me.id]||0)+1; x.last=Date.now();
+  logUsage('ref', r);
+}
+function posterRefsTable(){
+  const refs=Object.entries((S.usage&&S.usage.refs)||{}).sort((a,b)=>(b[1].last||0)-(a[1].last||0));
+  if(!refs.length) return `<p class="muted small">No visits from poster links yet. Links are tagged like gw6-wa (WhatsApp caption), gw6-qr (QR code) and gw6-pdf (PDF), and r6-… for recaps.</p>`;
+  return `<div style="overflow-x:auto"><table><tr><th>Link</th><th>Visits</th><th>Players</th><th>Last</th></tr>
+    ${refs.map(([k,v])=>`<tr><td class="mono small">${esc(k)}</td><td class="mono small">${v.visits||0}</td><td class="small">${Object.keys(v.teams||{}).map(id=>esc(team(id)?team(id).owner:id)).join(', ')}</td><td class="small">${v.last?timeAgo(v.last):'—'}</td></tr>`).join('')}
+  </table></div>`;
 }
 
 /* ================================================================
@@ -6078,6 +6774,7 @@ function settleGw(gwId){
   audit('settled',`${g.name}: ${won} won, ${lost} lost`);
   saveNow(); render();
   toast(`${g.name} settled ⚖️ — ${won} winner(s), ${lost} loser(s)`);
+  setTimeout(()=>openPoster('recap',gwId),500);
 }
 
 /* ================================================================
@@ -6343,6 +7040,9 @@ function usageOfficeCard(){
     <p style="margin-top:14px"><b>Time of day</b> <span class="muted small">— all-time, all teams, UK local time. Use this to time nudges/announcements for when people are actually around.</span></p>
     ${usageBarChartSvg(Array.from({length:24},(_,h)=>h), u.hourTotals, {labelEvery:3, color:'var(--violet)', barW:14, gap:6})}
     <p class="muted small" style="margin-top:8px">Total: ${totalLogins14d} login(s) in the last ${u.days} days across all teams.</p>
+    <hr class="hr">
+    <p><b>📣 Poster links</b> <span class="muted small">— logged-in visits that arrived through a weekly poster link, all time. A visitor is counted when they log in.</span></p>
+    ${posterRefsTable()}
   </div>`;
 }
 
@@ -6358,6 +7058,7 @@ function vOffice(){
     <div class="kpi"><div class="l">Live bets</div><div class="v">${live.length}</div></div>
     <div class="kpi"><div class="l">All-time bets</div><div class="v">${S.bets.length}</div></div>
   </div>
+  ${posterOfficeCard()}
   ${usageOfficeCard()}
   <div class="card">
     <h3>🔑 All team PINs</h3>

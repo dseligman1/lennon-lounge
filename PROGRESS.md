@@ -2191,3 +2191,37 @@ sessions re-check membership; a denied listener logs the user out. New
 Rollout: backup → transition rules (old + new access) → app deploy → final rules. Verified:
 25/25 REST rule checks and 12/12 headless-Chrome login checks against the live DB; post-rollout
 backup, PINs and notifs identical to pre-rollout copies.
+
+## ROUND 12 — weekly WhatsApp poster + usage fixes, 2026-10-09
+
+Request: a one-page, loud, on-brand promo poster to send to the WhatsApp group each week, made
+from a button in the back office when odds are published. Design review (4 options, 35 add-ons)
+in `../outputs/2026-10-09-weekly-poster-options.html`; Dan picked design A ("Neon Odds Board")
+with a matchup-of-the-week spotlight borrowed from C, "Algo" not "model", A4, no-mercy banter,
+image + PDF + caption, odds edition + Monday recap.
+
+- [x] 53. **Weekly poster (`WEEKLY POSTER` section).** Two editions. Odds: coupon with form dots
+  and a roast line per fixture, banker double, long shot, admin's own pick "(fade it)" (stored as
+  `g.housePick`, defaults to backing their own team, record shown once picks settle), matchup of
+  the week (closest prices) with tale of the tape + first `matchPricingRationale()` reason, mini
+  table, last week's award stamps. Recap: results with roasts, award stamps (legend, spoon,
+  bottler, robbery/thrashing), who cashed / biggest donation, table with movement arrows. Built as
+  HTML at 1000×1414 in off-screen `#posterStage`, rasterised by html2canvas → JPEG, wrapped by
+  jsPDF into A4 with real link annotations on the CTA and QR. Libraries lazy-load from cdnjs on
+  first use. Opens automatically after `publishGw()` (odds) and `settleGw()` (recap); also from a
+  "📣 Poster" / "👀 Preview poster" button on each Odds Setter card and a Back Office "📣 Weekly
+  posters" card. Jokes seeded per gameweek + edition so a remake gives the same words.
+  New shared `leagueTable(state, maxEvent)`; `vStandings()` now uses it (same output).
+- [x] 54. **Poster link tracking.** Every link carries `?from=<tag>` (`gw6-wa` caption, `gw6-qr`,
+  `gw6-pdf`; `r5-…` for recaps). `captureRefParam()` holds it in sessionStorage until login and
+  tidies the URL; `logRefVisit()` writes `S.usage.refs[tag]` (visits, teams, first/last) only from
+  the DB listener after real data loads. Shown in the Usage card under "📣 Poster links".
+- [x] 55. **Login count fix.** Every login count read 0 since batch 51: the listener only starts
+  inside `switchUser()`, so `S` was always null when `logUsage('login')` ran. `logUsage()` now
+  queues pre-load events and `flushUsageQueue()` replays them from the listener.
+  Verified in a headless-Chrome harness with Firebase stubbed and the 2026-10-09 backup loaded
+  (no live DB touched): both posters fit the page; html2canvas output matches the DOM; QR decodes
+  (jsQR) to the tagged URL; PDF has 2 URI link annotations; modal, pick change, Back Office card,
+  Odds Setter button, standings and the login/ref queue all work with no console errors.
+  Not tested on a real phone: the Share button uses the Web Share API with a file.
+  Samples: `../outputs/2026-10-09-gw6-odds-poster-sample.png`, `../outputs/2026-10-09-gw5-recap-poster-sample.png`.
