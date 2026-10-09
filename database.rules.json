@@ -2,8 +2,39 @@
   "rules": {
     ".read": false,
     ".write": false,
-    "lennon-lounge":        { ".read": "auth != null", ".write": "auth != null" },
-    "lennon-lounge-auth":   { ".read": "auth != null", ".write": "auth != null" },
-    "lennon-lounge-notifs": { ".read": "auth != null", ".write": "auth != null" }
+    "lennon-lounge": {
+      ".read": "auth != null && root.child('lennon-lounge-members/' + auth.uid).exists()",
+      ".write": "auth != null && root.child('lennon-lounge-members/' + auth.uid).exists()"
+    },
+    "lennon-lounge-notifs": {
+      ".read": "auth != null && root.child('lennon-lounge-members/' + auth.uid).exists()",
+      ".write": "auth != null && root.child('lennon-lounge-members/' + auth.uid).exists()"
+    },
+    "lennon-lounge-auth": {
+      ".read": "auth != null && (root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'selig' || root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'rowez')",
+      "$tid": {
+        ".write": "auth != null && newData.exists() && (root.child('lennon-lounge-members/' + auth.uid + '/team').val() === $tid || auth != null && (root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'selig' || root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'rowez'))",
+        ".validate": "newData.isString() && newData.val().matches(/^[0-9]{6}$/)"
+      }
+    },
+    "lennon-lounge-members": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid && (!newData.exists() || newData.child('pin').val() === root.child('lennon-lounge-auth').child(newData.child('team').val()).val() || newData.child('pin').val() === root.child('lennon-lounge-auth/selig').val() || newData.child('pin').val() === root.child('lennon-lounge-auth/rowez').val())",
+        ".validate": "newData.child('team').isString() && root.child('lennon-lounge-auth').child(newData.child('team').val()).exists() && newData.child('pin').isString()",
+        "team": {
+          ".validate": true
+        },
+        "pin": {
+          ".validate": true
+        },
+        "at": {
+          ".validate": "newData.isNumber()"
+        },
+        "$other": {
+          ".validate": false
+        }
+      }
+    }
   }
 }

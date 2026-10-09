@@ -734,6 +734,9 @@ firebase.initializeApp(FIREBASE_CONFIG);
 const db = firebase.database();
 const ROOT = 'lennon-lounge';
 const AUTH_ROOT = 'lennon-lounge-auth';
+// One record per signed-in browser ({team, pin, at}) keyed by its anonymous Firebase uid. The
+// database rules only accept the write when the PIN matches, and only let members read the app.
+const MEMBERS_ROOT = 'lennon-lounge-members';
 
 /* ================================================================
    SEED DATA
@@ -1011,6 +1014,10 @@ function startListener() {
     }
     if (me) render();
   }, err => {
+    // Firebase drops a listener once it's denied. Denied = this browser is no longer a
+    // registered member (logged out elsewhere, or registrations were cleared) — back to login.
+    dbListener = null;
+    if (isPermissionDenied(err)) { logout(); toast('Please log in again', true); return; }
     toast('Connection error: ' + err.message, true);
   });
   startConnectionMonitor();
@@ -1066,20 +1073,25 @@ watchLayoutBreakpoint();
 /* ================================================================
    AUTH — 6-digit PIN
    ================================================================ */
-function genPin() {
-  return String(Math.floor(100000 + Math.random() * 900000));
+// PINs are only readable by admins (see database.rules.json) — they feed the Back Office PIN
+// table and nothing else. The login check itself happens server-side in the rules (doLogin).
+// Never seeds: PINs already exist, and a failed/denied read must not look like "no PINs yet".
+async function loadAuth() {
+  try {
+    const snap = await db.ref(AUTH_ROOT).once('value');
+    authPins = snap.val() || {};
+  } catch (e) {
+    authPins = {};
+  }
 }
 
-async function loadAuth() {
-  const snap = await db.ref(AUTH_ROOT).once('value');
-  const data = snap.val() || {};
-  if (Object.keys(data).length === 0) {
-    authPins = {};
-    TEAMS.forEach(t => { authPins[t.id] = genPin(); });
-    await db.ref(AUTH_ROOT).set(authPins);
-  } else {
-    authPins = data;
-  }
+function isPermissionDenied(e) {
+  return /permission[_ ]denied/i.test((e && (e.code || e.message)) || '');
+}
+
+function currentUid() {
+  const u = firebase.auth().currentUser;
+  return u ? u.uid : null;
 }
 
 function getPinFromInputs() {
@@ -1089,21 +1101,29 @@ function getPinFromInputs() {
   }).join('');
 }
 
-function doLogin() {
+async function doLogin() {
   const selectedChip = document.querySelector('.team-chip.sel');
   if (!selectedChip) { toast('Please select your team first', true); return; }
   const tid = selectedChip.dataset.id;
   const pin = getPinFromInputs();
   if (pin.length !== 6) { toast('Enter your full 6-digit PIN', true); return; }
+  const uid = currentUid();
+  if (!uid) { toast('Not connected — refresh the page and try again', true); return; }
 
-  // Check if entered PIN matches the target team's PIN
-  const correctPin = authPins[tid] === pin;
+  // The database rules check the PIN: this browser is only registered as a member of the team
+  // if the PIN matches that team's PIN, or an admin's PIN (admin override: admins can access
+  // any account with their own PIN). A wrong PIN comes back as PERMISSION_DENIED.
+  let ok = false;
+  try {
+    await db.ref(MEMBERS_ROOT + '/' + uid).set({ team: tid, pin, at: firebase.database.ServerValue.TIMESTAMP });
+    ok = true;
+  } catch (e) {
+    if (!isPermissionDenied(e)) { toast('Login failed — check your connection', true); console.error(e); return; }
+  }
 
-  // Admin override: admins can access any account with their own PIN
-  const adminOverride = TEAMS.filter(t => t.admin).some(t => authPins[t.id] === pin);
-
-  if (correctPin || adminOverride) {
+  if (ok) {
     switchUser(tid);
+    if (TEAMS.find(t => t.id === tid).admin) loadAuth().then(() => { if (me && activeTab === 'office') render(); });
   } else {
     document.getElementById('loginErr').style.display = 'block';
     [0,1,2,3,4,5].forEach(i => {
@@ -1148,7 +1168,10 @@ function logout() {
     dbListener = null;
   }
   me = null;
+  authPins = {};
   sessionStorage.removeItem('wlgyl_user');
+  const uid = currentUid();
+  if (uid) db.ref(MEMBERS_ROOT + '/' + uid).remove().catch(() => {});
   document.getElementById('login').style.display = '';
   document.getElementById('app').style.display = 'none';
   const bn = document.getElementById('bottomNav');
@@ -6956,15 +6979,21 @@ async function initApp(){
   const loadingEl=document.getElementById('loginLoading');
   if(loadingEl) loadingEl.style.display='block';
   try{
-    // Invisible anonymous sign-in so the database rules can require "auth != null" — this
-    // blocks bots that scan for open Firebase URLs. Non-fatal: if Anonymous sign-in isn't
-    // enabled in the Firebase console yet, the app carries on as before.
-    try{ await firebase.auth().signInAnonymously(); }
+    // Invisible anonymous sign-in: gives this browser a stable uid that doLogin() registers as
+    // a team member once the PIN checks out. Waits for any saved sign-in to be restored first
+    // so a returning browser keeps the same uid (and its membership) instead of a new one.
+    await new Promise(res=>{ const off=firebase.auth().onAuthStateChanged(()=>{ off(); res(); }); });
+    try{ if(!firebase.auth().currentUser) await firebase.auth().signInAnonymously(); }
     catch(e){ console.warn('Anonymous sign-in failed:', e); }
-    await loadAuth();
     renderTeamGrid();
     setupPinInputs();
-    const savedUser=sessionStorage.getItem('wlgyl_user');
+    // Only resume a saved session if this browser is still registered to that team.
+    let savedUser=sessionStorage.getItem('wlgyl_user');
+    if(savedUser&&TEAMS.find(t=>t.id===savedUser)){
+      let member=null;
+      try{ const uid=currentUid(); if(uid) member=(await db.ref(MEMBERS_ROOT+'/'+uid).once('value')).val(); }catch(e){}
+      if(!member||member.team!==savedUser){ sessionStorage.removeItem('wlgyl_user'); savedUser=null; }
+    }
     if(savedUser&&TEAMS.find(t=>t.id===savedUser)){
       S=freshState();
       me=TEAMS.find(t=>t.id===savedUser);
@@ -6972,6 +7001,7 @@ async function initApp(){
       document.getElementById('app').style.display='block';
       const bn=document.getElementById('bottomNav'); if(bn) bn.style.display='';
       startListener();
+      if(me.admin) loadAuth().then(()=>{ if(me&&activeTab==='office') render(); });
     } else {
       // On mobile widths #bottomNav's CSS media query defaults it to visible; logout()/switchUser()
       // toggle it explicitly once a session exists, but nothing did on this "not logged in yet" path,
