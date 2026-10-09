@@ -2176,3 +2176,18 @@ browser). Land this well before 16:00 UK.
   environment, running both index.html's real functions and this port side-by-side on identical
   seed data) would be a valuable follow-up once time allows, even though the three independent
   reference-number matches above give good confidence the port is correct now.
+
+---
+
+## ROUND 11 — server-checked PIN login, 2026-10-09
+
+Firebase kept emailing "insecure rules" after 621b57f because `auth != null` lets in anyone who
+opens the app (anonymous sign-in is silent). Also found every team's PIN was downloaded to every
+browser before login. Fix (commit faaf8e9): login writes `lennon-lounge-members/{uid}` =
+{team, pin, at}; rules accept it only if the PIN matches the team's or an admin's PIN; app data and
+notifs require membership; PINs readable only by members registered as selig/rowez. Restored
+sessions re-check membership; a denied listener logs the user out. New
+`.github/workflows/rules.yml` publishes rules from the repo via the service account.
+Rollout: backup → transition rules (old + new access) → app deploy → final rules. Verified:
+25/25 REST rule checks and 12/12 headless-Chrome login checks against the live DB; post-rollout
+backup, PINs and notifs identical to pre-rollout copies.

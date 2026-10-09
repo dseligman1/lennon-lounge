@@ -260,31 +260,31 @@ the cutoff is calculated directly as that kickoff − 80 min, no FPL deadline in
 
 ---
 
-## Step 7 — Lock down Firebase (anonymous sign-in + rules)
+## Step 7 — Lock down Firebase (server-checked PINs)
 
-1. Firebase Console → **Authentication → Get started → Sign-in method → Anonymous → Enable**.
-   (Free. Users see nothing — the app signs each browser in silently.)
-2. Open the live app once and check it still loads and you can log in with your PIN.
-3. Firebase Console → Realtime Database → **Rules** → paste the contents of
-   `database.rules.json` (in this repo) → **Publish**.
+**Done (2026-10-09).** Kept here so you know how it works and how to change it.
 
-These rules only let signed-in app sessions read/write the three app nodes, and deny
-everything else. The GitHub Actions (FPL sync, backups) use the service account, which
-bypasses rules, so they keep working.
+1. Firebase Console → **Authentication → Sign-in method → Anonymous** is enabled. The app
+   signs each browser in silently; users see nothing.
+2. The live rules are `database.rules.json` in this repo. To change them, edit that file,
+   push, then GitHub repo → **Actions → Publish Database Rules → Run workflow** → tick
+   **publish** → Run. Leave publish unticked to just see what's live. No console copy-paste.
 
-**Be clear-eyed about what this means.** This blocks bots and strangers hitting the raw database
-URL. But anyone who opens the app itself is silently signed in, so they can still read and write
-the whole database — with or without a PIN, admin or not — by opening their browser's dev tools
-console (F12) and calling one of the app's own functions (e.g. typing `resetAll()`). The app adds a `requireAdmin()` check in front of
-its highest-risk actions (wiping data, accepting/rejecting/settling bets, publishing odds,
-changing settings) so the *app's own UI* won't let a non-admin session trigger them by
-accident — but that check runs in the browser, not on the server, so it stops casual/accidental
-misuse, not someone who deliberately goes looking. For a private group of 12 people who all
-trust each other, this is a reasonable, low-effort tradeoff (the same PIN-based trust model as
-before). It is **not** equivalent to real access control. If that ever matters more than
-convenience — e.g. real money at stake and you don't fully trust everyone with a PIN — the
-actual fix is Firebase Authentication with server-enforced security rules keyed to specific
-admin user IDs, which is a bigger change than tightening these rules alone and isn't done here.
+How it works: the app never downloads the PINs. When someone logs in, the app asks Firebase
+to register this browser as a member of that team, and the rules only allow it if the PIN
+matches that team's PIN (or an admin's PIN, for the admin override). Only registered browsers
+can read or write the app data and notifications; only browsers registered as Dan's or Jack's
+team can read the PIN list (Back Office). Logging out removes the registration. The GitHub
+Actions (FPL sync, backups, rules) use the service account, which bypasses rules.
+
+If the admins ever change, update the `'selig'` / `'rowez'` checks in `database.rules.json`
+as well as the `admin:true` flags in `index.html`.
+
+**What it still doesn't stop.** A member who has logged in with a real PIN can still change any
+data by typing commands into their browser's dev tools — `requireAdmin()` only stops that in the
+app's own buttons, not on the server. Someone could also script PIN guesses (1 in a million per
+try). Fine for a private group who trust each other; per-person admin rules would be the next step
+if real money ever makes that matter.
 
 ---
 
