@@ -1,0 +1,93 @@
+name: Publish Database Rules
+
+on:
+  # Manual only. Publishes a rules file from this repo to the live Realtime Database, so the
+  # rules are version-controlled and nobody has to copy-paste them into the Firebase console.
+  # Uses the same service-account secrets as fpl-sync.yml / backup.yml. Always prints the live
+  # rules before (and, when publishing, after) so the run log doubles as an audit trail.
+  # Leave "publish" unticked to just show what's currently live.
+  workflow_dispatch:
+    inputs:
+      file:
+        description: 'Rules file in this repo to publish'
+        required: true
+        default: 'database.rules.json'
+      publish:
+        description: 'Publish it (untick to only show the live rules)'
+        type: boolean
+        default: false
+
+jobs:
+  rules:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show / publish rules
+        env:
+          FIREBASE_DB_URL: ${{ secrets.FIREBASE_DB_URL }}
+          FIREBASE_SERVICE_KEY: ${{ secrets.FIREBASE_SERVICE_KEY }}
+          RULES_FILE: ${{ inputs.file }}
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          node - << 'EOF'
+          const fs = require('fs');
+          const DB_URL = process.env.FIREBASE_DB_URL.replace(/\/$/, '');
+          const SERVICE_KEY = JSON.parse(process.env.FIREBASE_SERVICE_KEY);
+          const FILE = process.env.RULES_FILE;
+          const PUBLISH = process.env.PUBLISH === 'true';
+
+          // Same service-account JWT → OAuth access token flow as fpl-sync.yml / backup.yml.
+          async function getAccessToken(serviceKey) {
+            const { private_key: privateKey, client_email: clientEmail } = serviceKey;
+            const now = Math.floor(Date.now() / 1000);
+            const payload = {
+              iss: clientEmail, sub: clientEmail,
+              aud: 'https://oauth2.googleapis.com/token',
+              iat: now, exp: now + 3600,
+              scope: 'https://www.googleapis.com/auth/firebase.database https://www.googleapis.com/auth/userinfo.email'
+            };
+            const { createSign } = require('crypto');
+            const header = Buffer.from(JSON.stringify({alg:'RS256',typ:'JWT'})).toString('base64url');
+            const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+            const sign = createSign('RSA-SHA256');
+            sign.update(`${header}.${body}`);
+            const jwt = `${header}.${body}.${sign.sign(privateKey, 'base64url')}`;
+            const res = await fetch('https://oauth2.googleapis.com/token', {
+              method: 'POST',
+              headers: {'Content-Type':'application/x-www-form-urlencoded'},
+              body: `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`
+            });
+            return (await res.json()).access_token;
+          }
+
+          async function liveRules(token) {
+            const res = await fetch(`${DB_URL}/.settings/rules.json`, { headers: { Authorization: `Bearer ${token}` } });
+            if (!res.ok) throw new Error(`Reading live rules failed: ${res.status} ${await res.text()}`);
+            return res.text();
+          }
+
+          async function main() {
+            // Only ever publish one of this repo's own rules files.
+            if (!/^database\.rules(\.[a-z-]+)?\.json$/.test(FILE)) throw new Error(`Refusing unexpected file name: ${FILE}`);
+            const rules = fs.readFileSync(FILE, 'utf8');
+            JSON.parse(rules); // fail fast on a malformed file before touching anything live
+
+            const token = await getAccessToken(SERVICE_KEY);
+            console.log('── Live rules BEFORE ──\n' + await liveRules(token));
+            if (!PUBLISH) { console.log('\n(publish not ticked — nothing changed)'); return; }
+
+            const res = await fetch(`${DB_URL}/.settings/rules.json`, {
+              method: 'PUT',
+              headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: rules
+            });
+            const out = await res.text();
+            if (!res.ok) throw new Error(`Publish failed: ${res.status} ${out}`);
+            console.log(`\nPublished ${FILE}: ${res.status} ${out}`);
+            console.log('\n── Live rules AFTER ──\n' + await liveRules(token));
+          }
+
+          main().catch(e => { console.error(e.message || e); process.exit(1); });
+          EOF
