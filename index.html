@@ -2787,6 +2787,34 @@ async function pushNotif(teamId, type, msg) {
   return db.ref('lennon-lounge-notifs/' + teamId).push(notif);
 }
 
+// Phone alerts (2026-10-23): instant push to the admin's phone via ntfy.sh (free app, no account).
+// The topic name is the only "password", so it lives in S.settings (members-only per the DB rules)
+// rather than in this public repo. Fire-and-forget: a failed push never blocks the app.
+// The FPL Sync Action reads the same S.settings.phoneAlertTopic for its "odds ready" alert.
+function phoneAlert(title, message, tags) {
+  const topic = S && S.settings && S.settings.phoneAlertTopic;
+  if (!topic) return Promise.resolve(false);
+  return fetch('https://ntfy.sh/', {method:'POST', body: JSON.stringify({topic, title, message, tags: tags||[], click: location.origin + location.pathname})})
+    .then(r => r.ok).catch(() => false);
+}
+function newPhoneAlertTopic() {
+  return 'lennon-lounge-' + Array.from(crypto.getRandomValues(new Uint8Array(9)), b => b.toString(16).padStart(2,'0')).join('');
+}
+function savePhoneAlerts() {
+  if (!requireAdmin()) return;
+  const v = (document.getElementById('setPhoneTopic').value || '').trim();
+  if (v && !/^[-_A-Za-z0-9]{1,64}$/.test(v)) { toast('Topic: letters, numbers, - and _ only'); return; }
+  S.settings.phoneAlertTopic = v;
+  S.settings.phoneAlertTeam = v ? me.id : '';
+  audit('settings', v ? 'phone alerts on' : 'phone alerts off');
+  save(); render(); toast(v ? 'Phone alerts saved' : 'Phone alerts turned off');
+}
+async function testPhoneAlert() {
+  if (!S.settings.phoneAlertTopic) { toast('Save a topic first'); return; }
+  const ok = await phoneAlert('🔔 Lennon Lounge test', 'Phone alerts are working.', ['bell']);
+  toast(ok ? 'Test sent — check your phone' : 'Test failed — check the topic name');
+}
+
 async function markAllRead() {
   if (!me) return;
   const snap = await db.ref('lennon-lounge-notifs/' + me.id).once('value');
@@ -3112,6 +3140,7 @@ function submitBet({gwId, legs, effOdds, stake, viaAlgo, boostPct, freeBetAmount
   TEAMS.filter(t=>t.admin&&t.id!==me.id).forEach(t=>{
     pushNotif(t.id,'bet_placed',`${me.name} placed a bet — ${legs.length} leg(s) @ ${fmtOdds(effOdds)} · £${stake}`);
   });
+  if(me.id!==S.settings.phoneAlertTeam) phoneAlert(`🎰 New bet — ${me.name}`, `${legs.length} leg(s) @ ${fmtOdds(effOdds)} · £${stake}. Tap to review.`, ['moneybag']);
   save(); bosh(!!bet.duplicateOf);
   setTimeout(()=>{
     let msg='Bet placed — the house is on it';
@@ -7124,6 +7153,16 @@ function vOffice(){
     <div style="overflow-x:auto"><table><tr><th>Team</th><th>Manager</th><th>PIN</th><th></th></tr>
     ${TEAMS.map(t=>`<tr><td><b>${esc(t.name)}</b></td><td>${esc(t.owner)}</td><td><code style="font-size:16px;letter-spacing:3px;color:var(--teal)">${authPins[t.id]||'—'}</code></td><td>${t.admin?'🏠 Admin':''}</td></tr>`).join('')}
     </table></div>
+  </div>
+  <div class="card">
+    <h3>📲 Phone alerts</h3>
+    <p class="muted small">Instant push to your phone when someone places a bet, and when the FPL sync has auto-suggested odds for the next gameweek (time to review and publish). Uses the free <b>ntfy</b> app: install it, tap +, and subscribe to the topic below. Anyone who knows the topic name can read the alerts, so keep it private. Your own bets don't ping you.</p>
+    <div class="formrow">
+      <div style="flex:1;min-width:0"><label>Topic</label><input type="text" id="setPhoneTopic" value="${esc(S.settings.phoneAlertTopic||newPhoneAlertTopic())}" style="width:100%" autocomplete="off" spellcheck="false"></div>
+      <button class="btn" onclick="savePhoneAlerts()">Save</button>
+      <button class="btn ghost" onclick="testPhoneAlert()">Send test</button>
+    </div>
+    <p class="muted small">${S.settings.phoneAlertTopic?'✅ On — alerts go to whoever is subscribed to this topic. Clear the box and Save to turn off.':'Off. A random topic is filled in for you — Save it, then subscribe to the same name in ntfy.'}</p>
   </div>
   <div class="card">
     <h3>📏 Limits & edge <span class="muted small">(players never see these mechanics)</span></h3>

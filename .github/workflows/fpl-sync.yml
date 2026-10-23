@@ -191,6 +191,17 @@ jobs:
             const notif = { id: Date.now() + '_' + Math.random().toString(36).slice(2), type, msg, ts: Date.now(), read: false };
             return pushToFirebase(`lennon-lounge-notifs/${teamId}`, notif, token);
           }
+          function phoneAlert(topic, title, message, tags) {
+            return new Promise((resolve, reject) => {
+              const body = JSON.stringify({ topic, title, message, tags, click: 'https://dseligman1.github.io/lennon-lounge/' });
+              const req = https.request('https://ntfy.sh/', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, res => {
+                res.resume();
+                res.on('end', () => res.statusCode < 300 ? resolve() : reject(new Error('ntfy HTTP ' + res.statusCode)));
+              });
+              req.on('error', reject);
+              req.end(body);
+            });
+          }
           function asArr(x) { return Array.isArray(x) ? x : (x ? Object.values(x) : []); }
 
           /* ================================================================
@@ -575,6 +586,16 @@ jobs:
             const ADMIN_TEAM_IDS = ['selig', 'rowez'];
             for (const teamId of ADMIN_TEAM_IDS) {
               await pushNotif(teamId, 'odds_auto_suggested', `🤖 Odds auto-suggested for ${g.name || g.id} — review before publishing (cutoff ${new Date(g.deadline).toISOString()}).`, token);
+            }
+            // Phone alert via ntfy.sh — mirrors phoneAlert() in index.html. Topic is set in
+            // Back Office → Phone alerts and stored in settings, never in this public repo.
+            const topic = state.settings && state.settings.phoneAlertTopic;
+            if (topic) {
+              const cutoff = new Date(g.deadline).toLocaleString('en-GB', { timeZone: 'Europe/London', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+              try {
+                await phoneAlert(topic, `🤖 ${g.name || g.id} odds are ready`, `Auto-suggested from the latest FPL data. Review and publish before cutoff (${cutoff}).`, ['robot']);
+                console.log('Phone alert sent.');
+              } catch (e) { console.log('Phone alert failed (non-fatal):', e.message); }
             }
           }
 

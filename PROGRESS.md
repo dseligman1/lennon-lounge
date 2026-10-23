@@ -2234,3 +2234,13 @@ image + PDF + caption, odds edition + Monday recap.
   PICK" under 2.50; the default admin pick is saved when an open gameweek's poster is made, so the
   record builds; shrink-to-fit (`pst-fit1..3`) if a week runs long. Samples:
   `../outputs/2026-10-09-poster-samples.html` + `../outputs/2026-10-09-poster-samples/`.
+
+## ROUND 13 — phone alerts via ntfy, 2026-10-23
+- [x] 57. **Instant phone push for new bets and "odds ready".** `phoneAlert()` in index.html POSTs
+  JSON to `https://ntfy.sh/` (CORS-open, no account) when a bet is placed, skipped when the bettor
+  is `S.settings.phoneAlertTeam` (the admin who saved the topic). The FPL Sync Action sends
+  "GWn odds are ready" right after the 20–22h-before-cutoff auto-suggest, alongside the existing
+  in-app admin notif. Topic lives in `S.settings.phoneAlertTopic` (members-only per the DB rules),
+  never in this public repo; set it in Back Office → 📲 Phone alerts (random topic pre-filled,
+  Save, Send test). Verified: both scripts parse, real ntfy POSTs from both code paths return 200
+  with `access-control-allow-origin: *`. Not yet tested end-to-end on a phone.
