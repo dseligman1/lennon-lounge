@@ -35,6 +35,22 @@
           ".validate": false
         }
       }
+    },
+    "lennon-lounge-alerts": {
+      "config": {
+        ".read": "auth != null && root.child('lennon-lounge-members/' + auth.uid).exists()",
+        ".write": "auth != null && (root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'selig' || root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'rowez')"
+      },
+      "status": {
+        ".read": "auth != null && root.child('lennon-lounge-members/' + auth.uid).exists()",
+        ".write": "auth != null && root.child('lennon-lounge-members/' + auth.uid).exists()"
+      },
+      "subs": {
+        ".read": "auth != null && (root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'selig' || root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'rowez')",
+        "$tid": {
+          ".write": "auth != null && root.child('lennon-lounge-members/' + auth.uid + '/team').val() === $tid && (root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'selig' || root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'rowez')"
+        }
+      }
     }
   }
 }

@@ -2235,12 +2235,25 @@ image + PDF + caption, odds edition + Monday recap.
   record builds; shrink-to-fit (`pst-fit1..3`) if a week runs long. Samples:
   `../outputs/2026-10-09-poster-samples.html` + `../outputs/2026-10-09-poster-samples/`.
 
-## ROUND 13 — phone alerts via ntfy, 2026-10-23
-- [x] 57. **Instant phone push for new bets and "odds ready".** `phoneAlert()` in index.html POSTs
-  JSON to `https://ntfy.sh/` (CORS-open, no account) when a bet is placed, skipped when the bettor
-  is `S.settings.phoneAlertTeam` (the admin who saved the topic). The FPL Sync Action sends
-  "GWn odds are ready" right after the 20–22h-before-cutoff auto-suggest, alongside the existing
-  in-app admin notif. Topic lives in `S.settings.phoneAlertTopic` (members-only per the DB rules),
-  never in this public repo; set it in Back Office → 📲 Phone alerts (random topic pre-filled,
-  Save, Send test). Verified: both scripts parse, real ntfy POSTs from both code paths return 200
-  with `access-control-allow-origin: *`. Not yet tested end-to-end on a phone.
+## ROUND 13 — phone alerts (web push), 2026-10-23
+- [x] 57. **Phone notifications for new bets and "odds ready", no extra app.** First built on ntfy
+  (commit `12b0842`), replaced the same day: Dan didn't want to install anything. Now real web push
+  from the app itself. On iPhone it needs the app added to the Home Screen (Apple's rule).
+  - `sw.js` (repo root): shows the push, opens the app on tap. No fetch handler, no caching.
+    Registered only when an admin taps Back Office → 📲 Phone alerts → "Enable on this device".
+  - `.github/workflows/notify.yml` ("Phone Alerts"): sends the pushes with `web-push`, signed with
+    the VAPID pair (public key in index.html + notify.yml, private key = `VAPID_PRIVATE_KEY` secret).
+    Runs on workflow_dispatch (instant trigger + `test` input) and every 5 min as a safety net.
+    Alerts each pending bet once (ids in `lennon-lounge-alerts/sent`), never about your own bet.
+    First run marks all existing bets as seen.
+  - Instant trigger: after a bet, `triggerPhoneAlerts()` calls the GitHub API to dispatch
+    notify.yml (~30-60s end to end) using a fine-grained token (Actions: read & write, this repo
+    only) stored at `lennon-lounge-alerts/config` — members-readable, admin-writable. **Not** in
+    S.settings, because backup.yml commits the whole `lennon-lounge` tree to this public repo.
+    Accepted risk (agreed with Dan): a member could dig the token out and pause/trigger workflows.
+    Failed triggers are recorded in `lennon-lounge-alerts/status` and shown in Back Office.
+  - fpl-sync.yml queues "GWn odds are ready" in `lennon-lounge-alerts/queue` after auto-suggest;
+    notify.yml sends it on its next tick.
+  - database.rules.json: new `lennon-lounge-alerts` block (config / status / subs).
+  Verified: all scripts parse; notify.js run against a fake DB + fake push endpoint that decrypts
+  the payload (new bet, own bet skipped, accepted bet skipped, queue, first run, quiet tick, test).

@@ -2787,32 +2787,152 @@ async function pushNotif(teamId, type, msg) {
   return db.ref('lennon-lounge-notifs/' + teamId).push(notif);
 }
 
-// Phone alerts (2026-10-23): instant push to the admin's phone via ntfy.sh (free app, no account).
-// The topic name is the only "password", so it lives in S.settings (members-only per the DB rules)
-// rather than in this public repo. Fire-and-forget: a failed push never blocks the app.
-// The FPL Sync Action reads the same S.settings.phoneAlertTopic for its "odds ready" alert.
-function phoneAlert(title, message, tags) {
-  const topic = S && S.settings && S.settings.phoneAlertTopic;
-  if (!topic) return Promise.resolve(false);
-  return fetch('https://ntfy.sh/', {method:'POST', body: JSON.stringify({topic, title, message, tags: tags||[], click: location.origin + location.pathname})})
-    .then(r => r.ok).catch(() => false);
+// Phone alerts (2026-10-23, PROGRESS.md ROUND 13): real iPhone/Android notifications from this
+// app (web push), no extra app. Flow: a bet is placed → triggerPhoneAlerts() asks GitHub to run
+// the "Phone Alerts" Action (.github/workflows/notify.yml) → it sends the push via sw.js.
+// Everything lives under lennon-lounge-alerts, NOT S.settings: the weekly backup commits the
+// whole lennon-lounge tree to the public repo, and the GitHub token must never land there.
+//   config/dispatchToken  fine-grained GitHub token (Actions: read & write on this repo only)
+//   status                last trigger result, shown in Back Office so an expired token is obvious
+//   subs/{teamId}/{key}   one push subscription per admin device
+const ALERTS_ROOT = 'lennon-lounge-alerts';
+const GH_REPO = 'dseligman1/lennon-lounge';
+// Public half of the VAPID pair; must match notify.yml. The private half is the VAPID_PRIVATE_KEY repo secret.
+const VAPID_PUBLIC_KEY = 'BAtAq2_Wqv2tBbwhA531XMhGZyIjK9XPO84q2B19Z7FP3PP2U1Sk7Xm0wpZCTnlxPEQGvk0WbfARBP_vtJNZNJI';
+let _alertTimer = null, phoneCardInfo = null;
+
+async function dispatchAlertsWorkflow(inputs) {
+  const snap = await db.ref(ALERTS_ROOT + '/config/dispatchToken').once('value');
+  const token = snap.val();
+  if (!token) return {ok:false, code:'no token'};
+  let code;
+  try {
+    const r = await fetch(`https://api.github.com/repos/${GH_REPO}/actions/workflows/notify.yml/dispatches`, {
+      method:'POST',
+      headers:{Authorization:'Bearer '+token, Accept:'application/vnd.github+json', 'Content-Type':'application/json'},
+      body: JSON.stringify({ref:'main', inputs: inputs||{}})
+    });
+    code = r.status;
+  } catch (e) { code = 'network'; }
+  const ok = code === 204;
+  db.ref(ALERTS_ROOT + '/status').update(ok ? {lastOkAt: Date.now()} : {lastErrorAt: Date.now(), lastErrorCode: String(code)}).catch(()=>{});
+  return {ok, code};
 }
-function newPhoneAlertTopic() {
-  return 'lennon-lounge-' + Array.from(crypto.getRandomValues(new Uint8Array(9)), b => b.toString(16).padStart(2,'0')).join('');
+// Fire-and-forget after a bet is saved. Debounced so a multi-bet slip triggers one run, not five.
+// If this fails, the Action's 5-minute safety-net run still sends the alert, just later.
+function triggerPhoneAlerts() {
+  clearTimeout(_alertTimer);
+  _alertTimer = setTimeout(() => { dispatchAlertsWorkflow().catch(()=>{}); }, 1500);
 }
-function savePhoneAlerts() {
+
+function phoneAlertsSupport() {
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const supported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  return {ios, standalone, supported};
+}
+async function deviceSubKey(endpoint) {
+  const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(endpoint));
+  return Array.from(new Uint8Array(h).slice(0, 10), b => b.toString(16).padStart(2,'0')).join('');
+}
+async function currentPushSub() {
+  if (!phoneAlertsSupport().supported) return null;
+  const reg = await navigator.serviceWorker.getRegistration('./');
+  return reg ? reg.pushManager.getSubscription() : null;
+}
+async function enablePhoneAlerts() {
   if (!requireAdmin()) return;
-  const v = (document.getElementById('setPhoneTopic').value || '').trim();
-  if (v && !/^[-_A-Za-z0-9]{1,64}$/.test(v)) { toast('Topic: letters, numbers, - and _ only'); return; }
-  S.settings.phoneAlertTopic = v;
-  S.settings.phoneAlertTeam = v ? me.id : '';
-  audit('settings', v ? 'phone alerts on' : 'phone alerts off');
-  save(); render(); toast(v ? 'Phone alerts saved' : 'Phone alerts turned off');
+  const sup = phoneAlertsSupport();
+  if (sup.ios && !sup.standalone) { toast('Add the app to your Home Screen first, then open it from there', true); return; }
+  if (!sup.supported) { toast('This browser can\'t do notifications', true); return; }
+  // Must be the first await: iOS only shows the permission prompt straight from a tap.
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') { toast('Notifications are blocked — allow them in Settings', true); return; }
+  try {
+    const reg = await navigator.serviceWorker.register('sw.js');
+    await navigator.serviceWorker.ready;
+    const key = Uint8Array.from(atob(VAPID_PUBLIC_KEY.replace(/-/g,'+').replace(/_/g,'/')), c => c.charCodeAt(0));
+    const sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:key});
+    const json = sub.toJSON();
+    await db.ref(`${ALERTS_ROOT}/subs/${me.id}/${await deviceSubKey(json.endpoint)}`).set({endpoint: json.endpoint, keys: json.keys, at: Date.now(), device: sup.ios ? 'iPhone' : navigator.platform || 'device'});
+    audit('settings', 'phone alerts enabled on a device');
+    toast('Notifications on for this device');
+  } catch (e) { console.error(e); toast('Couldn\'t turn on notifications: ' + e.message, true); }
+  refreshPhoneAlertsCard();
+}
+async function disablePhoneAlerts() {
+  if (!requireAdmin()) return;
+  const sub = await currentPushSub();
+  if (sub) {
+    await db.ref(`${ALERTS_ROOT}/subs/${me.id}/${await deviceSubKey(sub.endpoint)}`).remove().catch(()=>{});
+    await sub.unsubscribe().catch(()=>{});
+  }
+  toast('Notifications off for this device');
+  refreshPhoneAlertsCard();
+}
+async function savePhoneToken() {
+  if (!requireAdmin()) return;
+  const v = (document.getElementById('setPhoneToken').value || '').trim();
+  if (v && !/^(github_pat_|ghp_)[A-Za-z0-9_]+$/.test(v)) { toast('That doesn\'t look like a GitHub token', true); return; }
+  await db.ref(ALERTS_ROOT + '/config').set(v ? {dispatchToken: v, setBy: me.id, setAt: Date.now()} : null);
+  await db.ref(ALERTS_ROOT + '/status').remove().catch(()=>{});
+  audit('settings', v ? 'phone alerts token saved' : 'phone alerts token removed');
+  toast(v ? 'Token saved' : 'Token removed');
+  refreshPhoneAlertsCard();
 }
 async function testPhoneAlert() {
-  if (!S.settings.phoneAlertTopic) { toast('Save a topic first'); return; }
-  const ok = await phoneAlert('🔔 Lennon Lounge test', 'Phone alerts are working.', ['bell']);
-  toast(ok ? 'Test sent — check your phone' : 'Test failed — check the topic name');
+  if (!requireAdmin()) return;
+  const r = await dispatchAlertsWorkflow({test: me.id});
+  toast(r.ok ? 'Test sent — your phone should buzz in about a minute' : `Test failed (${r.code}) — check the token`, !r.ok);
+  refreshPhoneAlertsCard();
+}
+// Back Office card. Its data is async (device subscription + Firebase), so vOffice() renders the
+// last known state and this fills in just the card, without a full render().
+async function refreshPhoneAlertsCard() {
+  try {
+    const [sub, cfg, st, subs] = await Promise.all([
+      currentPushSub().catch(()=>null),
+      db.ref(ALERTS_ROOT + '/config').once('value').then(x => x.val()),
+      db.ref(ALERTS_ROOT + '/status').once('value').then(x => x.val()),
+      db.ref(ALERTS_ROOT + '/subs/' + me.id).once('value').then(x => x.val())
+    ]);
+    phoneCardInfo = {sub: !!sub, cfg, st, devices: subs ? Object.keys(subs).length : 0};
+  } catch (e) { phoneCardInfo = {error: e.message}; }
+  const el = document.getElementById('phoneAlertsCard');
+  if (el) el.innerHTML = phoneAlertsCardBody();
+}
+function phoneAlertsCard() {
+  setTimeout(refreshPhoneAlertsCard, 0);
+  return `<div class="card"><h3>📲 Phone alerts</h3><div id="phoneAlertsCard">${phoneAlertsCardBody()}</div></div>`;
+}
+function phoneAlertsCardBody() {
+  const i = phoneCardInfo, sup = phoneAlertsSupport();
+  const intro = `<p class="muted small">A notification on your phone when someone places a bet (in ~1 minute), and when the FPL sync has auto-suggested odds for the next gameweek. Your own bets don't alert you.</p>`;
+  if (!i) return intro + `<p class="muted small">Loading…</p>`;
+  if (i.error) return intro + `<p class="muted small">Couldn't load: ${esc(i.error)}</p>`;
+  let device;
+  if (i.sub) device = `✅ On for this device. <button class="btn ghost small" onclick="disablePhoneAlerts()">Turn off here</button>`;
+  else if (sup.ios && !sup.standalone) device = `Off. On iPhone, open this site in Safari → Share → <b>Add to Home Screen</b>, open the app from your home screen, sign in, then come back here.`;
+  else if (!sup.supported) device = `This browser can't show notifications.`;
+  else device = `Off for this device. <button class="btn small" onclick="enablePhoneAlerts()">Enable on this device</button>`;
+  const tokenLine = i.cfg && i.cfg.dispatchToken
+    ? `✅ GitHub token saved ${i.cfg.setAt ? 'on ' + esc(new Date(i.cfg.setAt).toLocaleDateString('en-GB')) : ''}. Paste a new one below to replace it.`
+    : `⚠️ No GitHub token yet — without it, bet alerts only arrive via the 5-minute check (5–20 min late).`;
+  const st = i.st || {};
+  const failing = st.lastErrorAt && (!st.lastOkAt || st.lastErrorAt > st.lastOkAt);
+  const statusLine = failing
+    ? `<p class="small neg">⚠️ Last instant trigger failed ${esc(new Date(st.lastErrorAt).toLocaleString('en-GB'))} (code ${esc(st.lastErrorCode)}). ${st.lastErrorCode==='401'?'The token has expired or been deleted — make a new one and paste it below.':''} Alerts are still coming via the 5-minute check.</p>`
+    : (st.lastOkAt ? `<p class="muted small">Last instant trigger worked ${esc(new Date(st.lastOkAt).toLocaleString('en-GB'))}.</p>` : '');
+  return intro + `
+    <p class="small"><b>This device:</b> ${device}</p>
+    <p class="muted small">Devices on for you: ${i.devices}</p>
+    <p class="small"><b>Instant trigger:</b> ${tokenLine}</p>
+    ${statusLine}
+    <div class="formrow">
+      <div style="flex:1;min-width:0"><label>GitHub token</label><input type="password" id="setPhoneToken" placeholder="github_pat_…" style="width:100%" autocomplete="off" spellcheck="false"></div>
+      <button class="btn" onclick="savePhoneToken()">Save token</button>
+      <button class="btn ghost" onclick="testPhoneAlert()">Send test</button>
+    </div>`;
 }
 
 async function markAllRead() {
@@ -3140,7 +3260,7 @@ function submitBet({gwId, legs, effOdds, stake, viaAlgo, boostPct, freeBetAmount
   TEAMS.filter(t=>t.admin&&t.id!==me.id).forEach(t=>{
     pushNotif(t.id,'bet_placed',`${me.name} placed a bet — ${legs.length} leg(s) @ ${fmtOdds(effOdds)} · £${stake}`);
   });
-  if(me.id!==S.settings.phoneAlertTeam) phoneAlert(`🎰 New bet — ${me.name}`, `${legs.length} leg(s) @ ${fmtOdds(effOdds)} · £${stake}. Tap to review.`, ['moneybag']);
+  triggerPhoneAlerts();
   save(); bosh(!!bet.duplicateOf);
   setTimeout(()=>{
     let msg='Bet placed — the house is on it';
@@ -7154,16 +7274,7 @@ function vOffice(){
     ${TEAMS.map(t=>`<tr><td><b>${esc(t.name)}</b></td><td>${esc(t.owner)}</td><td><code style="font-size:16px;letter-spacing:3px;color:var(--teal)">${authPins[t.id]||'—'}</code></td><td>${t.admin?'🏠 Admin':''}</td></tr>`).join('')}
     </table></div>
   </div>
-  <div class="card">
-    <h3>📲 Phone alerts</h3>
-    <p class="muted small">Instant push to your phone when someone places a bet, and when the FPL sync has auto-suggested odds for the next gameweek (time to review and publish). Uses the free <b>ntfy</b> app: install it, tap +, and subscribe to the topic below. Anyone who knows the topic name can read the alerts, so keep it private. Your own bets don't ping you.</p>
-    <div class="formrow">
-      <div style="flex:1;min-width:0"><label>Topic</label><input type="text" id="setPhoneTopic" value="${esc(S.settings.phoneAlertTopic||newPhoneAlertTopic())}" style="width:100%" autocomplete="off" spellcheck="false"></div>
-      <button class="btn" onclick="savePhoneAlerts()">Save</button>
-      <button class="btn ghost" onclick="testPhoneAlert()">Send test</button>
-    </div>
-    <p class="muted small">${S.settings.phoneAlertTopic?'✅ On — alerts go to whoever is subscribed to this topic. Clear the box and Save to turn off.':'Off. A random topic is filled in for you — Save it, then subscribe to the same name in ntfy.'}</p>
-  </div>
+  ${phoneAlertsCard()}
   <div class="card">
     <h3>📏 Limits & edge <span class="muted small">(players never see these mechanics)</span></h3>
     <div class="formrow">

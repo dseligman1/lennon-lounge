@@ -1,0 +1,149 @@
+name: Phone Alerts
+
+on:
+  # Sends web-push notifications to admins' phones (2026-10-23, PROGRESS.md ROUND 13).
+  # (i) workflow_dispatch: the app calls this the moment a bet is placed (GitHub token stored in
+  #     lennon-lounge-alerts/config, never in this repo), so alerts land in ~30-60s. The `test`
+  #     input is Back Office → 📲 Phone alerts → "Send test".
+  # (ii) schedule: safety net every 5 min (GitHub often runs these late) in case a trigger is
+  #     missed or the token has lapsed. Also picks up queued alerts such as fpl-sync.yml's
+  #     "odds are ready". Most ticks read Firebase, find nothing new, and exit in seconds.
+  # Each bet alerts once: sent ids are recorded in lennon-lounge-alerts/sent, and `concurrency`
+  # stops two runs overlapping and double-sending.
+  workflow_dispatch:
+    inputs:
+      test:
+        description: 'Send a test alert to this team id (e.g. selig). Leave blank for a normal run.'
+        required: false
+        default: ''
+  schedule:
+    - cron: '*/5 * * * *'
+
+concurrency:
+  group: phone-alerts
+  cancel-in-progress: false
+
+jobs:
+  alert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Send phone alerts
+        env:
+          FIREBASE_DB_URL: ${{ secrets.FIREBASE_DB_URL }}
+          FIREBASE_SERVICE_KEY: ${{ secrets.FIREBASE_SERVICE_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          TEST_TEAM: ${{ inputs.test }}
+        run: |
+          node - << 'EOF'
+          const { execSync } = require('child_process');
+          const DB_URL = process.env.FIREBASE_DB_URL.replace(/\/$/, '');
+          const SERVICE_KEY = JSON.parse(process.env.FIREBASE_SERVICE_KEY);
+          const TEST_TEAM = (process.env.TEST_TEAM || '').trim();
+          // Public half of the VAPID pair — must match VAPID_PUBLIC_KEY in index.html. The private
+          // half is the VAPID_PRIVATE_KEY repo secret.
+          const VAPID_PUBLIC_KEY = 'BAtAq2_Wqv2tBbwhA531XMhGZyIjK9XPO84q2B19Z7FP3PP2U1Sk7Xm0wpZCTnlxPEQGvk0WbfARBP_vtJNZNJI';
+          const APP_URL = 'https://dseligman1.github.io/lennon-lounge/';
+          const ALERTS = 'lennon-lounge-alerts';
+
+          // Same service-account JWT → OAuth access token flow as fpl-sync.yml / backup.yml / rules.yml.
+          async function getAccessToken(serviceKey) {
+            const { private_key: privateKey, client_email: clientEmail } = serviceKey;
+            const now = Math.floor(Date.now() / 1000);
+            const payload = {
+              iss: clientEmail, sub: clientEmail,
+              aud: 'https://oauth2.googleapis.com/token',
+              iat: now, exp: now + 3600,
+              scope: 'https://www.googleapis.com/auth/firebase.database https://www.googleapis.com/auth/userinfo.email'
+            };
+            const { createSign } = require('crypto');
+            const header = Buffer.from(JSON.stringify({alg:'RS256',typ:'JWT'})).toString('base64url');
+            const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+            const sign = createSign('RSA-SHA256');
+            sign.update(`${header}.${body}`);
+            const jwt = `${header}.${body}.${sign.sign(privateKey, 'base64url')}`;
+            const res = await fetch('https://oauth2.googleapis.com/token', {
+              method: 'POST',
+              headers: {'Content-Type':'application/x-www-form-urlencoded'},
+              body: `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`
+            });
+            return (await res.json()).access_token;
+          }
+          let TOKEN;
+          async function db(method, path, data) {
+            const res = await fetch(`${DB_URL}/${path}.json`, {
+              method, headers: { Authorization: `Bearer ${TOKEN}` },
+              body: data === undefined ? undefined : JSON.stringify(data)
+            });
+            if (!res.ok) throw new Error(`${method} ${path}: HTTP ${res.status}`);
+            return res.json();
+          }
+          const asArr = x => Array.isArray(x) ? x.filter(Boolean) : (x ? Object.values(x).filter(Boolean) : []);
+
+          async function main() {
+            TOKEN = await getAccessToken(SERVICE_KEY);
+            const alerts = (await db('GET', ALERTS)) || {};
+            const subs = alerts.subs || {};          // {teamId: {key: PushSubscription JSON}}
+            const sentBets = (alerts.sent && alerts.sent.bets) || {};
+            const queue = alerts.queue || {};        // {key: {title, body, at}} — pushed by fpl-sync.yml
+
+            // Work out what to send before touching web-push, so quiet ticks stay quick.
+            const outbox = [];                       // {teamId, msg}
+            const sentUpdate = {};
+            if (TEST_TEAM) {
+              outbox.push({ teamId: TEST_TEAM, msg: { title: '🔔 Lennon Lounge test', body: 'Phone alerts are working.', tag: 'test' } });
+            } else {
+              const [bets, teams] = await Promise.all([db('GET', 'lennon-lounge/bets'), db('GET', 'lennon-lounge/teams')]);
+              const teamName = id => (asArr(teams).find(t => t.id === id) || {}).name || id;
+              const unseen = asArr(bets).filter(b => b.id && !sentBets[b.id]);
+              if (!alerts.sent || !alerts.sent.since) {
+                // First ever run: mark every existing bet as seen so old bets don't all alert at once.
+                unseen.forEach(b => { sentUpdate[`sent/bets/${b.id}`] = Date.now(); });
+                sentUpdate['sent/since'] = Date.now();
+                console.log(`First run: marked ${unseen.length} existing bet(s) as seen.`);
+              } else {
+                // Only bets still waiting for the house — one already accepted/rejected needs no review.
+                const fresh = unseen.filter(b => b.status === 'pending');
+                for (const teamId of Object.keys(subs)) {
+                  const forMe = fresh.filter(b => b.teamId !== teamId); // never alert you about your own bet
+                  if (forMe.length === 1) {
+                    const b = forMe[0];
+                    outbox.push({ teamId, msg: { title: `🎰 New bet — ${teamName(b.teamId)}`, body: `${asArr(b.legs).length} leg(s) @ ${Number(b.effOdds).toFixed(2)} · £${b.stake}. Tap to review.`, tag: 'bet-' + b.id } });
+                  } else if (forMe.length > 1) {
+                    const names = [...new Set(forMe.map(b => teamName(b.teamId)))].join(', ');
+                    outbox.push({ teamId, msg: { title: `🎰 ${forMe.length} new bets`, body: `From ${names}. Tap to review.`, tag: 'bets' } });
+                  }
+                }
+                unseen.forEach(b => { sentUpdate[`sent/bets/${b.id}`] = Date.now(); });
+              }
+              for (const [key, q] of Object.entries(queue)) {
+                for (const teamId of Object.keys(subs)) outbox.push({ teamId, msg: { title: q.title, body: q.body, tag: 'q-' + key } });
+                sentUpdate[`queue/${key}`] = null;
+              }
+            }
+
+            if (outbox.length) {
+              execSync('npm install --no-save --no-audit --no-fund --silent web-push@3.6.7', { stdio: 'inherit' });
+              const webpush = require(require.resolve('web-push', { paths: [process.cwd()] }));
+              webpush.setVapidDetails(APP_URL, VAPID_PUBLIC_KEY, process.env.VAPID_PRIVATE_KEY);
+              for (const { teamId, msg } of outbox) {
+                const devices = Object.entries(subs[teamId] || {});
+                if (!devices.length) console.log(`No devices registered for ${teamId}.`);
+                for (const [key, sub] of devices) {
+                  try {
+                    await webpush.sendNotification(sub, JSON.stringify({ ...msg, url: APP_URL }), { TTL: 6 * 3600, urgency: 'high' });
+                    console.log(`Sent "${msg.title}" to ${teamId}/${key}.`);
+                  } catch (e) {
+                    console.log(`Send to ${teamId}/${key} failed: HTTP ${e.statusCode} ${e.body || e.message}`);
+                    // 404/410 = the phone unsubscribed or the app was removed — drop the dead device.
+                    if (e.statusCode === 404 || e.statusCode === 410) sentUpdate[`subs/${teamId}/${key}`] = null;
+                  }
+                }
+              }
+            } else {
+              console.log('Nothing new to send.');
+            }
+            if (Object.keys(sentUpdate).length) await db('PATCH', ALERTS, sentUpdate);
+          }
+          main().catch(e => { console.error('Phone alerts failed:', e); process.exit(1); });
+          EOF
