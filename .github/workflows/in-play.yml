@@ -1,0 +1,30 @@
+name: Generate In-Play Odds
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Verify live FPL generation without saving a market"
+        type: boolean
+        default: false
+  schedule:
+    - cron: "*/5 * * * *"
+concurrency:
+  group: in-play-odds
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Process admin-requested draft markets
+        env:
+          INPLAY_DRY_RUN: ${{ inputs.dry_run }}
+          FIREBASE_DB_URL: ${{ secrets.FIREBASE_DB_URL }}
+          FIREBASE_SERVICE_KEY: ${{ secrets.FIREBASE_SERVICE_KEY }}
+        run: node scripts/in-play.cjs

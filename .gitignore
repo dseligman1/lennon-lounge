@@ -1,2 +1,6 @@
 audit_tmp/
 *.tmp
+
+node_modules/
+test-results/
+playwright-report/

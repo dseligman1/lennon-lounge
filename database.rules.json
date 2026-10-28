@@ -4,7 +4,17 @@
     ".write": false,
     "lennon-lounge": {
       ".read": "auth != null && root.child('lennon-lounge-members/' + auth.uid).exists()",
-      ".write": "auth != null && root.child('lennon-lounge-members/' + auth.uid).exists()"
+      ".write": "auth != null && root.child('lennon-lounge-members/' + auth.uid).exists()",
+      "bets": {
+        "$bet": {
+          "legs": {
+            "$leg": {
+              ".validate": "!newData.hasChild('marketRevision') || (data.exists() && newData.child('marketRevision').val() === data.child('marketRevision').val() && newData.child('odds').val() === data.child('odds').val() && newData.child('pick').val() === data.child('pick').val()) || (root.child('lennon-lounge-inplay').child(newData.child('gwId').val()).child('published').child('status').val() === 'published' && root.child('lennon-lounge-inplay').child(newData.child('gwId').val()).child('published').child('cutoff').val() > now && root.child('lennon-lounge-inplay').child(newData.child('gwId').val()).child('published').child('revision').val() === newData.child('marketRevision').val() && root.child('lennon-lounge-inplay').child(newData.child('gwId').val()).child('published').child('matches').child(newData.child('matchId').val()).child('suspended').val() === false && root.child('lennon-lounge-inplay').child(newData.child('gwId').val()).child('published').child('matches').child(newData.child('matchId').val()).child('odds').child(newData.child('pick').val()).val() === newData.child('odds').val())"
+            }
+          },
+          ".validate": "newData.child('inplay').val() !== true || newData.child('status').val() !== 'accepted' || data.child('status').val() === 'accepted' || data.child('status').val() === 'won' || data.child('status').val() === 'lost' || data.child('status').val() === 'void' || (root.child('lennon-lounge-inplay').child(newData.child('gwId').val()).child('published').child('status').val() === 'published' && root.child('lennon-lounge-inplay').child(newData.child('gwId').val()).child('published').child('cutoff').val() > now && root.child('lennon-lounge-inplay').child(newData.child('gwId').val()).child('published').child('revision').val() === newData.child('legs/0/marketRevision').val())"
+        }
+      }
     },
     "lennon-lounge-notifs": {
       ".read": "auth != null && root.child('lennon-lounge-members/' + auth.uid).exists()",
@@ -51,6 +61,14 @@
           ".write": "auth != null && root.child('lennon-lounge-members/' + auth.uid + '/team').val() === $tid && (root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'selig' || root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'rowez')"
         }
       }
+    },
+    "lennon-lounge-inplay": {
+      ".read": "auth != null && root.child('lennon-lounge-members/' + auth.uid).exists()",
+      ".write": "auth != null && (root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'selig' || root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'rowez')"
+    },
+    "lennon-lounge-inplay-history": {
+      ".read": "auth != null && root.child('lennon-lounge-members/' + auth.uid).exists()",
+      ".write": "auth != null && (root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'selig' || root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'rowez')"
     }
   }
 }

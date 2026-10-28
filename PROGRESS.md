@@ -2257,3 +2257,11 @@ image + PDF + caption, odds edition + Monday recap.
   - database.rules.json: new `lennon-lounge-alerts` block (config / status / subs).
   Verified: all scripts parse; notify.js run against a fake DB + fake push endpoint that decrypts
   the payload (new bet, own bet skipped, accepted bet skipped, queue, first run, quiet tick, test).
+
+## ROUND 14 — shared player model and in-play markets, 2026-10-28
+
+- Replaced duplicate browser/Action forecasts with `odds-model.js`; moved embedded Action code to `scripts/sync-fpl.cjs`. Added Opta-mapped recent player histories, club form, shared-fixture scoring simulations, legal lineups/bench order, explicit confidence definitions and forecast snapshots. House competitiveness curve and pre-match pricing rails retained.
+- In-play request → workflow draft → admin publish, separate Firebase subtree/revision history, current scores and original-price comparison, dynamic cutoffs, source-fetch age/unknown FPL latency, reconciliation blockers and nearly-certain-market suspension. Five-minute queued fallback if no dispatch token. Existing accepted bets are not repriced. In-play posters and per-player explanations included.
+- Tests: 25 Node regression tests; isolated Chrome desktop/mobile core views, in-play selection and odds/in-play/recap poster layout checks. No production bets written by tests. Regression workflow added.
+- Audit: 48 stored base-price favourites won 20/48 (41.7%). Comparable reconstructed GW2–8 forecasts: old 21/42 versus new 23/42 winners; points MAE 8.58 versus 8.20. No original points archive; GW1 excluded. Historical records may reflect manual revisions; small development sample, not out-of-sample validation. Full report and captured public FPL inputs remain in the enclosing project's outputs/data, outside this public repo.
+- Operations and model caveats: README.md. Deployment verification to be recorded after push.
