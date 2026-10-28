@@ -360,7 +360,8 @@
               // Per-fixture stats are required by the workflow: event totals cannot disambiguate doubles.
               const minutes = Number(known?.minutes) || 0,
                 elapsed = Number(f.minutes) || 0;
-              const subbed = minutes > 0 && minutes < elapsed - 3;
+              const subbed =
+                minutes > 0 && known?.starts === 1 && minutes < elapsed - 3;
               on = minutes > 0 ? !subbed : r() < 0.2 * fraction;
               if (!on) continue;
               full = minutes + 90 * fraction >= 60;

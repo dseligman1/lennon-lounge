@@ -201,3 +201,36 @@ test("active fixture never re-awards existing clean sheets and respects substitu
   assert.equal(p.teams.h.proj, 66);
   assert.equal(p.teams.a.proj, 66);
 });
+test("a known substitute who just came on retains a chance of remaining points", () => {
+  const s = state();
+  s.fpl.plFixtures[5][0] = {
+    id: 1,
+    h: 1,
+    a: 2,
+    started: true,
+    minutes: 70,
+    hg: 1,
+    ag: 1,
+  };
+  const points = {};
+  for (const id of Object.keys(s.fpl.players))
+    points[id] = {
+      points: 2,
+      minutes: 70,
+      fixtures: {
+        1: { minutes: 70, starts: 1, clean_sheets: 0, goals_conceded: 1 },
+      },
+    };
+  points[3] = {
+    points: 1,
+    minutes: 10,
+    fixtures: {
+      1: { minutes: 10, starts: 0, clean_sheets: 0, goals_conceded: 0 },
+    },
+  };
+  const p = M.forecast(s, 5, {
+    samples: 1000,
+    live: { teamPoints: { h: 21, a: 22 }, playerPoints: points },
+  });
+  assert.ok(p.players[3].proj > 1);
+});

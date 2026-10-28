@@ -2262,6 +2262,12 @@ image + PDF + caption, odds edition + Monday recap.
 
 - Replaced duplicate browser/Action forecasts with `odds-model.js`; moved embedded Action code to `scripts/sync-fpl.cjs`. Added Opta-mapped recent player histories, club form, shared-fixture scoring simulations, legal lineups/bench order, explicit confidence definitions and forecast snapshots. House competitiveness curve and pre-match pricing rails retained.
 - In-play request → workflow draft → admin publish, separate Firebase subtree/revision history, current scores and original-price comparison, dynamic cutoffs, source-fetch age/unknown FPL latency, reconciliation blockers and nearly-certain-market suspension. Five-minute queued fallback if no dispatch token. Existing accepted bets are not repriced. In-play posters and per-player explanations included.
-- Tests: 25 Node regression tests; isolated Chrome desktop/mobile core views, in-play selection and odds/in-play/recap poster layout checks. No production bets written by tests. Regression workflow added.
+- Tests: 26 Node regression tests; isolated Chrome desktop/mobile core views, in-play selection and odds/in-play/recap poster layout checks. No production bets written by tests. Regression workflow added.
 - Audit: 48 stored base-price favourites won 20/48 (41.7%). Comparable reconstructed GW2–8 forecasts: old 21/42 versus new 23/42 winners; points MAE 8.58 versus 8.20. No original points archive; GW1 excluded. Historical records may reflect manual revisions; small development sample, not out-of-sample validation. Full report and captured public FPL inputs remain in the enclosing project's outputs/data, outside this public repo.
-- Operations and model caveats: README.md. Deployment verification to be recorded after push.
+- Operations and model caveats: README.md. Initial deployment e9e5640 verified on Pages;
+  regression run 40758791895, rules deployment 40758823824 and FPL refresh 40758897503
+  succeeded. FPL sync matched all 12 squads / 180 players / 48 results and left unpublished
+  GW9 prices alone outside its normal window. In-play verification initially found no open
+  gameweek; read-only check now also exercises the latest settled week in memory.
+- Final live-clock review: a known late substitute (starts=0) must retain future scoring
+  probability; they are not treated as a player substituted off. Regression added.

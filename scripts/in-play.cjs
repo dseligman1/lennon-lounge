@@ -302,16 +302,21 @@ async function main() {
   if (process.env.INPLAY_DRY_RUN === "true") {
     const state = await db("lennon-lounge");
     const g = arr(state.gameweeks)
-      .filter((g) => g.status === "open" && g.deadline < Date.now())
+      .filter((g) => g.deadline < Date.now() && Number(g.event) > 0)
       .sort((a, b) => b.event - a.event)[0];
     if (!g) {
-      console.log("Dry run: no started open gameweek");
+      console.log("Dry run: no started gameweek available");
       return;
     }
-    const draft = await generate(state, g, { id: "dry-run" });
+    const draft = await generate(
+      state,
+      { ...g, status: "open" },
+      { id: "dry-run" },
+    );
     console.log(
       JSON.stringify({
         dryRun: true,
+        originalStatus: g.status,
         event: g.event,
         matches: Object.keys(draft.matches).length,
         source: draft.source,

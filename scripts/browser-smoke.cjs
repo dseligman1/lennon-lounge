@@ -22,6 +22,30 @@ const fs = require("node:fs"),
       }),
       errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
+    if (process.argv.includes("--production")) {
+      await page.goto(
+        "https://dseligman1.github.io/lennon-lounge/?verify=" + Date.now(),
+      );
+      await page.waitForFunction(
+        () => document.querySelectorAll("#teamGrid .team-chip").length === 12,
+        { timeout: 30000 },
+      );
+      assert.equal(
+        await page.evaluate(() => LennonModel.VERSION),
+        "2026.10-player-v1",
+      );
+      assert.equal(
+        await page.evaluate(() => typeof LennonInPlay.publishError),
+        "function",
+      );
+      assert.equal(await page.evaluate(() => typeof requestInPlay), "function");
+      assert.deepEqual(errors, []);
+      await page.screenshot({ path: path.join(out, "production-login.png") });
+      console.log(
+        "PASS: production page loads all three model/in-play modules and all 12 login choices without JavaScript errors. No member login or app data writes.",
+      );
+      return;
+    }
     let html = fs
       .readFileSync(path.join(root, "index.html"), "utf8")
       .replace(/<script src="https:\/\/www.gstatic.com[^>]+><\/script>/g, "");
