@@ -41,19 +41,28 @@ async function accessToken(key) {
 function database(url, token) {
   return async (path, method = "GET", data) => {
     const r = await fetch(`${url.replace(/\/$/, "")}/${path}.json`, {
-      method,
+      method: method === "CREATE" ? "PUT" : method,
       headers: {
         Authorization: "Bearer " + token,
         "Content-Type": "application/json",
+        ...(method === "CREATE" ? { "if-match": "null_etag" } : {}),
       },
       ...(data === undefined ? {} : { body: JSON.stringify(data) }),
       signal: AbortSignal.timeout(20000),
     });
+    if (method === "CREATE" && r.status === 412) return null;
     if (!r.ok) throw Error(`Firebase ${method} failed (${r.status})`);
     return r.json();
   };
 }
-async function generate(state, g, request, fetchJson = get, clock = Date.now) {
+async function generate(
+  state,
+  g,
+  request,
+  fetchJson = get,
+  clock = Date.now,
+  options = {},
+) {
   const startedAt = clock(),
     event = Number(g.event);
   if (g.status !== "open" || !event)
@@ -100,7 +109,19 @@ async function generate(state, g, request, fetchJson = get, clock = Date.now) {
   for (const tid of wanted)
     if (!picks[tid]) throw Error(`No verified event picks for ${tid}`);
   const owned = new Set(Object.values(squads).flat().map(Number)),
-    extra = await enrich(boot, owned, fetchJson),
+    cached =
+      options.cachedHistories &&
+      state.fpl.modelData?.fetchedAt > clock() - 36 * 3600000 &&
+      state.fpl.plFixtures?.[event] &&
+      [...owned].every((id) => state.fpl.playerHistory?.[id]),
+    extra = cached
+      ? {
+          modelData: state.fpl.modelData,
+          playerHistory: state.fpl.playerHistory,
+          plFixtures: state.fpl.plFixtures,
+          plTeams: state.fpl.plTeams,
+        }
+      : await enrich(boot, owned, fetchJson),
     players = {};
   for (const p of boot.elements || [])
     if (owned.has(p.id))
@@ -272,6 +293,46 @@ async function generate(state, g, request, fetchJson = get, clock = Date.now) {
       currentAway: teamPoints[m.away],
     };
   }
+  const matchdayTeams = {};
+  for (const tid of wanted) {
+    const rows = picks[tid].map((x) => ({
+      id: x.element,
+      pos: players[x.element].p,
+    }));
+    const potential = Object.fromEntries(
+      rows.map((p) => [
+        p.id,
+        playerPoints[p.id].minutes > 0 ||
+          fx.some(
+            (f) =>
+              (f.h === players[p.id].t || f.a === players[p.id].t) &&
+              !f.finished,
+          ),
+      ]),
+    );
+    const selected = new Set(
+      M.autoXI(rows.slice(0, 11), rows.slice(11), potential).map((p) => p.id),
+    );
+    const ps = rows.map((p) => {
+      const fs = fx.filter(
+        (f) =>
+          (f.h === players[p.id].t || f.a === players[p.id].t) && !f.finished,
+      );
+      return {
+        id: p.id,
+        name: players[p.id].n,
+        points: playerPoints[p.id].points,
+        selected: selected.has(p.id),
+        remaining: fs.length,
+        active: fs.some((f) => f.started),
+      };
+    });
+    matchdayTeams[tid] = {
+      players: ps,
+      remainingPlayers: ps.filter((p) => p.selected && p.remaining > 0).length,
+      activePlayers: ps.filter((p) => p.selected && p.active).length,
+    };
+  }
   return {
     requestId: request.id,
     revision: request.id,
@@ -292,6 +353,13 @@ async function generate(state, g, request, fetchJson = get, clock = Date.now) {
     blockedReasons: [...new Set(blockedReasons)],
     matches,
     forecast: M.snapshot(pred),
+    matchday: {
+      teams: matchdayTeams,
+      finished: fx.every((f) => f.finished),
+      reconciled: !blockedReasons.some(
+        (r) => r.includes("disagrees") || r.includes("score unavailable"),
+      ),
+    },
     originalOdds: Object.fromEntries(arr(g.matches).map((m) => [m.id, m.odds])),
     status: "draft",
   };

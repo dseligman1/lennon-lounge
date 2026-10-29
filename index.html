@@ -794,7 +794,7 @@
   <button class="bnav-btn" id="bn-home" onclick="go('home')"><span class="icon">🏟️</span>Home</button>
   <button class="bnav-btn" id="bn-builder" onclick="go('builder')"><span class="icon">⚽</span>Bets</button>
   <button class="bnav-btn" id="bn-mybets" onclick="go('mybets')"><span class="icon">🧾</span>My Bets</button>
-  <button class="bnav-btn" id="bn-results" onclick="go('results')"><span class="icon">🏆</span>Results</button>
+  <button class="bnav-btn" id="bn-matchday" onclick="openMatchday()"><span class="icon">📺</span>Matchday</button>
   <button class="bnav-btn" id="bn-more" onclick="go('usettings')"><span class="icon">⚙️</span>More</button>
 </div>
 
@@ -851,6 +851,9 @@
 <div class="toast" id="toast"></div>
 
 
+<link rel="stylesheet" href="lounge-games.css?v=20261029">
+<script src="lounge-games.js?v=20261029"></script>
+<script src="lounge-games-ui.js?v=20261029"></script>
 <script src="odds-model.js?v=20261028"></script>
 <script src="in-play-market.js?v=20261028"></script>
 <script src="in-play-ui.js?v=20261028"></script>
@@ -1182,6 +1185,7 @@ function startListener() {
   });
   startConnectionMonitor();
   startInPlayListener();
+  startGamesListeners();
 }
 
 // Uses Firebase's own '.info/connected' — a special server-maintained ref that reflects the
@@ -1332,6 +1336,7 @@ function flushUsageQueue(){
 }
 
 function logout() {
+  stopGamesListeners();
   _usageQueue = [];
   if (dbListener) {
     db.ref(ROOT).off('value', dbListener);
@@ -2469,6 +2474,7 @@ function navTabs(){
   if(!me) return [];
   const tabs=[
     {id:'home',label:'🏟️ Home'},
+    {id:'matchday',label:'📺 Matchday Live'},
     {id:'builder',label:'⚽ Bet Builder'},
     {id:'mybets',label:'🧾 My Bets',badge:needsActionCount()},
     {id:'results',label:'🏆 Results'},
@@ -4120,6 +4126,8 @@ function vHome(){
   const spark=homePnlExpanded?pnlSparklineSvg(me.id):'';
   return `<h2>👋 Alright, ${esc(me.owner)}?</h2>
   <div class="sub">${esc(me.name)} HQ — everything in one place.</div>
+  ${scoreGameHome()}
+  ${matchdayHome()}
   ${oddsReleaseBanner()}
   ${urgentHero(urgent)}
   <div class="kpis">
@@ -5567,32 +5575,38 @@ function delGw(gwId){
   S.promos=S.promos.filter(p=>p.gwId!==gwId);
   save(); render();
 }
-function publishGw(gwId){
+async function publishGw(gwId){
   if(!requireAdmin()) return;
   // draft → open is already the "odds go live" transition (confirmed against batch 21's brief) —
   // this already flips status and notifies every non-admin player. What was missing (added below/
   // in releaseOdds()) was (a) a stamped oddsReleasedAt so the home page can show a "new odds" banner,
   // and (b) a way to re-announce odds after they're tweaked on an already-open gameweek.
   const g=gw(gwId); g.forecast=LennonModel.snapshot(modelForecast(S,g.event)); g.forecastSavedAt=Date.now(); g.status='open'; g.oddsReleasedAt=Date.now(); createPromoForGw(g);
-  audit('published',g.name); save(); render();
+  audit('published',g.name);
+  try { await saveNow(); } catch { toast('Could not publish odds. Please retry.',true); return; }
+  let freeGameFailed=false;
+  try { await openScoreRound(g); } catch { freeGameFailed=true; }
+  render();
   TEAMS.forEach(t=>{ if(!t.admin) pushNotif(t.id,'gw_published',`📅 ${g.name} is LIVE — place your bets before ${fmtDT(g.deadline)} 🔥`); });
-  toast(g.name+' is LIVE 🔥');
+  toast(freeGameFailed?'Odds published; free game needs a retry in Bet Settler.':g.name+' is LIVE 🔥',freeGameFailed);
   // Weekly poster: publishing is the moment to send it, so open it straight away.
   setTimeout(()=>openPoster('odds',gwId),500);
 }
 // Batch 21: explicit re-release for an ALREADY open gameweek — e.g. the admin tweaked/reset some
 // odds after publishing and wants to re-notify players + refresh the home-page "new odds" banner
 // (oddsReleaseBanner(), vHome()) without going through the one-time draft→open publishGw() flow above.
-function releaseOdds(gwId){
+async function releaseOdds(gwId){
   if(!requireAdmin()) return;
   const g=gw(gwId); if(!g) return;
   g.forecast=LennonModel.snapshot(modelForecast(S,g.event)); g.forecastSavedAt=Date.now();
   g.oddsReleasedAt=Date.now();
   audit('odds released',g.name);
-  saveNow();
+  try { await saveNow(); } catch { toast('Could not release odds. Please retry.',true); return; }
+  let freeGameFailed=false;
+  try { await openScoreRound(g); } catch { freeGameFailed=true; }
   TEAMS.forEach(t=>{ if(!t.admin) pushNotif(t.id,'odds_released',`🎯 New odds released for ${g.name} — review before they lock in`); });
   render();
-  toast('Odds released — players notified 📣');
+  toast(freeGameFailed?'Odds released; free game needs a retry in Bet Settler.':'Odds released — players notified 📣',freeGameFailed);
 }
 
 /* ================================================================
@@ -7314,6 +7328,9 @@ function reviewCount(){ if(!S) return 0; return (S.bets||[]).filter(b=>['pending
 
 function render(){
   if(!me||!S) return;
+  ensureMatchdayListener();
+  const gamesFocus=document.activeElement;
+  const gamesFocusId=gamesFocus&&['sg-home','sg-away'].includes(gamesFocus.id)?gamesFocus.id:null;
   const {pnl}=computePnl(S);
   const p=pnl[me.id]||0;
   const pnlEl=document.getElementById('myPnl');
@@ -7321,14 +7338,15 @@ function render(){
   const tabs=navTabs();
   const navEl=document.getElementById('nav');
   if(navEl) navEl.innerHTML=tabs.map(t=>`<button class="${t.house?'houseTab':''} ${activeTab===t.id?'active':''}" onclick="go('${t.id}')">${t.label}${t.badge?`<span class="badge">${t.badge}</span>`:''}</button>`).join('');
-  const views={home:vHome,builder:vBuilder,mybets:vMyBets,results:vResults,insights:vInsights,usettings:vUserSettings,
-    review:vReview,loader:vLoader,odds:vOddSetter,settler:vSettler,promos:vPromos,office:vOffice,
+  const views={home:vHome,matchday:vMatchday,builder:vBuilder,mybets:vMyBets,results:vResults,insights:vInsights,usettings:vUserSettings,
+    review:vReview,loader:vLoader,odds:vOddSetter,settler:()=>scoreAdminHtml()+vSettler(),promos:vPromos,office:vOffice,
     // Batch 28: reached only via the "🏆 Season Bets" summary card's click-through (Home/Builder)
     // or the bet-detail modal's duplicate-bet flow — deliberately not in navTabs()'s tab list,
     // same precedent as 'loader' above.
     seasonbets:vSeasonBets};
   const viewEl=document.getElementById('view');
   if(viewEl) viewEl.innerHTML=(views[activeTab]||vHome)();
+  if(gamesFocusId) document.getElementById(gamesFocusId)?.focus({preventScroll:true});
   const cb=document.getElementById('chatBox'); if(cb) cb.scrollTop=cb.scrollHeight;
   // Batch 12: live-ticking countdown for the home hero's gw-deadline item. Always clear any
   // previous timer first (covers navigating away from Home, or re-rendering Home itself),
@@ -7351,7 +7369,7 @@ function render(){
     }
   }
   // Mobile bottom nav active states
-  ['home','builder','mybets','results'].forEach(id=>{
+  ['home','builder','mybets','results','matchday'].forEach(id=>{
     const btn=document.getElementById('bn-'+id);
     if(btn) btn.classList.toggle('active',activeTab===id);
   });
@@ -7369,7 +7387,7 @@ function render(){
   if(squadModalState) renderSquadModal();
   // Auto-refresh reminder on time-sensitive tabs
   clearTimeout(render._rt);
-  if(['builder','review','settler'].includes(activeTab)){
+  if(['home','matchday','builder','review','settler'].includes(activeTab)){
     render._rt=setTimeout(render,60000);
   }
 }

@@ -5,7 +5,7 @@ const fs = require("node:fs"),
   { chromium } = require("@playwright/test");
 (async () => {
   const root = path.join(__dirname, ".."),
-    out = path.join(root, "../outputs/2026-10-28-browser-check");
+    out = path.join(root, "../outputs/2026-10-29-browser-check");
   fs.mkdirSync(out, { recursive: true });
   const browser = await chromium.launch({
     ...(process.platform === "darwin"
@@ -39,6 +39,11 @@ const fs = require("node:fs"),
         "function",
       );
       assert.equal(await page.evaluate(() => typeof requestInPlay), "function");
+      assert.equal(
+        await page.evaluate(() => typeof LennonGames.entryError),
+        "function",
+      );
+      assert.equal(await page.evaluate(() => typeof vMatchday), "function");
       assert.deepEqual(errors, []);
       await page.screenshot({ path: path.join(out, "production-login.png") });
       console.log(
@@ -64,7 +69,11 @@ const fs = require("node:fs"),
         const name = u.pathname === "/" ? "index.html" : u.pathname.slice(1);
         return route.fulfill({
           status: 200,
-          contentType: name.endsWith(".js") ? "text/javascript" : "text/html",
+          contentType: name.endsWith(".js")
+            ? "text/javascript"
+            : name.endsWith(".css")
+              ? "text/css"
+              : "text/html",
           body:
             name === "index.html"
               ? html
@@ -107,6 +116,7 @@ const fs = require("node:fs"),
         fullPage: true,
       });
     }
+    await require("./games-browser-check.cjs")(page, out);
     await page.evaluate(() => {
       const g = gw("gw_74"),
         pred = modelForecast(S, 8),

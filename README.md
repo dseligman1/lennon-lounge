@@ -2,6 +2,24 @@
 
 Static FPL Draft betting app on GitHub Pages; Firebase Realtime Database stores the league.
 
+## Lennon Score Shot — free £50 game
+
+The homepage offers one free, irreversible prediction per manager per FPL gameweek. Pick one Draft fixture and enter both teams' exact final **FPL points**, not football goals. Every exact winner receives **£50 cash**, including when several managers win. All registered managers, including the house, can enter. No stake is required and there is no rollover.
+
+Publishing or re-releasing odds opens the round automatically. Entries close at the earliest of the official FPL deadline, the app deadline and the first known kickoff. An existing round cannot be changed or recreated by republishing, reopening a gameweek, refreshing or using another device. The homepage replaces the form with the locked prediction until a later round opens. If round creation fails after odds publish, Bet Settler provides an **Open free game** retry.
+
+`lennon-lounge-score-game` stores immutable rounds and entries separately from legacy saves. Database rules enforce ownership, one entry per team/event, server-time cutoff, whole scores, £50-per-winner terms and no edits/deletes. Other managers cannot read entries before the cutoff; admins can review participation. Only the service-account worker writes results; only admins can record a verified winner as paid.
+
+The existing five-minute In-Play workflow also runs `scripts/engagement.cjs`. It grades prizes only after official Draft fixtures are finished, using the configured `FPL_LEAGUE_ID`, official deadlines and manager identities from the official league response. Mutable cached scores and mappings do not decide prizes. Stable event keys and create-only writes prevent repeat awards. **Bet Settler → Free £50 score game** lists entrants and winners; **Mark paid** records a manual cash payment and does not transfer funds. Prizes are separate from betting P&L.
+
+## Matchday Live
+
+Available from Home, desktop navigation, the mobile dock and the menu. Shows all six published Draft matchups, the viewer's match first, official current points, projected finishes, win/draw probabilities, player points, players with unfinished fixtures and a selectable score timeline. Before scores arrive, it shows a labelled forecast preview.
+
+`lennon-lounge-matchday/<event>` stores the current snapshot and up to 144 changed snapshots. The worker refreshes the most recent started, published gameweek and stops after a reconciled final snapshot. It reuses recent model histories when available and fetches event-specific picks/current points. It never opens or republishes betting markets. A failing refresh retains the last good snapshot; updates older than 15 minutes are labelled delayed. Forecasts are hidden while team/player totals disagree. FPL and Actions scheduling latency remain uncertain: this is a periodically refreshed scoreboard, not a goal-by-goal feed.
+
+Deploy database rules before the new app. `npm run test:rules` uses a local demo Firebase database (Java 21+ required); no production credentials. The weekly public-repo backup covers the legacy `lennon-lounge` branch only: preserve the separate score-game and matchday branches in any full Firebase backup. They are not affected by the existing app reset/restore actions. Round keys refer to the current season's events; archive and provision a fresh namespace before reusing event numbers in a new season.
+
 ## Forecasts and odds
 
 `odds-model.js` is the shared, deterministic browser/Node engine. It uses recent player history (minutes, starts, expected goals/assists and other scoring components), availability, recent club goals for/against and each gameweek's fixtures. Draft and classic player IDs are joined by Opta code. Simulations share fixture goals, so opposing clean sheets and attacking returns are dependent. Legal formations, estimated manager selection, published event-specific lineups and ordered automatic substitutes build team totals. Blanks and doubles are explicit.
@@ -25,6 +43,7 @@ In-play drafts/publications live at `lennon-lounge-inplay`; archived published r
 ## Verification and deployment
 
 - `npm test`: model, app rendering, workflow parity and in-play regressions (no live writes).
+- `npm run test:rules`: emulator tests for prize ownership, simultaneous submissions, deadlines, private reads, immutable entries and payment permissions.
 - `npm run test:browser`: isolated Chrome tests on macOS, mocked Firebase and blocked remote writes. Requires local audit inputs at `../data/2026-10-28-model-inputs.json`; screenshots go outside the repo under `../outputs/`.
 - `node scripts/fpl-data.cjs <backup.json> <private-output.json>`: fetch public FPL audit inputs.
 - `node scripts/backtest.cjs <private-input.json> <private-report.json>`: reproducible retrospective audit.

@@ -1,5 +1,13 @@
 # Lennon Lounge v2 — Feature Build Progress
 
+## ROUND 15 — free £50 exact-score game and Matchday Live, 2026-10-29
+
+- Dan approved both features and explicitly confirmed **£50 for each exact winner**, not a shared pot. One free fixture prediction per manager/gameweek, both final FPL points exact; prominent homepage form opens on odds publication and locks permanently on entry, with a fresh chance next gameweek. Includes closed/loading/error/winner states and preserves typed scores across background renders.
+- Separate Firebase rules enforce manager ownership, server time, immutable entries/rounds and protected official results. Admins see entrants and winners in Bet Settler and mark manual cash payouts paid, independently of betting P&L.
+- Matchday Live shows six fixtures, own matchup first, current scores, projections, probabilities, players/unfinished fixtures, timestamps, delay/reconciliation warnings and a recorded score timeline. Accessible from Home, desktop navigation and mobile dock. Existing five-minute In-Play workflow refreshes the spectator feed and grades final prizes; betting market publication stays manual.
+- Shared policy: `lounge-games.js`; UI/style: `lounge-games-ui.js`, `lounge-games.css`; worker: `scripts/engagement.cjs`. Official league identity/deadline verification protects prize grading from changes to legacy cached mappings/scores. See README for operations, storage and season boundaries.
+- Pre-release verification: 39 Node tests and seven Firebase emulator security tests passed; isolated browser entry/locked/winner/next-week flows, player details, timeline, stale states and overflow checks at 320/390/1280px passed. Existing in-play and all three posters still pass. Screenshots outside repo: `../outputs/2026-10-29-browser-check/`. Production rollout evidence will be recorded in the enclosing project's release note.
+
 > **Current local setup (2026-10-02):** the only working copy is this repo, cloned at
 > `Documents\Claude\Projects\lennon-lounge\code` on Dan's machine. Work on `main` and
 > push to `origin main`. The `Downloads` paths, the "copy to lennon-lounge-v2.html" step

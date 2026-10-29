@@ -1051,7 +1051,7 @@ async function main() {
   console.log("FPL sync complete");
 }
 
-module.exports = { recomputeGwOdds, oddsWindowDue, gwFirebaseKey };
+module.exports = { recomputeGwOdds, oddsWindowDue, gwFirebaseKey, matchTeamName };
 if (require.main === module)
   main().catch((e) => {
     console.error("FPL sync failed:", e);

@@ -52,6 +52,7 @@ module.exports = function (state) {
     structuredClone,
     LennonModel: require("../odds-model.js"),
     LennonInPlay: require("../in-play-market.js"),
+    LennonGames: require("../lounge-games.js"),
     setTimeout: noop,
     clearTimeout: noop,
     setInterval: noop,
@@ -89,6 +90,10 @@ module.exports = function (state) {
     ctx,
   );
   vm.runInContext(src, ctx);
+  vm.runInContext(
+    fs.readFileSync(require.resolve("../lounge-games-ui.js"), "utf8"),
+    ctx,
+  );
   ctx.input = structuredClone(state);
   vm.runInContext(
     "S={...freshState(),...input}; S.settings={...DEFAULT_SETTINGS,...input.settings}; S.sim={events:{},...S.sim}; me=TEAMS[0];",
