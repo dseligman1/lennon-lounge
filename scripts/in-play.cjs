@@ -65,21 +65,68 @@ async function generate(
 ) {
   const startedAt = clock(),
     event = Number(g.event);
-  if (g.status !== "open" || !event)
+  if (!["open", "draft"].includes(g.status) || !event)
     throw Error(
-      "Only an open FPL-linked gameweek can generate an in-play market.",
+      "Choose an open or draft FPL-linked gameweek to generate a preview.",
     );
-  const [boot, details, live] = await Promise.all([
-    fetchJson("https://draft.premierleague.com/api/bootstrap-static"),
-    fetchJson(
-      `https://draft.premierleague.com/api/league/${state.fpl.leagueId}/details`,
-    ),
-    fetchJson(`https://draft.premierleague.com/api/event/${event}/live`),
-  ]);
+  const boot = await fetchJson(
+    "https://draft.premierleague.com/api/bootstrap-static",
+  );
   const evs = arr(boot.events?.data || boot.events),
     ev = evs.find((x) => Number(x.id) === event);
-  if (!ev || Date.parse(ev.deadline_time) > clock())
-    throw Error("The FPL gameweek has not started.");
+  if (!ev || !Number.isFinite(Date.parse(ev.deadline_time)))
+    throw Error("The official gameweek deadline is unavailable.");
+  if (Date.parse(ev.deadline_time) > clock()) {
+    const now = clock(),
+      startsAt = Date.parse(ev.deadline_time),
+      maxCutoff = Math.min(startsAt, g.deadline || startsAt),
+      originalOdds = IP.normalOdds(state, g),
+      forecast =
+        g.forecast || M.snapshot(M.forecast(state, event, { samples: 4000 }));
+    return {
+      requestId: request.id,
+      revision: request.id,
+      event,
+      gwId: g.id,
+      generatedAt: now,
+      preStart: true,
+      startsAt,
+      active: false,
+      status: "draft",
+      cutoff: maxCutoff,
+      maxCutoff,
+      blockedReasons:
+        maxCutoff <= now ? ["The gameweek betting cutoff has passed."] : [],
+      source: {
+        fetchedAt: now,
+        startedAt,
+        collectionMs: now - startedAt,
+        provisional: false,
+        warnings: [
+          "Pre-gameweek preview: normal board prices are reused exactly, including boosts. Live scoring and remaining-fixture forecasts begin after the official deadline.",
+        ],
+      },
+      originalOdds,
+      forecast,
+      matches: Object.fromEntries(
+        arr(g.matches).map((m) => [
+          m.id,
+          {
+            id: m.id,
+            home: m.home,
+            away: m.away,
+            odds: { ...originalOdds[m.id] },
+            suspended: false,
+            currentHome: 0,
+            currentAway: 0,
+          },
+        ]),
+      ),
+    };
+  }
+  const details = await fetchJson(
+    `https://draft.premierleague.com/api/league/${state.fpl.leagueId}/details`,
+  );
   const entries = arr(details.league_entries),
     entryMap = state.fpl.entryMap || {},
     wanted = new Set(arr(g.matches).flatMap((m) => [m.home, m.away]));
@@ -360,7 +407,7 @@ async function generate(
         (r) => r.includes("disagrees") || r.includes("score unavailable"),
       ),
     },
-    originalOdds: Object.fromEntries(arr(g.matches).map((m) => [m.id, m.odds])),
+    originalOdds: IP.normalOdds(state, g),
     status: "draft",
   };
 }
@@ -369,29 +416,40 @@ async function main() {
     db = database(process.env.FIREBASE_DB_URL, token);
   if (process.env.INPLAY_DRY_RUN === "true") {
     const state = await db("lennon-lounge");
-    const g = arr(state.gameweeks)
-      .filter((g) => g.deadline < Date.now() && Number(g.event) > 0)
+    const all = arr(state.gameweeks).filter((g) => Number(g.event) > 0);
+    const past = all
+      .filter((g) => g.deadline < Date.now())
       .sort((a, b) => b.event - a.event)[0];
-    if (!g) {
-      console.log("Dry run: no started gameweek available");
-      return;
+    const next = all
+      .filter((g) => g.deadline > Date.now())
+      .sort((a, b) => a.event - b.event)[0];
+    for (const g of [past, next].filter(Boolean)) {
+      const draft = await generate(
+        state,
+        { ...g, status: "open" },
+        { id: "dry-run" },
+      );
+      const normal = IP.normalOdds(state, g);
+      const pricesMatch = Object.entries(draft.matches).every(([id, m]) =>
+        ["home", "draw", "away"].every((p) => m.odds[p] === normal[id]?.[p]),
+      );
+      if (draft.preStart && !pricesMatch)
+        throw Error("Pre-gameweek prices differ from the normal board");
+      console.log(
+        JSON.stringify({
+          dryRun: true,
+          originalStatus: g.status,
+          event: g.event,
+          matches: Object.keys(draft.matches).length,
+          preStart: !!draft.preStart,
+          ...(draft.preStart ? { normalOddsMatch: pricesMatch } : {}),
+          cutoff: draft.cutoff,
+          source: draft.source,
+          blockedReasons: draft.blockedReasons,
+          version: draft.forecast.version,
+        }),
+      );
     }
-    const draft = await generate(
-      state,
-      { ...g, status: "open" },
-      { id: "dry-run" },
-    );
-    console.log(
-      JSON.stringify({
-        dryRun: true,
-        originalStatus: g.status,
-        event: g.event,
-        matches: Object.keys(draft.matches).length,
-        source: draft.source,
-        blockedReasons: draft.blockedReasons,
-        version: draft.forecast.version,
-      }),
-    );
     return;
   }
   const queues = (await db("lennon-lounge-inplay")) || {};

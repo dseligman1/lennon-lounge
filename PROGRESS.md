@@ -1,5 +1,12 @@
 # Lennon Lounge v2 — Feature Build Progress
 
+## ROUND 16 — accepted free entries, early in-play previews and odds withdrawal, 2026-10-29
+
+- Score Shot now appears automatically under My Bets → Active as Accepted (£0 stake, £50 prize), then Won/Lost with payout state. It reads protected entries directly; no duplicated or manually accepted bet. Home open-bet count includes it.
+- In-play generation works for open/draft gameweeks before the official deadline, reusing every normal-board price exactly, including manual edits, weekly boosts and promotions. Cutoff is visible before generation. Publishing requires released normal odds, a fresh snapshot and unchanged baseline prices; pre-start markets close by the app/official cutoff. Live scoring still uses the existing reconciled forecast after the deadline.
+- Dan explicitly chose **keep existing bets; return odds to draft**. Normal pull-back removes release/promo availability, withdraws in-play and pauses free entries; separate in-play pull-back preserves normal markets. All withdrawn drafts stay reviewable. Existing bets, immutable predictions and payouts remain intact. Protected publication gate blocks stale-tab submissions; re-release does not reset the free-entry allowance or revive an old in-play selection. Publication writes leave the bets branch untouched.
+- Local checks: Node, emulator security and isolated mobile/desktop interaction tests. Screenshots: `../outputs/2026-10-29-publication-check/`. Deployment evidence: `../docs/2026-10-29-publication-controls-release.md`.
+
 ## ROUND 15 — free £50 exact-score game and Matchday Live, 2026-10-29
 
 - Dan approved both features and explicitly confirmed **£50 for each exact winner**, not a shared pot. One free fixture prediction per manager/gameweek, both final FPL points exact; prominent homepage form opens on odds publication and locks permanently on entry, with a fresh chance next gameweek. Includes closed/loading/error/winner states and preserves typed scores across background renders.

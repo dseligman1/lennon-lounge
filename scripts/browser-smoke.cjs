@@ -5,7 +5,7 @@ const fs = require("node:fs"),
   { chromium } = require("@playwright/test");
 (async () => {
   const root = path.join(__dirname, ".."),
-    out = path.join(root, "../outputs/2026-10-29-browser-check");
+    out = path.join(root, "../outputs/2026-10-29-publication-check");
   fs.mkdirSync(out, { recursive: true });
   const browser = await chromium.launch({
     ...(process.platform === "darwin"
@@ -44,6 +44,11 @@ const fs = require("node:fs"),
         "function",
       );
       assert.equal(await page.evaluate(() => typeof vMatchday), "function");
+      assert.equal(await page.evaluate(() => typeof withdrawOdds), "function");
+      assert.equal(
+        await page.evaluate(() => typeof LennonInPlay.normalOdds),
+        "function",
+      );
       assert.deepEqual(errors, []);
       await page.screenshot({ path: path.join(out, "production-login.png") });
       console.log(
@@ -117,6 +122,7 @@ const fs = require("node:fs"),
       });
     }
     await require("./games-browser-check.cjs")(page, out);
+    await require("./publication-browser-check.cjs")(page, out);
     await page.evaluate(() => {
       const g = gw("gw_74"),
         pred = modelForecast(S, 8),

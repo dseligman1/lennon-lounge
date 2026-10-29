@@ -145,6 +145,13 @@ async function submitScorePrediction(event) {
   if (scoreBusy || !me || !scoreEntryReady[event]) return;
   const round = scoreRounds[event],
     draft = scoreDraft(event);
+  if (round && oddsWithdrawn(round.gwId)) {
+    toast(
+      "Odds have been pulled back. The free game will reopen when they are released.",
+      true,
+    );
+    return;
+  }
   const entry = {
     matchId: draft.matchId,
     homePts: draft.homePts.trim() === "" ? NaN : Number(draft.homePts),
@@ -185,7 +192,7 @@ async function submitScorePrediction(event) {
     } else {
       scoreEntries[event] = saved.snapshot.val();
       delete scoreDrafts[event];
-      toast("Prediction locked. Good luck! 🎯");
+      toast("Prediction accepted — it’s in My Bets. Good luck! 🎯");
     }
   } catch {
     toast(
@@ -197,11 +204,42 @@ async function submitScorePrediction(event) {
     render();
   }
 }
+// Render protected entries in the usual bet tabs; never duplicate them in mutable S.bets.
+function scoreBets() {
+  if (!me) return [];
+  return LennonGames.arr(scoreRounds).flatMap((r) => {
+    const entry = scoreEntries[r.event];
+    if (!entry) return [];
+    const outcome = scoreResults[r.event]?.outcomes?.[me.id];
+    return [
+      {
+        id: "score_" + r.event + "_" + me.id,
+        scoreGame: true,
+        event: r.event,
+        gwId: r.gwId,
+        teamId: me.id,
+        stake: 0,
+        placedAt: entry.enteredAt,
+        status: outcome ? (outcome.won ? "won" : "lost") : "accepted",
+        round: r,
+        entry,
+        outcome,
+      },
+    ];
+  });
+}
+function scoreBetCard(b) {
+  const { round: r, entry: e, outcome: o } = b,
+    f = r.fixtures[e.matchId],
+    actual = scoreResults[r.event]?.scores?.[e.matchId],
+    paid = scorePaid[r.event]?.[b.teamId];
+  return `<div class="bet"><div class="top"><div><b>${teamLink(b.teamId)}</b> <span class="muted small">· ${esc(r.name)} · 🎯 £50 Score Shot</span><span class="flag limit">FREE ENTRY</span></div><span class="pill st-${b.status}">${o ? (o.won ? "WON 🎉" : "LOST") : "Accepted ✓"}</span></div><ul class="legs"><li>${esc(gamesName(f.home))} <b class="mono">${e.homePts}–${e.awayPts}</b> ${esc(gamesName(f.away))} · exact final FPL points${actual ? `<div class="legresult">Final: ${actual.homePts}–${actual.awayPts}</div>` : ""}</li></ul><div class="nums"><span>Stake<b class="mono">£0.00</b></span><span>${o ? "Prize won" : "Potential prize"}<b class="mono" style="color:var(--teal)">${GBP(o ? o.amountPence / 100 : r.prizePence / 100)}</b></span><span>Placed<b>${fmtDT(e.enteredAt)}</b></span>${o?.won ? `<span>Payout<b>${paid ? "Paid" : "Awaiting payout"}</b></span>` : ""}</div><p class="muted small">Automatically accepted before the cutoff. One locked entry per gameweek. £50 for every exact winner.</p><button class="btn secondary small" onclick="openMatchday(${r.event})">Follow on Matchday Live →</button></div>`;
+}
 function scoreOutcomeHtml(round, entry) {
   const outcome = scoreResults[round.event]?.outcomes?.[me.id];
   const f = round.fixtures[entry.matchId];
   const actual = scoreResults[round.event]?.scores?.[entry.matchId];
-  return `<div class="sg-locked" role="status"><span class="sg-eyebrow">${outcome ? (outcome.won ? "BOTH SCORES. BANG ON." : "FINAL RESULT") : "YOUR PREDICTION IS LOCKED"}</span><div class="sg-score"><span>${esc(gamesName(f.home))}</span><strong>${entry.homePts}<i>–</i>${entry.awayPts}</strong><span>${esc(gamesName(f.away))}</span></div>${outcome ? `<p>${outcome.won ? `<b class="sg-win">You won ${GBP(outcome.amountPence / 100)}!</b> ${scorePaid[round.event]?.[me.id] ? "Paid by the house." : "The house will arrange your payout."}` : `Final score: <b>${actual.homePts}–${actual.awayPts}</b>. Another shot next gameweek.`}</p>` : "<p>One shot taken. Your next free entry opens when next gameweek’s odds go live.</p>"}<button class="btn secondary small" onclick="openMatchday(${round.event})">Follow it on Matchday Live →</button></div>`;
+  return `<div class="sg-locked" role="status"><span class="sg-eyebrow">${outcome ? (outcome.won ? "BOTH SCORES. BANG ON." : "FINAL RESULT") : "YOUR PREDICTION IS LOCKED"}</span><div class="sg-score"><span>${esc(gamesName(f.home))}</span><strong>${entry.homePts}<i>–</i>${entry.awayPts}</strong><span>${esc(gamesName(f.away))}</span></div>${outcome ? `<p>${outcome.won ? `<b class="sg-win">You won ${GBP(outcome.amountPence / 100)}!</b> ${scorePaid[round.event]?.[me.id] ? "Paid by the house." : "The house will arrange your payout."}` : `Final score: <b>${actual.homePts}–${actual.awayPts}</b>. Another shot next gameweek.`}</p>` : "<p>Accepted ✓ · Saved in My Bets. Your next free entry opens when next gameweek’s odds go live.</p>"}<button class="btn secondary small" onclick="myBetsSec='${outcome ? (outcome.won ? "won" : "lost") : "active"}';go('mybets')">View in My Bets →</button> <button class="btn secondary small" onclick="openMatchday(${round.event})">Follow it on Matchday Live →</button></div>`;
 }
 function scoreHistoryHtml() {
   const rows = LennonGames.arr(scoreResults)
@@ -229,6 +267,9 @@ function scoreGameHome() {
     content = '<p role="status">Checking your entry…</p>';
   else if (scoreEntries[r.event])
     content = scoreOutcomeHtml(r, scoreEntries[r.event]);
+  else if (oddsWithdrawn(r.gwId))
+    content =
+      '<div class="sg-locked"><span class="sg-eyebrow">AWAITING ODDS</span><h3>This round is on hold.</h3><p>Your free shot reopens when the house releases the odds again.</p></div>';
   else if (r.status !== "open" || now >= r.cutoff)
     content = `<div class="sg-locked"><span class="sg-eyebrow">${esc(r.name)} · CLOSED</span><h3>The teams are in.</h3><p>You didn’t enter this round. Your next free shot opens when next gameweek’s odds go live.</p><button class="btn secondary small" onclick="openMatchday(${r.event})">Open Matchday Live →</button></div>`;
   else {
@@ -287,19 +328,17 @@ async function markScorePrizePaid(event, tid) {
   )
     return;
   try {
-    await db
-      .ref(`${SCORE_ROOT}/paid/${event}/${tid}`)
-      .transaction(
-        (old) =>
-          old
-            ? undefined
-            : {
-                paidAt: firebase.database.ServerValue.TIMESTAMP,
-                paidBy: me.id,
-              },
-        undefined,
-        false,
-      );
+    await db.ref(`${SCORE_ROOT}/paid/${event}/${tid}`).transaction(
+      (old) =>
+        old
+          ? undefined
+          : {
+              paidAt: firebase.database.ServerValue.TIMESTAMP,
+              paidBy: me.id,
+            },
+      undefined,
+      false,
+    );
     toast("Prize marked as paid.");
   } catch {
     toast("Payment could not be recorded. Please refresh and retry.", true);

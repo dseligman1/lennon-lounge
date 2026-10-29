@@ -79,6 +79,14 @@ module.exports = async function (page, out) {
   await page
     .locator(".sg-hero")
     .screenshot({ path: path.join(out, "score-game-locked.png") });
+  await page
+    .getByRole("button", { name: "View in My Bets →", exact: true })
+    .click();
+  const freeBet = page.locator(".bet").filter({ hasText: "£50 Score Shot" });
+  await freeBet.getByText("Accepted ✓", { exact: true }).waitFor();
+  assert.equal(await freeBet.count(), 1);
+  await freeBet.screenshot({ path: path.join(out, "score-game-my-bets.png") });
+  await page.evaluate(() => go("home"));
   await page.evaluate(() => {
     const entry = scoreEntries[9];
     scoreResults[9] = {

@@ -10,6 +10,78 @@
     BETWEEN_LIFE = 24 * 3600000;
   const arr = (x) =>
     Array.isArray(x) ? x.filter(Boolean) : Object.values(x || {});
+  // Same prices as the normal board, including house boosts and flash promos.
+  function normalOdds(state, g) {
+    return Object.fromEntries(
+      arr(g.matches).map((m) => [
+        m.id,
+        Object.fromEntries(
+          ["home", "draw", "away"].map((pick) => {
+            const promo = arr(state.promos).find(
+              (p) =>
+                p.active &&
+                p.gwId === g.id &&
+                p.matchId === m.id &&
+                p.pick === pick,
+            );
+            const side =
+              pick === "home" ? m.home : pick === "away" ? m.away : null;
+            const boost =
+              m.boostSide === pick
+                ? 2
+                : side && side === g.favBoostTeamId
+                  ? 0.1
+                  : 0;
+            return [
+              pick,
+              promo?.odds ??
+                (boost
+                  ? Math.round((m.odds[pick] + boost) * 100) / 100
+                  : m.odds[pick]),
+            ];
+          }),
+        ),
+      ]),
+    );
+  }
+  function baselineError(draft, state, g, now) {
+    if (!g || g.status !== "open")
+      return "Publish the normal gameweek odds first. You can still preview this draft.";
+    if (!draft?.preStart) return null;
+    if (now >= draft.startsAt)
+      return "The gameweek has started. Generate fresh in-play odds.";
+    const current = normalOdds(state, g);
+    if (
+      Object.keys(current).length !==
+        Object.keys(draft.originalOdds || {}).length ||
+      Object.entries(current).some(([id, odds]) =>
+        ["home", "draw", "away"].some(
+          (p) => odds[p] !== draft.originalOdds?.[id]?.[p],
+        ),
+      )
+    )
+      return "Normal odds changed. Generate a new preview to match them.";
+    return null;
+  }
+  function withdrawRecord(record, now, by) {
+    const d = record?.draft || record?.published;
+    return {
+      ...record,
+      published: null,
+      request: null,
+      ...(d
+        ? {
+            draft: {
+              ...d,
+              status: "draft",
+              revision: d.revision + "_recall_" + now,
+            },
+          }
+        : {}),
+      withdrawnAt: now,
+      withdrawnBy: by,
+    };
+  }
   function windowFor(fixtures, now) {
     const fs = arr(fixtures),
       remaining = fs.filter((f) => !f.finished),
@@ -32,6 +104,8 @@
   }
   function publishError(draft, cutoff, now) {
     if (!draft) return "Generate an in-play recommendation first.";
+    if (draft.preStart && (now >= draft.startsAt || cutoff > draft.startsAt))
+      return "Pre-gameweek prices must close by the gameweek cutoff. Generate fresh odds after it starts.";
     if (draft.blockedReasons?.length) return draft.blockedReasons.join(" ");
     if (
       !draft.source?.fetchedAt ||
@@ -129,5 +203,8 @@
     legError,
     publishRecord,
     parsePlayerLive,
+    normalOdds,
+    baselineError,
+    withdrawRecord,
   };
 });

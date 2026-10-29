@@ -3,7 +3,7 @@ let inPlayState = {},
   inPlayListener = null;
 const INPLAY_ROOT = "lennon-lounge-inplay";
 function inPlayPublished(id) {
-  return inPlayState[id]?.published || null;
+  return oddsWithdrawn(id) ? null : inPlayState[id]?.published || null;
 }
 function startInPlayListener() {
   if (inPlayListener) return;
@@ -32,7 +32,8 @@ async function refreshInPlay(id) {
 function inPlayBetError(b) {
   if (!b?.inplay && !b?.legs?.some((l) => l.marketRevision)) return null;
   const g = gw(b.gwId);
-  if (!g || g.status !== "open") return "This gameweek is closed.";
+  if (!g || g.status !== "open" || oddsWithdrawn(g.id))
+    return "This gameweek is closed.";
   return (
     (b.legs || [])
       .map((l) => LennonInPlay.legError(inPlayPublished(b.gwId), l, Date.now()))
@@ -40,19 +41,24 @@ function inPlayBetError(b) {
   );
 }
 function inPlaySourceHtml(m) {
+  if (m.preStart)
+    return `<p class="muted small">Pre-gameweek preview · prices match the normal board exactly, including boosts. Checked ${esc(fmtDT(m.source.fetchedAt))}. Live scoring starts after ${esc(fmtDT(m.startsAt))}.</p>`;
   return `<p class="muted small">Scores fetched ${esc(fmtDT(m.source.fetchedAt))} · ${Math.max(0, Math.floor((Date.now() - m.source.fetchedAt) / 60000))} min ago · provisional. FPL publication lag is unknown.</p><details><summary class="muted small">Data freshness and limitations</summary>${(m.source.warnings || []).map((w) => `<p class="muted small">${esc(w)}</p>`).join("")}</details>`;
 }
 function inPlayBoard(g, preview = false) {
   const m = preview ? inPlayState[g.id]?.draft : inPlayPublished(g.id);
   if (!m) return "";
-  const open = LennonInPlay.isOpen(m, Date.now()) && g.status === "open";
+  const open =
+    LennonInPlay.isOpen(m, Date.now()) &&
+    g.status === "open" &&
+    !oddsWithdrawn(g.id);
   return `<div class="card"><div class="gwhead"><h3>🔴 ${esc(g.name)} · In-play${preview ? " preview" : ""}</h3><span class="deadline ${open ? "" : "passed"}">${preview ? "Proposed cutoff" : open ? "Bets close" : "Closed"} ${fmtDT(m.cutoff)}</span></div>${inPlaySourceHtml(m)}${Object.values(
     m.matches || {},
   )
     .map((f) => {
       const own = f.home === me.id ? "home" : f.away === me.id ? "away" : null;
       const t = m.forecast.teams;
-      return `<div class="match"><div class="names">${teamLink(f.home)} <b class="mono" style="color:var(--teal)">${f.currentHome}–${f.currentAway}</b> ${teamLink(f.away)}</div><div class="muted small">Predicted finish ${t[f.home].proj.toFixed(1)}–${t[f.away].proj.toFixed(1)} · confidence ±10 pts: ${Math.round(t[f.home].confidence)}% / ${Math.round(t[f.away].confidence)}%${f.suspended ? " · Suspended: too certain to offer at the house margin" : ""}</div><div class="oddsbtns">${["home", "draw", "away"].map((p) => `<button class="oddbtn ${slip.some((l) => l.marketRevision === m.revision && l.matchId === f.id && l.pick === p) ? "sel" : ""}" ${!open || preview || f.suspended || (own && p !== own) ? "disabled" : ""} onclick="addInPlayLeg('${g.id}','${f.id}','${p}')">${p.toUpperCase()}<b><s class="muted small">${fmtOdds(m.originalOdds?.[f.id]?.[p])}</s> ${fmtOdds(f.odds[p])}</b></button>`).join("")}</div><details><summary class="muted small">Why these in-play odds?</summary><p class="muted small">Current points are retained; remaining fixtures are simulated together. Bonus and substitutions are provisional. Player forecasts show full gameweek totals.</p>${forecastTable({ ...t[f.home], name: team(f.home).name })}${forecastTable({ ...t[f.away], name: team(f.away).name })}</details></div>`;
+      return `<div class="match"><div class="names">${teamLink(f.home)} <b class="mono" style="color:var(--teal)">${f.currentHome}–${f.currentAway}</b> ${teamLink(f.away)}</div><div class="muted small">Predicted finish ${t[f.home].proj.toFixed(1)}–${t[f.away].proj.toFixed(1)} · confidence ±10 pts: ${Math.round(t[f.home].confidence)}% / ${Math.round(t[f.away].confidence)}%${f.suspended ? " · Suspended: too certain to offer at the house margin" : ""}</div><div class="oddsbtns">${["home", "draw", "away"].map((p) => `<button class="oddbtn ${slip.some((l) => l.marketRevision === m.revision && l.matchId === f.id && l.pick === p) ? "sel" : ""}" ${!open || preview || f.suspended || (own && p !== own) ? "disabled" : ""} onclick="addInPlayLeg('${g.id}','${f.id}','${p}')">${p.toUpperCase()}<b>${m.originalOdds?.[f.id]?.[p] !== f.odds[p] ? `<s class="muted small">${fmtOdds(m.originalOdds?.[f.id]?.[p])}</s> ` : ""}${fmtOdds(f.odds[p])}</b></button>`).join("")}</div><details><summary class="muted small">Why these in-play odds?</summary><p class="muted small">${m.preStart ? "Normal board prices are reused before the gameweek starts. This confirms price consistency; live scoring is checked once play begins." : "Current points are retained; remaining fixtures are simulated together. Bonus and substitutions are provisional. Player forecasts show full gameweek totals."}</p>${forecastTable({ ...t[f.home], name: team(f.home).name })}${forecastTable({ ...t[f.away], name: team(f.away).name })}</details></div>`;
     })
     .join("")}</div>`;
 }
@@ -61,7 +67,12 @@ function inPlayAdminCard(g) {
     d = r.draft,
     req = r.request,
     p = r.published;
-  return `<div class="card"><h3>🔴 ${esc(g.name)} · Generate in-play odds</h3><p class="muted small">Fetch current scores and forecast the remaining fixtures. Review the new prices and cutoff, then publish. You can repeat this whenever you want.</p><button class="btn" onclick="requestInPlay('${g.id}')">${req?.status === "queued" ? "Generate newer snapshot" : "Generate in-play odds"}</button>${p ? ` <button class="btn secondary" onclick="closeInPlay('${g.id}')">Close market</button> <button class="btn secondary" onclick="openPoster('inplay','${g.id}')">In-play poster</button>` : ""}${req ? `<p class="muted small">Request: ${esc(req.status)}${req.error ? " · " + esc(req.error) : ""}${req.status === "queued" ? " · Waiting for the workflow; queued requests run on the next scheduled tick (usually around five minutes; GitHub can delay it)." : ""}</p>` : ""}${d ? `${d.blockedReasons?.length ? `<p style="color:var(--pink)">${d.blockedReasons.map(esc).join(" ")}</p>` : ""}<div class="formrow"><div><label>In-play betting cutoff (UK)</label>${dtPicker("inplay_" + g.id, d.cutoff, { label: "Set in-play cutoff", onConfirm: `dtPickConfirm('inplay_${g.id}',v=>setInPlayCutoff('${g.id}',v))` })}</div><div class="muted small">Latest allowed: ${fmtDT(d.maxCutoff)}<br>Active games: two-minute maximum. Otherwise closes before the next kickoff.</div></div><button class="btn" onclick="publishInPlay('${g.id}')">Publish these in-play odds</button>${inPlayBoard(g, true)}` : ""}</div>`;
+  const deadline = Math.min(
+    g.deadline || Infinity,
+    S.fpl?.events?.[g.event]?.deadline || Infinity,
+  );
+  const beforeStart = deadline > Date.now() && Number.isFinite(deadline);
+  return `<div class="card" id="inplay-admin-${g.id}"><h3>🔴 ${esc(g.name)} · Generate in-play odds</h3><p class="muted small">Generate and review any time, including before the gameweek starts. Pre-gameweek prices match the normal board exactly. Publish when ready.</p><p class="muted small"><b>Gameweek cutoff: ${Number.isFinite(deadline) ? fmtDT(deadline) : "Awaiting FPL deadline"}</b><br>${beforeStart ? "Pre-gameweek previews close by this cutoff." : "During play, prices last up to two minutes; otherwise they close before the next kickoff."}</p><button class="btn" onclick="requestInPlay('${g.id}')">${req?.status === "queued" ? "Generate newer snapshot" : "Generate in-play odds"}</button>${p ? ` <button class="btn danger" onclick="withdrawInPlay('${g.id}')">↩ Pull back in-play odds</button> <button class="btn secondary" onclick="openPoster('inplay','${g.id}')">In-play poster</button><p class="muted small">Published market cutoff: ${fmtDT(p.cutoff)}</p>` : ""}${req ? `<p class="muted small">Request: ${esc(req.status)}${req.error ? " · " + esc(req.error) : ""}${req.status === "queued" ? " · Waiting for the workflow; usually around five minutes (GitHub can delay it)." : ""}</p>` : ""}${d ? `${d.blockedReasons?.length ? `<p style="color:var(--pink)">${d.blockedReasons.map(esc).join(" ")}</p>` : ""}<div class="formrow"><div><label>In-play betting cutoff (UK)</label>${dtPicker("inplay_" + g.id, d.cutoff, { label: "Set in-play cutoff", onConfirm: `dtPickConfirm('inplay_${g.id}',v=>setInPlayCutoff('${g.id}',v))` })}</div><div class="muted small">Latest allowed: ${fmtDT(d.maxCutoff)}<br>${d.preStart ? "Closes by the gameweek cutoff." : "Active games: two-minute maximum. Otherwise closes before the next kickoff."}</div></div>${g.status !== "open" || oddsWithdrawn(g.id) ? '<p class="muted small">Publish the normal odds first to release this preview.</p>' : ""}<button class="btn" onclick="publishInPlay('${g.id}')" ${g.status !== "open" || oddsWithdrawn(g.id) ? "disabled" : ""}>Publish these in-play odds</button>${inPlayBoard(g, true)}` : ""}</div>`;
 }
 function setInPlayCutoff(id, ts) {
   const d = inPlayState[id]?.draft;
@@ -75,7 +86,7 @@ function setInPlayCutoff(id, ts) {
 async function requestInPlay(id) {
   if (!requireAdmin()) return;
   const g = gw(id);
-  if (!g || g.status !== "open") return;
+  if (!g || !["open", "draft"].includes(g.status)) return;
   const request = {
     id: "ip_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8),
     requestedAt: Date.now(),
@@ -117,6 +128,13 @@ async function publishInPlay(id) {
   const chosen = inPlayState[id]?.draft;
   if (!chosen) return;
   const cutoff = chosen.cutoff;
+  const baselineError = oddsWithdrawn(id)
+    ? "Normal odds have been pulled back."
+    : LennonInPlay.baselineError(chosen, S, gw(id), Date.now());
+  if (baselineError) {
+    toast(baselineError, true);
+    return;
+  }
   try {
     const result = await db
       .ref(INPLAY_ROOT + "/" + id)
@@ -127,7 +145,12 @@ async function publishInPlay(id) {
           cutoff,
           Date.now(),
         );
-        if (error) return;
+        if (
+          error ||
+          oddsWithdrawn(id) ||
+          LennonInPlay.baselineError(record.draft, S, gw(id), Date.now())
+        )
+          return;
         const published = LennonInPlay.publishRecord(
           record.draft,
           cutoff,
@@ -161,13 +184,27 @@ async function publishInPlay(id) {
     toast("Publish failed: " + e.message, true);
   }
 }
-async function closeInPlay(id) {
+async function withdrawInPlay(id) {
   if (!requireAdmin()) return;
+  if (
+    !confirm(
+      "Pull back these in-play odds? Existing bets stay valid. The prices return to draft and new bets stop until you publish again.",
+    )
+  )
+    return;
   try {
-    await db
-      .ref(INPLAY_ROOT + "/" + id + "/published")
-      .update({ status: "closed", closedAt: Date.now() });
-    toast("In-play market closed");
+    const result = await db
+      .ref(INPLAY_ROOT + "/" + id)
+      .transaction((record) =>
+        record
+          ? LennonInPlay.withdrawRecord(record, Date.now(), me.id)
+          : undefined,
+      );
+    if (!result.committed) return;
+    inPlayState[id] = result.snapshot.val();
+    slip = slip.filter((l) => !(l.gwId === id && l.marketRevision));
+    render();
+    toast("In-play odds returned to draft. Existing bets remain valid.");
   } catch (e) {
     toast(e.message, true);
   }
