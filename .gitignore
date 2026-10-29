@@ -4,3 +4,6 @@ audit_tmp/
 node_modules/
 test-results/
 playwright-report/
+firebase-debug.log
+database-debug.log
+.firebase/

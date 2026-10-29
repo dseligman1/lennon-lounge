@@ -3,10 +3,14 @@
   "private": true,
   "scripts": {
     "test": "node --test tests/*.test.cjs",
-    "test:browser": "node scripts/browser-smoke.cjs"
+    "test:browser": "node scripts/browser-smoke.cjs",
+    "test:rules": "firebase emulators:exec --only database --project demo-lennon-lounge \"node --test tests/database.rules.cjs\""
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^6.0.0",
     "@playwright/test": "1.56.1",
+    "firebase": "^13.1.0",
+    "firebase-tools": "^15.34.2",
     "prettier": "3.6.2"
   }
 }

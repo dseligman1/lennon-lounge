@@ -69,6 +69,108 @@
     "lennon-lounge-inplay-history": {
       ".read": "auth != null && root.child('lennon-lounge-members/' + auth.uid).exists()",
       ".write": "auth != null && (root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'selig' || root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'rowez')"
+    },
+    "lennon-lounge-score-game": {
+      "rounds": {
+        ".read": "auth != null && root.child('lennon-lounge-members/' + auth.uid).exists()",
+        "$event": {
+          ".write": "auth != null && (root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'selig' || root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'rowez') && !data.exists() && newData.exists()",
+          ".validate": "newData.hasChildren(['event','gwId','name','openedAt','cutoff','prizePence','prizeMode','status','fixtures']) && newData.child('event').val() + '' === $event && newData.child('fixtures').hasChildren()",
+          "event": {
+            ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1 && newData.val() <= 38"
+          },
+          "gwId": {
+            ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 80"
+          },
+          "name": {
+            ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 80"
+          },
+          "openedAt": {
+            ".validate": "newData.isNumber() && newData.val() <= now + 1000 && newData.val() >= now - 60000"
+          },
+          "cutoff": {
+            ".validate": "newData.isNumber() && newData.val() > now && newData.val() <= root.child('lennon-lounge/fpl/events/' + $event + '/deadline').val()"
+          },
+          "prizePence": {
+            ".validate": "newData.val() === 5000"
+          },
+          "prizeMode": {
+            ".validate": "newData.val() === 'each'"
+          },
+          "status": {
+            ".validate": "newData.val() === 'open'"
+          },
+          "fixtures": {
+            "$match": {
+              ".validate": "newData.hasChildren(['home','away']) && newData.child('home').val() !== newData.child('away').val()",
+              "home": {
+                ".validate": "newData.isString() && root.child('lennon-lounge-auth/' + newData.val()).exists()"
+              },
+              "away": {
+                ".validate": "newData.isString() && root.child('lennon-lounge-auth/' + newData.val()).exists()"
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      },
+      "entries": {
+        ".read": "auth != null && (root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'selig' || root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'rowez')",
+        "$event": {
+          ".read": "auth != null && root.child('lennon-lounge-members/' + auth.uid).exists() && root.child('lennon-lounge-score-game/rounds/' + $event).exists() && root.child('lennon-lounge-score-game/rounds/' + $event).child('cutoff').val() <= now",
+          "$tid": {
+            ".read": "auth != null && root.child('lennon-lounge-members/' + auth.uid).exists() && root.child('lennon-lounge-members/' + auth.uid + '/team').val() === $tid",
+            ".write": "auth != null && root.child('lennon-lounge-members/' + auth.uid).exists() && root.child('lennon-lounge-members/' + auth.uid + '/team').val() === $tid && !data.exists() && newData.exists() && root.child('lennon-lounge-score-game/rounds/' + $event).child('status').val() === 'open' && now >= root.child('lennon-lounge-score-game/rounds/' + $event).child('openedAt').val() && now < root.child('lennon-lounge-score-game/rounds/' + $event).child('cutoff').val()",
+            ".validate": "newData.hasChildren(['matchId','homePts','awayPts','enteredAt'])",
+            "matchId": {
+              ".validate": "newData.isString() && root.child('lennon-lounge-score-game/rounds/' + $event).child('fixtures').child(newData.val()).exists()"
+            },
+            "homePts": {
+              ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= -100 && newData.val() <= 999"
+            },
+            "awayPts": {
+              ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= -100 && newData.val() <= 999"
+            },
+            "enteredAt": {
+              ".validate": "newData.isNumber() && newData.val() === now"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        }
+      },
+      "results": {
+        ".read": "auth != null && root.child('lennon-lounge-members/' + auth.uid).exists()",
+        ".write": false
+      },
+      "paid": {
+        ".read": "auth != null && root.child('lennon-lounge-members/' + auth.uid).exists()",
+        "$event": {
+          "$tid": {
+            ".write": "auth != null && (root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'selig' || root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'rowez') && !data.exists() && newData.exists() && root.child('lennon-lounge-score-game/results/' + $event + '/outcomes/' + $tid + '/won').val() === true",
+            ".validate": "newData.hasChildren(['paidAt','paidBy'])",
+            "paidAt": {
+              ".validate": "newData.isNumber() && newData.val() === now"
+            },
+            "paidBy": {
+              ".validate": "newData.val() === root.child('lennon-lounge-members/' + auth.uid + '/team').val()"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        }
+      }
+    },
+    "lennon-lounge-matchday": {
+      ".read": "auth != null && root.child('lennon-lounge-members/' + auth.uid).exists()",
+      ".write": false
     }
   }
 }
