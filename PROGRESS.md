@@ -1,5 +1,11 @@
 # Lennon Lounge v2 — Feature Build Progress
 
+## ROUND 17 — automatically accepted free entries in admin Bet Review, 2026-10-29
+
+- Free Score Shot entries now appear for admins in Bet Review → Live book as Accepted, alongside standard accepted bets. Final results appear in Closed bets with each entrant's correct outcome and payment status. No accept/reject/cancel controls are offered for immutable free entries.
+- Reuses the existing admin-only protected-entry listener and shared bet-card adapter; does not copy entries into legacy bets or change permissions, entry limits, prizes or settlement. Live-bet count includes free entries; prize exposure is explicitly separate from staked-bet exposure. My Bets remains scoped to the current manager.
+- Added admin/player regression coverage and an isolated mobile browser check of a submitted player's entry in admin Bet Review.
+
 ## ROUND 16 — accepted free entries, early in-play previews and odds withdrawal, 2026-10-29
 
 - Score Shot now appears automatically under My Bets → Active as Accepted (£0 stake, £50 prize), then Won/Lost with payout state. It reads protected entries directly; no duplicated or manually accepted bet. Home open-bet count includes it.

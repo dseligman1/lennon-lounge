@@ -853,7 +853,7 @@
 
 <link rel="stylesheet" href="lounge-games.css?v=20261029">
 <script src="lounge-games.js?v=20261029"></script>
-<script src="lounge-games-ui.js?v=20261029b"></script>
+<script src="lounge-games-ui.js?v=20261029c"></script>
 <script src="odds-model.js?v=20261028"></script>
 <script src="in-play-market.js?v=20261029b"></script>
 <script src="publication-ui.js?v=20261029b"></script>
@@ -4296,11 +4296,13 @@ function setReviewFilter(f){
   render();
 }
 function vReview(){
-  const needs=S.bets.filter(b=>['pending','counter_user'].includes(b.status)).sort((a,b)=>b.placedAt-a.placedAt);
-  const waiting=S.bets.filter(b=>b.status==='counter_house');
-  const live=S.bets.filter(b=>b.status==='accepted');
-  const closed=S.bets.filter(b=>['won','lost','void','rejected','cancelled','expired'].includes(b.status)).sort((a,b)=>b.placedAt-a.placedAt);
-  const expo=computeMaxExposure(live);
+  const bets=[...S.bets,...scoreBets(true)];
+  const needs=bets.filter(b=>['pending','counter_user'].includes(b.status)).sort((a,b)=>b.placedAt-a.placedAt);
+  const waiting=bets.filter(b=>b.status==='counter_house');
+  const live=bets.filter(b=>b.status==='accepted').sort((a,b)=>b.placedAt-a.placedAt);
+  const closed=bets.filter(b=>['won','lost','void','rejected','cancelled','expired'].includes(b.status)).sort((a,b)=>b.placedAt-a.placedAt);
+  const expo=computeMaxExposure(live.filter(b=>!b.scoreGame));
+  const freePrizes=live.filter(b=>b.scoreGame).reduce((sum,b)=>sum+b.round.prizePence/100,0);
   const staked=live.reduce((s,b)=>s+b.stake,0);
   const rf=reviewFilter;
   const kpiCls=k=>'kpi clickable'+(rf===k?' active':'');
@@ -4317,7 +4319,7 @@ function vReview(){
     <div class="${kpiCls('exposure')}" onclick="setReviewFilter('exposure')"><div class="l">Worst case (house)</div><div class="v mono" style="color:var(--pink)">${GBP(expo.worst)}</div></div>
     <div class="${kpiCls('exposure')}" onclick="setReviewFilter('exposure')"><div class="l">Best case (house)</div><div class="v mono" style="color:var(--teal)">${GBP(expo.best)}</div></div>
   </div>
-  <div class="muted small" style="margin:-10px 0 16px">📐 Modelled worst/best net across correlated match outcomes${expo.matchCount?` (${expo.matchCount} match${expo.matchCount===1?'':'es'} in play${expo.capped?', capped — showing fully-correlated bound':''})`:''} — an estimate, not an exact figure. Special-market legs assumed to all win (worst) or all lose (best).</div>
+  <div class="muted small" style="margin:-10px 0 16px">📐 Modelled worst/best net across correlated match outcomes${expo.matchCount?` (${expo.matchCount} match${expo.matchCount===1?'':'es'} in play${expo.capped?', capped — showing fully-correlated bound':''})`:''} — an estimate, not an exact figure. Special-market legs assumed to all win (worst) or all lose (best).${freePrizes?` Score Shot prizes are separate: up to ${GBP(freePrizes)} across accepted free entries.`:''}</div>
   ${showNeeds?(needs.length?`<h3>🚨 Needs your call</h3>`+needs.map(b=>betCard(b,'house',true)).join(''):'<div class="card"><p class="muted">Inbox zero. No bets waiting. 🎉</p></div>'):''}
   ${showWaiting&&waiting.length?`<h3 style="margin-top:18px">📨 Counter-offers with players</h3>`+waiting.map(b=>betCard(b,'house',true)).join(''):''}
   ${showLive&&live.length?`<h3 style="margin-top:18px">🟢 Live book</h3>`+live.map(b=>betCard(b,'house',true)).join(''):''}

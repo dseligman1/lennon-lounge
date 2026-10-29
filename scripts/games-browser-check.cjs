@@ -86,7 +86,39 @@ module.exports = async function (page, out) {
   await freeBet.getByText("Accepted ✓", { exact: true }).waitFor();
   assert.equal(await freeBet.count(), 1);
   await freeBet.screenshot({ path: path.join(out, "score-game-my-bets.png") });
-  await page.evaluate(() => go("home"));
+  await page.evaluate(() => {
+    window.freeReviewPlayer = me;
+    scoreAllEntries[9] = { [me.id]: scoreEntries[9] };
+    me = TEAMS.find((t) => t.admin);
+    scoreEntries = {};
+    reviewFilter = "live";
+    go("review");
+  });
+  const reviewEntry = page
+    .locator(".bet")
+    .filter({ hasText: "£50 Score Shot" });
+  await reviewEntry.getByText("Accepted ✓", { exact: true }).waitFor();
+  assert.equal(await reviewEntry.count(), 1);
+  assert.equal(
+    await reviewEntry
+      .getByRole("button", { name: /^(Accept|Reject|Cancel)/ })
+      .count(),
+    0,
+  );
+  assert.equal(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth > innerWidth + 1,
+    ),
+    false,
+  );
+  await reviewEntry.screenshot({
+    path: path.join(out, "score-game-bet-review.png"),
+  });
+  await page.evaluate(() => {
+    me = freeReviewPlayer;
+    scoreEntries = { 9: scoreAllEntries[9][me.id] };
+    go("home");
+  });
   await page.evaluate(() => {
     const entry = scoreEntries[9];
     scoreResults[9] = {

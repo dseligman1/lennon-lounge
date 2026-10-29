@@ -205,27 +205,29 @@ async function submitScorePrediction(event) {
   }
 }
 // Render protected entries in the usual bet tabs; never duplicate them in mutable S.bets.
-function scoreBets() {
+function scoreBets(allTeams = false) {
   if (!me) return [];
   return LennonGames.arr(scoreRounds).flatMap((r) => {
-    const entry = scoreEntries[r.event];
-    if (!entry) return [];
-    const outcome = scoreResults[r.event]?.outcomes?.[me.id];
-    return [
-      {
-        id: "score_" + r.event + "_" + me.id,
-        scoreGame: true,
-        event: r.event,
-        gwId: r.gwId,
-        teamId: me.id,
-        stake: 0,
-        placedAt: entry.enteredAt,
-        status: outcome ? (outcome.won ? "won" : "lost") : "accepted",
-        round: r,
-        entry,
-        outcome,
-      },
-    ];
+    const entries = allTeams && me.admin ? { ...scoreAllEntries[r.event] } : {};
+    if (scoreEntries[r.event]) entries[me.id] = scoreEntries[r.event];
+    return Object.entries(entries)
+      .filter(([, entry]) => entry)
+      .map(([teamId, entry]) => {
+        const outcome = scoreResults[r.event]?.outcomes?.[teamId];
+        return {
+          id: "score_" + r.event + "_" + teamId,
+          scoreGame: true,
+          event: r.event,
+          gwId: r.gwId,
+          teamId,
+          stake: 0,
+          placedAt: entry.enteredAt,
+          status: outcome ? (outcome.won ? "won" : "lost") : "accepted",
+          round: r,
+          entry,
+          outcome,
+        };
+      });
   });
 }
 function scoreBetCard(b) {

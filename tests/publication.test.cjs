@@ -135,3 +135,38 @@ test("all withdrawn gameweeks remain reviewable, including later drafts", () => 
   for (const id of h.run("S.gameweeks.map(g=>g.id)"))
     assert.ok(html.includes(`publishGw('${id}')`));
 });
+
+test("Bet Review shows every free entry as accepted, then its own final outcome, without an approval action or duplicate", () => {
+  const h = setup(),
+    before = h.run("JSON.stringify(S.bets)");
+  h.run(`other=TEAMS.find(t=>!t.admin);
+    scoreAllEntries[8]={[me.id]:scoreEntries[8],[other.id]:{...scoreEntries[8],homePts:51}};
+    reviewFilter='live';`);
+  assert.equal(h.run("scoreBets(true).length"), 2);
+  assert.equal(h.run("scoreBets().length"), 1);
+  let html = h.run("vReview()");
+  assert.equal(html.split("£50 Score Shot").length - 1, 2);
+  assert.ok(html.includes("up to £100.00 across accepted free entries"));
+  for (const card of h.run('scoreBets(true).map(b=>betCard(b,"house",true))')) {
+    assert.ok(card.includes("Accepted ✓"));
+    assert.ok(!/houseAccept\(|houseReject\(|houseCancel\(/.test(card));
+  }
+  h.run(`scoreResults[8]={scores:{[scoreEntries[8].matchId]:{homePts:51,awayPts:39}},
+    outcomes:{[me.id]:{won:false,amountPence:0},[other.id]:{won:true,amountPence:5000}}};
+    scorePaid[8]={[other.id]:{paidAt:Date.now()}};reviewFilter='all';`);
+  html = h.run("vReview()");
+  assert.equal(html.split("£50 Score Shot").length - 1, 2);
+  assert.ok(html.includes("WON 🎉") && html.includes("<b>Paid</b>"));
+  assert.ok(
+    h
+      .run("scoreBetCard(scoreBets(true).find(b=>b.teamId===me.id))")
+      .includes("LOST"),
+  );
+  assert.equal(h.run("JSON.stringify(S.bets)"), before);
+  h.run("me=other;scoreEntries={8:scoreAllEntries[8][other.id]}");
+  assert.equal(
+    h.run("scoreBets(true).length"),
+    1,
+    "players only see their own predictions",
+  );
+});
