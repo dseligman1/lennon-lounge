@@ -50,6 +50,8 @@
     if (!draft?.preStart) return null;
     if (now >= draft.startsAt)
       return "The gameweek has started. Generate fresh in-play odds.";
+    if (draft.maxCutoff > (g.deadline || Infinity))
+      return "The gameweek cutoff changed. Generate a new preview.";
     const current = normalOdds(state, g);
     if (
       Object.keys(current).length !==

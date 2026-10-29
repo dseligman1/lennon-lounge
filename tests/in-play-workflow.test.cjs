@@ -82,6 +82,9 @@ test("pre-gameweek previews match every normal price, including manual odds, boo
   assert.match(IP.baselineError(d, s, g, now), /Publish the normal/);
   g.status = "open";
   assert.equal(IP.baselineError(d, s, g, now), null);
+  g.deadline = now + 30000;
+  assert.match(IP.baselineError(d, s, g, now), /cutoff changed/);
+  g.deadline = now + 7200000;
   g.matches[0].odds.home++;
   assert.match(IP.baselineError(d, s, g, now), /changed/);
   assert.ok(IP.publishError(d, d.cutoff, d.startsAt));
