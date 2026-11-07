@@ -50,10 +50,22 @@ test("read-only verification generates the scoreboard but writes nothing", async
   assert.equal(mem.writes.length, 0);
 });
 test("unreconciled scores are visible but their probabilities are not recorded in the timeline", async () => {
-  const { s, g, now, fetch } = source(true);
+  // A missing live fixture score is unreconciled. (A lagging league table is not: live player
+  // points are used and flagged, see in-play-workflow.test.)
+  const { s, g, now, fetch } = source();
   s.gameweeks = [{ ...g, status: "open" }];
   const mem = memory({ "lennon-lounge": s });
-  await run(mem.db, fetch, () => now);
+  await run(
+    mem.db,
+    async (url) => {
+      const data = await fetch(url);
+      if (!url.endsWith("/live")) return data;
+      const copy = structuredClone(data);
+      copy.fixtures[0].team_h_score = null;
+      return copy;
+    },
+    () => now,
+  );
   const record = mem.data["lennon-lounge-matchday"][8];
   assert.equal(record.current.reconciled, false);
   assert.ok(

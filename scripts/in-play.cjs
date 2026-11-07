@@ -267,9 +267,15 @@ async function generate(
     if (wanted.has(a)) teamPoints[a] = match.league_entry_1_points;
     if (wanted.has(b)) teamPoints[b] = match.league_entry_2_points;
   }
+  // Live player points are the freshest truth: FPL's league table lags them during matches (seen
+  // 2026-11-07: table 18, players 33). Use player totals (with confirmed automatic subs) while
+  // games remain; once every fixture is finished, the official table decides.
+  const allFinished = fx.length > 0 && fx.every((f) => f.finished),
+    officialPoints = {};
   for (const tid of wanted) {
     if (!Number.isFinite(teamPoints[tid]))
       throw Error(`Missing current score for ${tid}`);
+    officialPoints[tid] = teamPoints[tid];
     const raw = lineups[tid].reduce(
       (sum, id) => sum + playerPoints[id].points,
       0,
@@ -289,10 +295,18 @@ async function generate(
       (sum, p) => sum + playerPoints[p.id].points,
       0,
     );
-    if (teamPoints[tid] !== raw && teamPoints[tid] !== auto)
-      blockedReasons.push(
-        `${tid}: Draft score ${teamPoints[tid]} disagrees with player totals (${raw}, or ${auto} after substitutions).`,
-      );
+    if (officialPoints[tid] !== raw && officialPoints[tid] !== auto) {
+      if (allFinished)
+        warnings.push(
+          `${tid}: official FPL score ${officialPoints[tid]} used; player totals show ${auto} (FPL corrections or bonus).`,
+        );
+      else {
+        teamPoints[tid] = auto;
+        warnings.push(
+          `${tid}: using live player points (${auto}); FPL's league table still shows ${officialPoints[tid]} and usually catches up after matches.`,
+        );
+      }
+    }
   }
   const window = IP.windowFor(fx, fetchedAt);
   blockedReasons.push(...window.reasons);
@@ -432,9 +446,8 @@ async function generate(
     matchday: {
       teams: matchdayTeams,
       finished: fx.every((f) => f.finished),
-      reconciled: !blockedReasons.some(
-        (r) => r.includes("disagrees") || r.includes("score unavailable"),
-      ),
+      reconciled: !blockedReasons.some((r) => r.includes("score unavailable")),
+      officialPoints,
     },
     originalOdds: IP.normalOdds(state, g),
     status: "draft",

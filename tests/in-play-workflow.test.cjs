@@ -16,10 +16,15 @@ test("in-play workflow generates reviewable active-game draft with current score
   assert.equal(Object.keys(d.forecast.teams).length, 12);
   assert.deepEqual(s, before);
 });
-test("inconsistent official and player scores block publication", async () => {
+test("a lagging FPL league table does not block: live player points are used and flagged", async () => {
   const { s, g, now, fetch } = source(true),
     d = await generate(s, g, { id: "r1" }, fetch, () => now);
-  assert.ok(d.blockedReasons.some((x) => x.includes("disagrees")));
+  assert.deepEqual(d.blockedReasons, []);
+  assert.equal(Object.values(d.matches)[0].currentHome, 22);
+  assert.ok(
+    d.source.warnings.some((x) => x.includes("league table still shows 99")),
+  );
+  assert.equal(d.matchday.reconciled, true);
 });
 
 test("pre-gameweek previews match every normal price, including manual odds, boosts and promos, without live picks", async () => {
