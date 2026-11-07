@@ -43,7 +43,7 @@ test("cutoffs stop before kickoff, shorten during play, close on completion", ()
     IP.windowFor([{ k: now + 60000, started: false }], now).maxCutoff,
     now + 60000,
   );
-  assert.equal(IP.windowFor([{ started: true }], now).maxCutoff, now + 120000);
+  assert.equal(IP.windowFor([{ started: true }], now).maxCutoff, now + 15 * 60000);
   assert.ok(IP.windowFor([{ finished: true }], now).reasons.length);
   assert.ok(IP.windowFor([{ k: now - 1 }], now).reasons.length);
 });

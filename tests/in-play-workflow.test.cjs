@@ -10,7 +10,7 @@ test("in-play workflow generates reviewable active-game draft with current score
     d = await generate(s, g, { id: "r1" }, fetch, () => now);
   assert.equal(d.status, "draft");
   assert.equal(d.source.publicationLagMs, null);
-  assert.equal(d.maxCutoff, now + 120000);
+  assert.equal(d.maxCutoff, now + 15 * 60000);
   assert.deepEqual(d.blockedReasons, []);
   assert.equal(Object.values(d.matches)[0].currentHome, 22);
   assert.equal(Object.keys(d.forecast.teams).length, 12);

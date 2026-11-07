@@ -6,7 +6,7 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
   const MAX_PUBLISH_AGE = 5 * 60000,
-    ACTIVE_LIFE = 2 * 60000,
+    ACTIVE_LIFE = 15 * 60000, // Dan approves every bet, so a 15-minute live window is acceptable (2026-11-07)
     BETWEEN_LIFE = 24 * 3600000;
   const arr = (x) =>
     Array.isArray(x) ? x.filter(Boolean) : Object.values(x || {});

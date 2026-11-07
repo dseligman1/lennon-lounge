@@ -299,7 +299,7 @@ async function generate(
   blockedReasons.push(...window.reasons);
   if (window.active)
     warnings.push(
-      "Games are active: goals, substitutions and bonus updates can invalidate a price. This revision expires in at most two minutes.",
+      "Games are active: goals, substitutions and bonus updates can invalidate a price. These odds stay open for at most 15 minutes; you still approve every bet.",
     );
   if (clock() - fetchedAt > IP.MAX_PUBLISH_AGE)
     blockedReasons.push("Source collection exceeded the freshness limit.");
