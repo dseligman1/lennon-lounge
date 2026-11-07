@@ -8,7 +8,15 @@
   else root.LennonModel = api;
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
-  const VERSION = "2026.10-player-v1",
+  const VERSION = "2026.11-calibrated-v2",
+    // Pricing calibration (2026-11-07). Estimated from GW1–9 of this league: 96 team scores
+    // averaged 41.7 points (simulation ~38.5) with an 10.6-point spread (simulation ~8.5), and
+    // pre-match favourites won only ~42–55% of matches. So the model's quality gap between two
+    // teams is only partly trusted (skill), simulated randomness is widened (dispersion) and the
+    // overall level is lifted (level). Known facts — points already scored, players left — are
+    // never shrunk. Pre-match side probabilities are also kept on a rail so a normal underdog
+    // prices around 1.85–1.95 and above ~2.0 only for a big mismatch.
+    CALIBRATION = { skill: 0.25, dispersion: 1.25, level: 1.06, rail: 0.445 },
     arr = (x) =>
       Array.isArray(x) ? x.filter(Boolean) : Object.values(x || {}),
     clamp = (x, a, b) => Math.max(a, Math.min(b, x));
@@ -300,6 +308,24 @@
       }, 0);
     };
     ps.forEach((p) => (p.xp = expected(p)));
+    const cal = { ...CALIBRATION, ...(options.calibration || {}) },
+      pendingBonus = live?.pendingBonus || {};
+    // Share of a fixture each player can still score in (0 once finished or substituted off).
+    const slotsLeft = {};
+    for (const p of ps) {
+      slotsLeft[p.id] = 0;
+      for (const f of remaining) {
+        if (f.h !== p.club && f.a !== p.club) continue;
+        if (live && f.started) {
+          const known = livePlayers[p.id]?.fixtures?.[f.id],
+            minutes = Number(known?.minutes) || 0,
+            elapsed = Number(f.minutes) || 0;
+          if (minutes > 0 && known?.starts === 1 && minutes < elapsed - 3)
+            continue;
+          slotsLeft[p.id] += clamp((90 - elapsed) / 90, 0, 1);
+        } else slotsLeft[p.id] += 1;
+      }
+    }
     const configs = {};
     for (const t of arr(state.teams)) {
       const rows = arr(fpl.squads?.[t.id])
@@ -327,13 +353,17 @@
         arr(state.teams).map((t) => [t.id, []]),
       ),
       playerSamples = Object.fromEntries(ps.map((p) => [p.id, []])),
+      baseSamples = Object.fromEntries(arr(state.teams).map((t) => [t.id, []])),
+      slotSamples = Object.fromEntries(arr(state.teams).map((t) => [t.id, []])),
       selectedCount = {},
       contribution = {};
     for (let n = 0; n < N; n++) {
       const scores = {},
         played = {};
       ps.forEach((p) => {
-        scores[p.id] = Number(livePlayers[p.id]?.points) || 0;
+        scores[p.id] =
+          (Number(livePlayers[p.id]?.points) || 0) +
+          (Number(pendingBonus[p.id]) || 0);
         played[p.id] = (livePlayers[p.id]?.minutes || 0) > 0;
       });
       for (const f of remaining) {
@@ -440,7 +470,15 @@
             bench.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
         } else bench.sort((a, b) => b.xp - a.xp);
         const xi = autoXI(selected, bench, played);
-        let total = xi.reduce((s, p) => s + scores[p.id], 0);
+        let total = xi.reduce((s, p) => s + scores[p.id], 0),
+          base = xi.reduce(
+            (s, p) =>
+              s +
+              (Number(livePlayers[p.id]?.points) || 0) +
+              (Number(pendingBonus[p.id]) || 0),
+            0,
+          ),
+          slots = xi.reduce((s, p) => s + slotsLeft[p.id], 0);
         if (
           live &&
           Number.isFinite(current[t.id]) &&
@@ -451,12 +489,15 @@
             0,
           );
           total = current[t.id] + total - accrued;
+          base = base + current[t.id] - accrued;
         }
         if (!c.rows.length) {
           const hist = teamResults(state, t.id, ev);
           const level = hist.length
             ? avg(hist.slice(0, 6).map((h) => h.pts))
             : 50;
+          base = 0;
+          slots = 11;
           total = Math.round(
             level +
               15 *
@@ -465,12 +506,42 @@
           );
         }
         teamSamples[t.id].push(total);
+        baseSamples[t.id].push(base);
+        slotSamples[t.id].push(slots);
         for (const p of xi) {
           const key = t.id + ":" + p.id;
           selectedCount[key] = (selectedCount[key] || 0) + 1;
           contribution[key] = (contribution[key] || 0) + scores[p.id];
         }
       }
+    }
+    // Calibrated pricing samples: points already banked stay exact; only the still-to-come part
+    // is shrunk towards a neutral "average player per remaining slot" and widened.
+    const remMean = {},
+      slotMean = {};
+    for (const t of arr(state.teams)) {
+      const xs = teamSamples[t.id],
+        bs = baseSamples[t.id];
+      remMean[t.id] = avg(xs.map((x, i) => x - bs[i]));
+      slotMean[t.id] = avg(slotSamples[t.id]);
+    }
+    const slotTotal = Object.values(slotMean).reduce((a, b) => a + b, 0),
+      perSlot = slotTotal
+        ? Object.values(remMean).reduce((a, b) => a + b, 0) / slotTotal
+        : 0,
+      priceSamples = {};
+    for (const t of arr(state.teams)) {
+      const neutral = slotMean[t.id] * perSlot,
+        target = cal.level * (neutral + cal.skill * (remMean[t.id] - neutral)),
+        bs = baseSamples[t.id];
+      priceSamples[t.id] = teamSamples[t.id].map((x, i) =>
+        Math.max(
+          bs[i],
+          Math.round(
+            bs[i] + target + cal.dispersion * (x - bs[i] - remMean[t.id]),
+          ),
+        ),
+      );
     }
     const teams = {},
       players = {};
@@ -511,6 +582,9 @@
           contribution: (contribution[t.id + ":" + p.id] || 0) / N,
         })),
         lineupKnown: c.locked,
+        priceProj: avg(priceSamples[t.id]),
+        priceSd: summary(priceSamples[t.id], 10).sd,
+        slotsLeft: slotMean[t.id],
       };
     }
     const mean = avg(Object.values(teams).map((t) => t.proj));
@@ -540,6 +614,8 @@
       sourceAt: fpl.modelData?.fetchedAt || fpl.squadSync || null,
       ...(options.includePlayerSamples ? { playerSamples } : {}),
       teamSamples,
+      priceSamples,
+      calibration: cal,
     };
     result.recommendations = {};
     for (const g of arr(state.gameweeks).filter(
@@ -561,8 +637,9 @@
   function matchProbs(state, home, away, ev, pred) {
     const a = pred.teams[home],
       b = pred.teams[away],
-      as = pred.teamSamples?.[home],
-      bs = pred.teamSamples?.[away];
+      calibrated = !!(pred.priceSamples?.[home] && pred.priceSamples?.[away]),
+      as = calibrated ? pred.priceSamples[home] : pred.teamSamples?.[home],
+      bs = calibrated ? pred.priceSamples[away] : pred.teamSamples?.[away];
     let h = 0,
       d = 0,
       w = 0;
@@ -579,16 +656,18 @@
     const evidence = avg(
       [...(a.players || []), ...(b.players || [])].map((p) => p.historyN),
     );
-    const reliability = pred.inPlay ? 1 : evidence / (evidence + 10);
+    // Calibrated samples already discount the model's quality gap, so no second shrink.
+    const reliability =
+      pred.inPlay || calibrated ? 1 : evidence / (evidence + 10);
     const draw = rawD * reliability + 0.03 * (1 - reliability);
     const homeP = rawH * reliability + 0.485 * (1 - reliability);
     return {
       home: homeP,
       draw,
       away: 1 - homeP - draw,
-      projHome: a.proj,
-      projAway: b.proj,
-      rawDiff: a.proj - b.proj,
+      projHome: a.priceProj ?? a.proj,
+      projAway: b.priceProj ?? b.proj,
+      rawDiff: (a.priceProj ?? a.proj) - (b.priceProj ?? b.proj),
     };
   }
   function recommendation(
@@ -602,6 +681,8 @@
     const p = matchProbs(state, home, away, ev, pred);
     let priced = p;
     if (!inPlay) {
+      // House draw policy unchanged (5–7%); sides split by the calibrated head-to-head chance,
+      // held on the rail so pre-match underdogs rarely drift past ~2.0.
       const diff = 4.2 * Math.tanh(p.rawDiff / 4.2);
       const anchor = clamp(p.draw, 0.068 * 0.9, 0.068 * 1.1);
       const draw = clamp(
@@ -609,26 +690,23 @@
         0.05,
         0.07,
       );
-      const xs = pred.teamSamples?.[home],
-        ys = pred.teamSamples?.[away];
-      const sd = xs
-        ? Math.max(
-            15 * Math.SQRT2,
-            Math.sqrt(avg(xs.map((v, i) => (v - ys[i] - p.rawDiff) ** 2))),
-          )
-        : Math.SQRT2 * 15;
-      const rel = phi(diff / sd);
+      const decisive = p.home + p.away;
+      const rail = (pred.calibration || CALIBRATION).rail;
+      const rel = clamp(decisive > 0 ? p.home / decisive : 0.5, rail, 1 - rail);
       priced = { home: (1 - draw) * rel, draw, away: (1 - draw) * (1 - rel) };
     }
     const edge = houseEdgePct(state.settings),
       max = (1 - edge / 100) / 1.05;
-    // Decline nearly certain in-play outcomes; clamping them would pretend the margin survived.
-    const suspended = inPlay && Math.max(p.home, p.draw, p.away) > max;
+    // In-play, a pick too likely to carry the house margin even at 1.05 is taken off (null price)
+    // while the other picks stay open; a match that is effectively decided is suspended.
+    const suspended = inPlay && Math.max(p.home, p.draw, p.away) > 0.97,
+      price = (pick) =>
+        inPlay && p[pick] > max ? null : edgedOdds(priced[pick], edge);
     return {
       odds: {
-        home: edgedOdds(priced.home, edge),
-        draw: edgedOdds(priced.draw, edge),
-        away: edgedOdds(priced.away, edge),
+        home: price("home"),
+        draw: price("draw"),
+        away: price("away"),
       },
       probabilities: p,
       pricedProbabilities: priced,
@@ -637,11 +715,12 @@
     };
   }
   function snapshot(pred) {
-    const { teamSamples, ...rest } = pred;
+    const { teamSamples, priceSamples, ...rest } = pred;
     return rest;
   }
   return {
     VERSION,
+    CALIBRATION,
     forecast,
     matchProbs,
     recommendation,

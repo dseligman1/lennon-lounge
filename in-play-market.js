@@ -141,6 +141,8 @@
       return "The odds changed. Remove the old selection and choose the new price.";
     const m = market.matches?.[leg.matchId];
     if (!m || m.suspended) return "This match is suspended.";
+    if (m.odds?.[leg.pick] == null)
+      return "That result is too likely to price in-play. Choose another.";
     if (
       !Number.isFinite(Number(leg.odds)) ||
       !Number.isFinite(Number(m.odds?.[leg.pick])) ||
@@ -161,6 +163,29 @@
       cutoff,
       originalOdds: previous?.originalOdds || draft.originalOdds,
     };
+  }
+  // FPL bonus (3/2/1 by BPS rank, ties share) appears in points only after confirmation. For a
+  // started fixture with no bonus recorded yet, estimate it from live BPS, weighted by how much of
+  // the match has been played (a full-time BPS lead is almost always kept).
+  function provisionalBonus(fixture, elapsed) {
+    const stats = arr(fixture?.stats),
+      bonus = stats.find((s) => s.s === "bonus"),
+      bps = stats.find((s) => s.s === "bps");
+    if (!fixture?.started || fixture.finished || !bps) return {};
+    if (bonus && [...arr(bonus.h), ...arr(bonus.a)].length) return {};
+    const rows = [...arr(bps.h), ...arr(bps.a)]
+      .map((r) => ({ id: Number(r.element), v: Number(r.value) }))
+      .filter((r) => Number.isFinite(r.id) && Number.isFinite(r.v));
+    const weight = fixture.finished_provisional
+      ? 1
+      : Math.max(0, Math.min(1, (Number(elapsed) || 0) / 90));
+    const out = {};
+    for (const r of rows) {
+      const rank = 1 + rows.filter((x) => x.v > r.v).length,
+        pts = rank === 1 ? 3 : rank === 2 ? 2 : rank === 3 ? 1 : 0;
+      if (pts && weight) out[r.id] = pts * weight;
+    }
+    return out;
   }
   function parsePlayerLive(element) {
     if (
@@ -205,6 +230,7 @@
     legError,
     publishRecord,
     parsePlayerLive,
+    provisionalBonus,
     normalOdds,
     baselineError,
     withdrawRecord,

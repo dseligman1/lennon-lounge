@@ -1,9 +1,14 @@
 // Public FPL inputs. Map classic player IDs by stable Opta code, never by numeric ID.
 const fs = require("node:fs");
 async function get(url) {
+  // The Draft API's CDN can serve copies hours old despite no-cache headers (seen 2026-11-07:
+  // age 28336s on league details). A unique query string always reaches FPL's origin.
+  const target = url.startsWith("https://draft.premierleague.com/")
+    ? `${url}${url.includes("?") ? "&" : "?"}_=${Date.now()}`
+    : url;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const r = await fetch(url, {
+      const r = await fetch(target, {
         headers: { "User-Agent": "Mozilla/5.0", "Cache-Control": "no-cache" },
         signal: AbortSignal.timeout(20000),
       });

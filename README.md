@@ -28,6 +28,16 @@ Player confidence is the simulated probability of finishing within **±2 points*
 
 Forecast snapshots, source timestamps and recommended prices are retained on recommendation/publication. Older seasons did not archive exact forecasts; `scripts/backtest.cjs` reconstructs comparable forecasts using pre-deadline backups and strictly earlier histories. It cannot recover unrecorded historical lineups, injuries, transfers or original recommendations. Never call a reconstruction an observed live forecast or treat its development-sample improvement as a future guarantee.
 
+## In-play refresh (2026-11-07)
+
+Odds Setter → each open gameweek → **🔄 Refresh in-play odds**. The button queues a request and immediately starts the **Generate In-Play Odds** Action using the GitHub token saved in Back Office → 📲 Phone alerts (the same token as bet alerts). The worker pulls fresh FPL Draft data (picks, league scores, live player points; draft API calls carry a cache-busting query because FPL's CDN was seen serving league scores ~8 hours old), reprices, and writes a draft in roughly a minute. If the gameweek's normal odds are released, the admin's open app publishes the fresh draft automatically at the latest allowed cutoff when nothing blocks it; otherwise the draft waits for **Publish these in-play odds**.
+
+The status dot (admin card and player In-Play board): **green** = scores pulled within 10 minutes, or no games in play since the pull; **amber** = refresh running, or 10–30 minutes old with games in play; **red** = refresh failed, couldn't start (missing/expired token, with GitHub's reply code), no result after three minutes, blocked from publishing, or over 30 minutes old with games in play. The line beside it shows the FPL pull time and how many Premier League games are finished/in play. The five-minute schedule remains only as a safety net: GitHub actually ran it every 4–7 hours in late Oct/early Nov 2026.
+
+## Odds calibration (2026-11-07, model `2026.11-calibrated-v2`)
+
+GW2–8 backtest: the model's pre-match win probabilities beat a coin flip only marginally (log loss 0.685–0.688 vs 0.693), favourites in stored odds won ~42% of matches, simulated team scores were too tight (sd ~8.5 vs ~10.6 observed) and ~3 points low. Pricing therefore uses calibrated samples (`CALIBRATION` in `odds-model.js`): points already scored stay exact; the still-to-play part keeps the advantage of having more players left, but only 25% of the model's player-quality gap, is widened 1.25× and lifted 6%. Pre-match sides stay on a 44.5–55.5% rail, so a normal underdog prices ~1.85–1.95 and the longest is ~2.0 (backtest median 1.92, none above 2.0). In-play has no rail: genuine leads move prices. A pick too likely to carry the house edge even at 1.05 is shown **OFF** (null price) while the other picks stay open; only a decided match (>97%) is suspended. Unconfirmed bonus is estimated from live BPS (FPL's 3/2/1 tie rules), weighted by minutes played, and kept out of the official-score reconciliation. Displayed "Predicted finish" uses the calibrated projection.
+
 ## In-play operation
 
 1. Odds Setter → any open or draft gameweek → **Generate in-play odds**. Later staged gameweeks have expandable preview cards. The gameweek cutoff is visible before generation.

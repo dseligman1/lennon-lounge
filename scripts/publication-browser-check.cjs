@@ -39,7 +39,7 @@ module.exports = async (page, out) => {
   const card = page.locator("#inplay-admin-" + g.id);
   await card.getByText(/Gameweek cutoff:/).waitFor();
   await card
-    .getByRole("button", { name: "Generate in-play odds", exact: true })
+    .getByRole("button", { name: "🔄 Refresh in-play odds", exact: true })
     .click();
   assert.equal(
     await page.evaluate(

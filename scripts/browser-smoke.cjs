@@ -5,7 +5,7 @@ const fs = require("node:fs"),
   { chromium } = require("@playwright/test");
 (async () => {
   const root = path.join(__dirname, ".."),
-    out = path.join(root, "../outputs/2026-10-29-publication-check");
+    out = path.join(root, "../outputs/2026-11-07-inplay-refresh-check");
   fs.mkdirSync(out, { recursive: true });
   const browser = await chromium.launch({
     ...(process.platform === "darwin"
@@ -32,7 +32,7 @@ const fs = require("node:fs"),
       );
       assert.equal(
         await page.evaluate(() => LennonModel.VERSION),
-        "2026.10-player-v1",
+        "2026.11-calibrated-v2",
       );
       assert.equal(
         await page.evaluate(() => typeof LennonInPlay.publishError),

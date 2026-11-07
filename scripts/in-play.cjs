@@ -64,12 +64,13 @@ async function generate(
   options = {},
 ) {
   const startedAt = clock(),
-    event = Number(g.event);
+    event = Number(g.event),
+    fresh = fetchJson;
   if (!["open", "draft"].includes(g.status) || !event)
     throw Error(
       "Choose an open or draft FPL-linked gameweek to generate a preview.",
     );
-  const boot = await fetchJson(
+  const boot = await fresh(
     "https://draft.premierleague.com/api/bootstrap-static",
   );
   const evs = arr(boot.events?.data || boot.events),
@@ -102,6 +103,7 @@ async function generate(
         startedAt,
         collectionMs: now - startedAt,
         provisional: false,
+        fixtures: { total: 0, finished: 0, live: 0, nextKickoff: startsAt },
         warnings: [
           "Pre-gameweek preview: normal board prices are reused exactly, including boosts. Live scoring and remaining-fixture forecasts begin after the official deadline.",
         ],
@@ -124,7 +126,7 @@ async function generate(
       ),
     };
   }
-  const details = await fetchJson(
+  const details = await fresh(
     `https://draft.premierleague.com/api/league/${state.fpl.leagueId}/details`,
   );
   const entries = arr(details.league_entries),
@@ -142,7 +144,7 @@ async function generate(
   for (const en of entries) {
     const tid = entryMap[en.id];
     if (!wanted.has(tid)) continue;
-    const p = await fetchJson(
+    const p = await fresh(
       `https://draft.premierleague.com/api/entry/${en.entry_id}/event/${event}`,
     );
     if (!Array.isArray(p.picks) || p.picks.length !== 15)
@@ -186,8 +188,8 @@ async function generate(
       };
   // Re-fetch live points and league scores after history enrichment so they form one tight snapshot.
   const [currentLive, currentDetails] = await Promise.all([
-    fetchJson(`https://draft.premierleague.com/api/event/${event}/live`),
-    fetchJson(
+    fresh(`https://draft.premierleague.com/api/event/${event}/live`),
+    fresh(
       `https://draft.premierleague.com/api/league/${state.fpl.leagueId}/details`,
     ),
   ]);
@@ -301,6 +303,21 @@ async function generate(
     );
   if (clock() - fetchedAt > IP.MAX_PUBLISH_AGE)
     blockedReasons.push("Source collection exceeded the freshness limit.");
+  // Estimated bonus not yet in FPL's points (kept out of the score reconciliation above).
+  const pendingBonus = {};
+  for (const d of draftFixtures) {
+    const f = fx.find(
+      (x) => x.id === d.id || (x.h === d.team_h && x.a === d.team_a),
+    );
+    for (const [id, pts] of Object.entries(
+      IP.provisionalBonus(d, f?.minutes ?? d.minutes),
+    ))
+      if (owned.has(Number(id))) pendingBonus[id] = pts;
+  }
+  if (Object.keys(pendingBonus).length)
+    warnings.push(
+      "Bonus points not yet confirmed by FPL are estimated from live BPS rankings.",
+    );
   const nextState = {
     ...state,
     fpl: {
@@ -322,7 +339,7 @@ async function generate(
     },
   };
   const pred = M.forecast(nextState, event, {
-    live: { teamPoints, playerPoints },
+    live: { teamPoints, playerPoints, pendingBonus },
     samples: 4000,
   });
   const matches = {};
@@ -392,6 +409,19 @@ async function generate(
       collectionMs: fetchedAt - startedAt,
       publicationLagMs: null,
       provisional: true,
+      fixtures: {
+        total: fx.length,
+        finished: fx.filter((f) => f.finished).length,
+        live: fx.filter((f) => f.started && !f.finished).length,
+        lastKickoff:
+          Math.max(0, ...fx.filter((f) => f.started).map((f) => f.k || 0)) ||
+          null,
+        nextKickoff:
+          Math.min(
+            Infinity,
+            ...fx.filter((f) => !f.started && f.k > fetchedAt).map((f) => f.k),
+          ) || null,
+      },
       warnings: [...new Set(warnings)],
     },
     active: window.active,
@@ -459,6 +489,10 @@ async function main() {
     try {
       if (Date.now() - req.requestedAt > 30 * 60000)
         throw Error("Request expired; generate again.");
+      await db(`lennon-lounge-inplay/${gwId}/request`, "PATCH", {
+        status: "running",
+        startedAt: Date.now(),
+      });
       const state = await db("lennon-lounge"),
         g = arr(state.gameweeks).find((g) => g.id === gwId);
       if (!g) throw Error("Gameweek no longer exists.");

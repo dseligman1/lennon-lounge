@@ -1,5 +1,12 @@
 # Lennon Lounge v2 — Feature Build Progress
 
+## ROUND 18 — one-tap in-play refresh, status dot and odds calibration, 2026-11-07
+
+- Root cause of "refresh shows nothing": the in-play worker only ran on GitHub's `*/5` schedule (actually every 4–7 hours) unless the instant dispatch worked, and the UI said "queued" with no failure signal. FPL's CDN also served league scores hours old.
+- **🔄 Refresh in-play odds** dispatches the worker, records GitHub's reply on the request, shows a red/amber/green dot with FPL pull time and finished/live game counts (admin + player boards), and auto-publishes the fresh draft from the requesting admin's app when it passes every existing publish check. Worker marks requests `running`; draft FPL calls are cache-busted.
+- Model `2026.11-calibrated-v2`: calibrated pricing samples (skill 0.25, dispersion 1.25, level 1.06, pre-match rail 0.445) from the GW2–8 backtest; per-pick in-play OFF instead of whole-match suspension; provisional BPS bonus. Typical pre-match underdog now ~1.9, max ~2.0. Existing published prices and bets unchanged.
+- Tests: 52 Node (5 new in `tests/calibration.test.cjs`) and the isolated browser suite pass. Screenshots: `../outputs/2026-11-07-inplay-refresh-check/`.
+
 ## ROUND 17 — automatically accepted free entries in admin Bet Review, 2026-10-29
 
 - Free Score Shot entries now appear for admins in Bet Review → Live book as Accepted, alongside standard accepted bets. Final results appear in Closed bets with each entrant's correct outcome and payment status. No accept/reject/cancel controls are offered for immutable free entries.

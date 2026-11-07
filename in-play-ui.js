@@ -11,7 +11,10 @@ function startInPlayListener() {
     "value",
     (snap) => {
       inPlayState = snap.val() || {};
-      if (me && S) render();
+      if (me && S) {
+        render();
+        inPlayAutoPublish();
+      }
     },
     (err) => {
       inPlayState = {};
@@ -40,10 +43,117 @@ function inPlayBetError(b) {
       .find(Boolean) || null
   );
 }
-function inPlaySourceHtml(m) {
+const IP_REFRESH_TIMEOUT = 3 * 60000,
+  IP_COLOURS = {
+    green: "var(--teal)",
+    amber: "var(--orange)",
+    red: "var(--pink)",
+    grey: "var(--muted)",
+  };
+let inPlayAutoRequests = new Set(),
+  inPlayHealthTimer = null;
+function inPlayAgo(t) {
+  const m = Math.max(0, Math.floor((Date.now() - t) / 60000));
+  return m < 1
+    ? "just now"
+    : m < 60
+      ? `${m} min ago`
+      : `${Math.floor(m / 60)} hr ${m % 60} min ago`;
+}
+// Red / amber / green status for the latest in-play refresh, shared by admin and player views.
+function inPlayHealth(g, viewer = "admin") {
+  const r = inPlayState[g.id] || {},
+    req = r.request,
+    data =
+      viewer === "admin"
+        ? r.draft || inPlayPublished(g.id)
+        : inPlayPublished(g.id),
+    now = Date.now();
+  if (viewer === "admin" && req && ["queued", "running"].includes(req.status)) {
+    const age = now - req.requestedAt;
+    if (req.dispatch && !req.dispatch.ok)
+      return {
+        level: "red",
+        text: `Refresh couldn't start (GitHub replied ${req.dispatch.code}). The instant-refresh token in Back Office → 📲 Phone alerts is missing or expired; until it's fixed the request waits for GitHub's slow schedule.`,
+      };
+    if (age > IP_REFRESH_TIMEOUT)
+      return {
+        level: "red",
+        text: `Refresh requested ${inPlayAgo(req.requestedAt)} but no result yet. GitHub may be delayed; try again.`,
+      };
+    return {
+      level: "amber",
+      text:
+        req.status === "running"
+          ? "Pulling the latest FPL scores and repricing…"
+          : "Refresh requested, starting…",
+    };
+  }
+  if (viewer === "admin" && req?.status === "error")
+    return {
+      level: "red",
+      text: "Last refresh failed: " + (req.error || "unknown error"),
+    };
+  if (!data)
+    return {
+      level: "grey",
+      text:
+        viewer === "admin"
+          ? "Not refreshed yet this gameweek."
+          : "No in-play odds yet.",
+    };
+  const src = data.source || {},
+    fx = src.fixtures || {},
+    fetched = src.fetchedAt || data.generatedAt;
+  if (viewer === "admin" && data.blockedReasons?.length)
+    return {
+      level: "red",
+      text: "Can't publish: " + data.blockedReasons.join(" "),
+    };
+  const games = fx.total
+    ? ` · ${fx.finished} of ${fx.total} PL games finished${fx.live ? `, ${fx.live} in play` : ""}`
+    : "";
+  const base = `Scores from FPL at ${fmtDT(fetched)} (${inPlayAgo(fetched)})${games}`;
+  if (data.preStart)
+    return {
+      level: now < data.startsAt ? "green" : "red",
+      text:
+        now < data.startsAt
+          ? `Pre-gameweek prices, checked ${fmtDT(fetched)}. Live scores start after ${fmtDT(data.startsAt)}.`
+          : "Gameweek has started: refresh for live scores.",
+    };
+  // Between matches nothing changes until the next kickoff, so an older pull is still current.
+  const quiet = !data.active && (!fx.nextKickoff || now < fx.nextKickoff);
+  const age = now - fetched;
+  if (quiet || age <= 10 * 60000)
+    return {
+      level: "green",
+      text:
+        base +
+        (quiet && !fx.live ? " · up to date: no games in play since" : ""),
+    };
+  if (age <= 30 * 60000)
+    return { level: "amber", text: base + " · games in play, refresh soon" };
+  return { level: "red", text: base + " · out of date, refresh now" };
+}
+function inPlayHealthHtml(g, viewer = "admin") {
+  const h = inPlayHealth(g, viewer);
+  return `<p class="small ip-health" data-gw="${g.id}" data-viewer="${viewer}" style="display:flex;gap:8px;align-items:flex-start;margin:6px 0"><span title="${h.level}" style="flex:0 0 auto;width:10px;height:10px;margin-top:4px;border-radius:50%;background:${IP_COLOURS[h.level]};box-shadow:0 0 8px ${IP_COLOURS[h.level]}"></span><span>${esc(h.text)}</span></p>`;
+}
+// Keeps dots and "x min ago" current without a full re-render.
+function startInPlayHealthTimer() {
+  if (inPlayHealthTimer) return;
+  inPlayHealthTimer = setInterval(() => {
+    document.querySelectorAll(".ip-health").forEach((el) => {
+      const g = typeof gw === "function" ? gw(el.dataset.gw) : null;
+      if (g) el.outerHTML = inPlayHealthHtml(g, el.dataset.viewer);
+    });
+  }, 15000);
+}
+function inPlaySourceHtml(m, g) {
   if (m.preStart)
-    return `<p class="muted small">Pre-gameweek preview · prices match the normal board exactly, including boosts. Checked ${esc(fmtDT(m.source.fetchedAt))}. Live scoring starts after ${esc(fmtDT(m.startsAt))}.</p>`;
-  return `<p class="muted small">Scores fetched ${esc(fmtDT(m.source.fetchedAt))} · ${Math.max(0, Math.floor((Date.now() - m.source.fetchedAt) / 60000))} min ago · provisional. FPL publication lag is unknown.</p><details><summary class="muted small">Data freshness and limitations</summary>${(m.source.warnings || []).map((w) => `<p class="muted small">${esc(w)}</p>`).join("")}</details>`;
+    return `${g ? inPlayHealthHtml(g, "player") : ""}<p class="muted small">Prices match the normal board exactly, including boosts.</p>`;
+  return `${g ? inPlayHealthHtml(g, "player") : ""}<details><summary class="muted small">Data freshness and limitations</summary>${(m.source.warnings || []).map((w) => `<p class="muted small">${esc(w)}</p>`).join("")}</details>`;
 }
 function inPlayBoard(g, preview = false) {
   const m = preview ? inPlayState[g.id]?.draft : inPlayPublished(g.id);
@@ -52,27 +162,34 @@ function inPlayBoard(g, preview = false) {
     LennonInPlay.isOpen(m, Date.now()) &&
     g.status === "open" &&
     !oddsWithdrawn(g.id);
-  return `<div class="card"><div class="gwhead"><h3>🔴 ${esc(g.name)} · In-play${preview ? " preview" : ""}</h3><span class="deadline ${open ? "" : "passed"}">${preview ? "Proposed cutoff" : open ? "Bets close" : "Closed"} ${fmtDT(m.cutoff)}</span></div>${inPlaySourceHtml(m)}${Object.values(
+  return `<div class="card"><div class="gwhead"><h3>🔴 ${esc(g.name)} · In-play${preview ? " preview" : ""}</h3><span class="deadline ${open ? "" : "passed"}">${preview ? "Proposed cutoff" : open ? "Bets close" : "Closed"} ${fmtDT(m.cutoff)}</span></div>${inPlaySourceHtml(m, preview ? null : g)}${Object.values(
     m.matches || {},
   )
     .map((f) => {
       const own = f.home === me.id ? "home" : f.away === me.id ? "away" : null;
       const t = m.forecast.teams;
-      return `<div class="match"><div class="names">${teamLink(f.home)} <b class="mono" style="color:var(--teal)">${f.currentHome}–${f.currentAway}</b> ${teamLink(f.away)}</div><div class="muted small">Predicted finish ${t[f.home].proj.toFixed(1)}–${t[f.away].proj.toFixed(1)} · confidence ±10 pts: ${Math.round(t[f.home].confidence)}% / ${Math.round(t[f.away].confidence)}%${f.suspended ? " · Suspended: too certain to offer at the house margin" : ""}</div><div class="oddsbtns">${["home", "draw", "away"].map((p) => `<button class="oddbtn ${slip.some((l) => l.marketRevision === m.revision && l.matchId === f.id && l.pick === p) ? "sel" : ""}" ${!open || preview || f.suspended || (own && p !== own) ? "disabled" : ""} onclick="addInPlayLeg('${g.id}','${f.id}','${p}')">${p.toUpperCase()}<b>${m.originalOdds?.[f.id]?.[p] !== f.odds[p] ? `<s class="muted small">${fmtOdds(m.originalOdds?.[f.id]?.[p])}</s> ` : ""}${fmtOdds(f.odds[p])}</b></button>`).join("")}</div><details><summary class="muted small">Why these in-play odds?</summary><p class="muted small">${m.preStart ? "Normal board prices are reused before the gameweek starts. This confirms price consistency; live scoring is checked once play begins." : "Current points are retained; remaining fixtures are simulated together. Bonus and substitutions are provisional. Player forecasts show full gameweek totals."}</p>${forecastTable({ ...t[f.home], name: team(f.home).name })}${forecastTable({ ...t[f.away], name: team(f.away).name })}</details></div>`;
+      return `<div class="match"><div class="names">${teamLink(f.home)} <b class="mono" style="color:var(--teal)">${f.currentHome}–${f.currentAway}</b> ${teamLink(f.away)}</div><div class="muted small">Predicted finish ${(t[f.home].priceProj ?? t[f.home].proj).toFixed(0)}–${(t[f.away].priceProj ?? t[f.away].proj).toFixed(0)} · confidence ±10 pts: ${Math.round(t[f.home].confidence)}% / ${Math.round(t[f.away].confidence)}%${f.suspended ? " · Suspended: result is decided" : ["home", "draw", "away"].some((p) => f.odds[p] == null) ? " · OFF = too likely to price" : ""}</div><div class="oddsbtns">${["home", "draw", "away"].map((p) => `<button class="oddbtn ${slip.some((l) => l.marketRevision === m.revision && l.matchId === f.id && l.pick === p) ? "sel" : ""}" ${!open || preview || f.suspended || f.odds[p] == null || (own && p !== own) ? "disabled" : ""} onclick="addInPlayLeg('${g.id}','${f.id}','${p}')">${p.toUpperCase()}<b>${m.originalOdds?.[f.id]?.[p] !== f.odds[p] ? `<s class="muted small">${fmtOdds(m.originalOdds?.[f.id]?.[p])}</s> ` : ""}${f.odds[p] == null ? "OFF" : fmtOdds(f.odds[p])}</b></button>`).join("")}</div><details><summary class="muted small">Why these in-play odds?</summary><p class="muted small">${m.preStart ? "Normal board prices are reused before the gameweek starts. This confirms price consistency; live scoring is checked once play begins." : "Points already scored are locked in. Only players in each manager's starting XI count, with automatic bench substitutes for anyone who doesn't play; injured or doubtful players are less likely to feature. Remaining Premier League games are simulated together. Unconfirmed bonus is estimated from live BPS. Player forecasts show full gameweek totals."}</p>${forecastTable({ ...t[f.home], name: team(f.home).name })}${forecastTable({ ...t[f.away], name: team(f.away).name })}</details></div>`;
     })
     .join("")}</div>`;
 }
 function inPlayAdminCard(g) {
+  startInPlayHealthTimer();
   const r = inPlayState[g.id] || {},
     d = r.draft,
     req = r.request,
-    p = r.published;
+    p = inPlayPublished(g.id);
   const deadline = Math.min(
     g.deadline || Infinity,
     S.fpl?.events?.[g.event]?.deadline || Infinity,
   );
   const beforeStart = deadline > Date.now() && Number.isFinite(deadline);
-  return `<div class="card" id="inplay-admin-${g.id}"><h3>🔴 ${esc(g.name)} · Generate in-play odds</h3><p class="muted small">Generate and review any time, including before the gameweek starts. Pre-gameweek prices match the normal board exactly. Publish when ready.</p><p class="muted small"><b>Gameweek cutoff: ${Number.isFinite(deadline) ? fmtDT(deadline) : "Awaiting FPL deadline"}</b><br>${beforeStart ? "Pre-gameweek previews close by this cutoff." : "During play, prices last up to two minutes; otherwise they close before the next kickoff."}</p><button class="btn" onclick="requestInPlay('${g.id}')">${req?.status === "queued" ? "Generate newer snapshot" : "Generate in-play odds"}</button>${p ? ` <button class="btn danger" onclick="withdrawInPlay('${g.id}')">↩ Pull back in-play odds</button> <button class="btn secondary" onclick="openPoster('inplay','${g.id}')">In-play poster</button><p class="muted small">Published market cutoff: ${fmtDT(p.cutoff)}</p>` : ""}${req ? `<p class="muted small">Request: ${esc(req.status)}${req.error ? " · " + esc(req.error) : ""}${req.status === "queued" ? " · Waiting for the workflow; usually around five minutes (GitHub can delay it)." : ""}</p>` : ""}${d ? `${d.blockedReasons?.length ? `<p style="color:var(--pink)">${d.blockedReasons.map(esc).join(" ")}</p>` : ""}<div class="formrow"><div><label>In-play betting cutoff (UK)</label>${dtPicker("inplay_" + g.id, d.cutoff, { label: "Set in-play cutoff", onConfirm: `dtPickConfirm('inplay_${g.id}',v=>setInPlayCutoff('${g.id}',v))` })}</div><div class="muted small">Latest allowed: ${fmtDT(d.maxCutoff)}<br>${d.preStart ? "Closes by the gameweek cutoff." : "Active games: two-minute maximum. Otherwise closes before the next kickoff."}</div></div>${g.status !== "open" || oddsWithdrawn(g.id) ? '<p class="muted small">Publish the normal odds first to release this preview.</p>' : ""}<button class="btn" onclick="publishInPlay('${g.id}')" ${g.status !== "open" || oddsWithdrawn(g.id) ? "disabled" : ""}>Publish these in-play odds</button>${inPlayBoard(g, true)}` : ""}</div>`;
+  const busy =
+    req &&
+    ["queued", "running"].includes(req.status) &&
+    Date.now() - req.requestedAt < IP_REFRESH_TIMEOUT;
+  const canPublish = g.status === "open" && !oddsWithdrawn(g.id);
+  const draftIsLive = d && p && d.revision === p.revision;
+  return `<div class="card" id="inplay-admin-${g.id}"><h3>🔴 ${esc(g.name)} · In-play odds</h3>${inPlayHealthHtml(g)}<button class="btn" onclick="requestInPlay('${g.id}')" ${busy ? "disabled" : ""}>${busy ? "⏳ Refreshing…" : "🔄 Refresh in-play odds"}</button>${p ? ` <button class="btn danger" onclick="withdrawInPlay('${g.id}')">↩ Pull back in-play odds</button> <button class="btn secondary" onclick="openPoster('inplay','${g.id}')">In-play poster</button>` : ""}<p class="muted small">Pulls the latest scores straight from FPL (about a minute), reprices every match${canPublish ? " and publishes the new odds automatically if nothing is blocking them" : ". Publish the normal odds first to release in-play odds"}. <b>Gameweek cutoff: ${Number.isFinite(deadline) ? fmtDT(deadline) : "Awaiting FPL deadline"}</b>. ${beforeStart ? "Until then prices match the normal board." : "While games are in play, odds stay open for two minutes; between games, until the next kickoff."}</p>${p ? `<p class="muted small"><b>Live for players</b> until ${fmtDT(p.cutoff)}${draftIsLive ? "" : " · a newer draft is below"}</p>` : ""}${d && !draftIsLive ? `<div class="formrow"><div><label>In-play betting cutoff (UK)</label>${dtPicker("inplay_" + g.id, d.cutoff, { label: "Set in-play cutoff", onConfirm: `dtPickConfirm('inplay_${g.id}',v=>setInPlayCutoff('${g.id}',v))` })}</div><div class="muted small">Latest allowed: ${fmtDT(d.maxCutoff)}</div></div><button class="btn" onclick="publishInPlay('${g.id}')" ${canPublish ? "" : "disabled"}>Publish these in-play odds</button>` : ""}${d ? inPlayBoard(g, true) : ""}</div>`;
 }
 function setInPlayCutoff(id, ts) {
   const d = inPlayState[id]?.draft;
@@ -93,37 +210,76 @@ async function requestInPlay(id) {
     requestedBy: me.id,
     status: "queued",
   };
+  const ref = db.ref(INPLAY_ROOT + "/" + id + "/request");
   try {
-    await db.ref(INPLAY_ROOT + "/" + id + "/request").set(request);
-    let instant = false;
-    try {
-      const cfg = (await db.ref(ALERTS_ROOT + "/config").once("value")).val();
-      if (cfg?.dispatchToken) {
-        const res = await fetch(
-          "https://api.github.com/repos/dseligman1/lennon-lounge/actions/workflows/in-play.yml/dispatches",
-          {
-            method: "POST",
-            headers: {
-              Authorization: "Bearer " + cfg.dispatchToken,
-              Accept: "application/vnd.github+json",
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ ref: "main" }),
-          },
-        );
-        instant = res.ok;
-      }
-    } catch {}
-    toast(
-      instant
-        ? "In-play workflow started. The draft will appear here."
-        : "Request queued for the next workflow tick.",
-    );
+    await ref.set(request);
+    if (g.status === "open" && !oddsWithdrawn(id))
+      inPlayAutoRequests.add(request.id);
   } catch (e) {
-    toast("Could not queue odds: " + e.message, true);
+    toast("Could not request a refresh: " + e.message, true);
+    return;
+  }
+  // Start the GitHub worker now rather than waiting for its schedule (which GitHub often delays by hours).
+  let dispatch;
+  try {
+    const cfg = (await db.ref(ALERTS_ROOT + "/config").once("value")).val();
+    if (!cfg?.dispatchToken) dispatch = { ok: false, code: "no token" };
+    else {
+      const res = await fetch(
+        "https://api.github.com/repos/dseligman1/lennon-lounge/actions/workflows/in-play.yml/dispatches",
+        {
+          method: "POST",
+          headers: {
+            Authorization: "Bearer " + cfg.dispatchToken,
+            Accept: "application/vnd.github+json",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ ref: "main" }),
+        },
+      );
+      dispatch = { ok: res.status === 204, code: res.status };
+    }
+  } catch (e) {
+    dispatch = { ok: false, code: "network" };
+  }
+  await db
+    .ref(INPLAY_ROOT + "/" + id + "/request")
+    .transaction((cur) =>
+      cur?.id === request.id ? { ...cur, dispatch } : undefined,
+    )
+    .catch(() => {});
+  toast(
+    dispatch.ok
+      ? "Refreshing: pulling the latest FPL scores. New odds in about a minute."
+      : "Couldn't start the refresh instantly (" +
+          dispatch.code +
+          "). Check the token in Back Office → 📲 Phone alerts.",
+    !dispatch.ok,
+  );
+}
+// After a Refresh by this admin, publish the fresh odds as soon as they land and pass every check.
+function inPlayAutoPublish() {
+  for (const [id, r] of Object.entries(inPlayState)) {
+    const d = r?.draft;
+    if (
+      !d ||
+      !inPlayAutoRequests.has(d.requestId) ||
+      r.request?.status !== "ready"
+    )
+      continue;
+    inPlayAutoRequests.delete(d.requestId);
+    if (inPlayPublished(id)?.revision === d.revision) continue;
+    const error =
+      LennonInPlay.publishError(d, d.cutoff, Date.now()) ||
+      LennonInPlay.baselineError(d, S, gw(id), Date.now());
+    if (error) {
+      toast("New odds ready but not published: " + error, true);
+      continue;
+    }
+    publishInPlay(id, { auto: true });
   }
 }
-async function publishInPlay(id) {
+async function publishInPlay(id, { auto = false } = {}) {
   if (!requireAdmin()) return;
   const chosen = inPlayState[id]?.draft;
   if (!chosen) return;
@@ -178,8 +334,8 @@ async function publishInPlay(id) {
       .catch((e) => console.error("Published market archive failed:", e));
     await refreshInPlay(id);
     render();
-    toast("In-play odds published");
-    openPoster("inplay", id);
+    toast(auto ? "Fresh in-play odds are live" : "In-play odds published");
+    if (!auto) openPoster("inplay", id);
   } catch (e) {
     toast("Publish failed: " + e.message, true);
   }
@@ -258,7 +414,7 @@ function inPlayPosterHtml(g) {
     .map((f) => {
       const a = m.forecast.teams[f.home],
         b = m.forecast.teams[f.away];
-      return `<div class="pst-row"><div class="pst-names"><div class="pst-h"><b>${esc(team(f.home).name)}</b> ${f.currentHome}</div><div class="pst-a"><b>${esc(team(f.away).name)}</b> ${f.currentAway}</div></div>${["home", "draw", "away"].map((p) => `<span class="pst-o${p === "draw" ? " dr" : ""}"><small><s>${fmtOdds(m.originalOdds[f.id][p])}</s></small> ${f.suspended ? "OFF" : fmtOdds(f.odds[p])}</span>`).join("")}<p class="pst-roast">Predicted finish ${a.proj.toFixed(0)}–${b.proj.toFixed(0)} · confidence ±10: ${Math.round(a.confidence)}% / ${Math.round(b.confidence)}%</p></div>`;
+      return `<div class="pst-row"><div class="pst-names"><div class="pst-h"><b>${esc(team(f.home).name)}</b> ${f.currentHome}</div><div class="pst-a"><b>${esc(team(f.away).name)}</b> ${f.currentAway}</div></div>${["home", "draw", "away"].map((p) => `<span class="pst-o${p === "draw" ? " dr" : ""}"><small><s>${fmtOdds(m.originalOdds[f.id][p])}</s></small> ${f.suspended || f.odds[p] == null ? "OFF" : fmtOdds(f.odds[p])}</span>`).join("")}<p class="pst-roast">Predicted finish ${(a.priceProj ?? a.proj).toFixed(0)}–${(b.priceProj ?? b.proj).toFixed(0)} · confidence ±10: ${Math.round(a.confidence)}% / ${Math.round(b.confidence)}%</p></div>`;
     })
     .join(
       "",
