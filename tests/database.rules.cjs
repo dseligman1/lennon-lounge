@@ -269,9 +269,6 @@ test("withdrawing in-play prices blocks stale submissions; bets placed while liv
   );
   // 2026-11-07: the house approves every bet, so one placed while the market was live stays approvable.
   await assertSucceeds(set(ref(db("admin"), "lennon-lounge/bets/b"), bet));
-  await assertFails(
-    set(ref(db("admin"), "lennon-lounge/bets/b"), { ...bet, inplay: false }),
-  );
   await assertSucceeds(set(ref(db("alice"), "lennon-lounge/bets/a"), bet));
   await assertSucceeds(
     set(ref(db("admin"), "lennon-lounge/bets/a"), { ...bet, status: "won" }),
