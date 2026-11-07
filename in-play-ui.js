@@ -3,7 +3,8 @@ let inPlayState = {},
   inPlayListener = null;
 const INPLAY_ROOT = "lennon-lounge-inplay";
 function inPlayPublished(id) {
-  return oddsWithdrawn(id) ? null : inPlayState[id]?.published || null;
+  // Independent of the normal board: pulling back normal odds leaves in-play alone.
+  return inPlayState[id]?.published || null;
 }
 function startInPlayListener() {
   if (inPlayListener) return;
@@ -35,8 +36,7 @@ async function refreshInPlay(id) {
 function inPlayBetError(b) {
   if (!b?.inplay && !b?.legs?.some((l) => l.marketRevision)) return null;
   const g = gw(b.gwId);
-  if (!g || g.status !== "open" || oddsWithdrawn(g.id))
-    return "This gameweek is closed.";
+  if (!g || g.status === "settled") return "This gameweek is closed.";
   return (
     (b.legs || [])
       .map((l) => LennonInPlay.legError(inPlayPublished(b.gwId), l, Date.now()))
@@ -158,10 +158,7 @@ function inPlaySourceHtml(m, g) {
 function inPlayBoard(g, preview = false) {
   const m = preview ? inPlayState[g.id]?.draft : inPlayPublished(g.id);
   if (!m) return "";
-  const open =
-    LennonInPlay.isOpen(m, Date.now()) &&
-    g.status === "open" &&
-    !oddsWithdrawn(g.id);
+  const open = LennonInPlay.isOpen(m, Date.now()) && g.status !== "settled";
   return `<div class="card"><div class="gwhead"><h3>🔴 ${esc(g.name)} · In-play${preview ? " preview" : ""}</h3><span class="deadline ${open ? "" : "passed"}">${preview ? "Proposed cutoff" : open ? "Bets close" : "Closed"} ${fmtDT(m.cutoff)}</span></div>${inPlaySourceHtml(m, preview ? null : g)}${Object.values(
     m.matches || {},
   )
@@ -178,32 +175,90 @@ function inPlayAdminCard(g) {
     d = r.draft,
     req = r.request,
     p = inPlayPublished(g.id);
-  const deadline = Math.min(
-    g.deadline || Infinity,
-    S.fpl?.events?.[g.event]?.deadline || Infinity,
-  );
-  const beforeStart = deadline > Date.now() && Number.isFinite(deadline);
+  // In-play follows the real FPL gameweek start, not the normal board's cutoff.
+  const fplStart = Number(S.fpl?.events?.[g.event]?.deadline) || null;
+  const beforeStart = fplStart && fplStart > Date.now();
   const busy =
     req &&
     ["queued", "running"].includes(req.status) &&
     Date.now() - req.requestedAt < IP_REFRESH_TIMEOUT;
-  const canPublish = g.status === "open" && !oddsWithdrawn(g.id);
   const draftIsLive = d && p && d.revision === p.revision;
-  return `<div class="card" id="inplay-admin-${g.id}"><h3>🔴 ${esc(g.name)} · In-play odds</h3>${inPlayHealthHtml(g)}<button class="btn" onclick="requestInPlay('${g.id}')" ${busy ? "disabled" : ""}>${busy ? "⏳ Refreshing…" : "🔄 Refresh in-play odds"}</button>${p ? ` <button class="btn danger" onclick="withdrawInPlay('${g.id}')">↩ Pull back in-play odds</button> <button class="btn secondary" onclick="openPoster('inplay','${g.id}')">In-play poster</button>` : ""}<p class="muted small">Pulls the latest scores straight from FPL (about a minute), reprices every match${canPublish ? " and publishes the new odds automatically if nothing is blocking them" : ". Publish the normal odds first to release in-play odds"}. <b>Gameweek cutoff: ${Number.isFinite(deadline) ? fmtDT(deadline) : "Awaiting FPL deadline"}</b>. ${beforeStart ? "Until then prices match the normal board." : "While games are in play, odds stay open for up to 15 minutes (you still approve each bet); between games, until the next kickoff."}</p>${p ? `<p class="muted small"><b>Live for players</b> until ${fmtDT(p.cutoff)}${draftIsLive ? "" : " · a newer draft is below"}</p>` : ""}${d && !draftIsLive ? `<div class="formrow"><div><label>In-play betting cutoff (UK)</label>${dtPicker("inplay_" + g.id, d.cutoff, { label: "Set in-play cutoff", onConfirm: `dtPickConfirm('inplay_${g.id}',v=>setInPlayCutoff('${g.id}',v))` })}</div><div class="muted small">Latest allowed: ${fmtDT(d.maxCutoff)}</div></div><button class="btn" onclick="publishInPlay('${g.id}')" ${canPublish ? "" : "disabled"}>Publish these in-play odds</button>` : ""}${d ? inPlayBoard(g, true) : ""}</div>`;
+  const picker = (ts, max) =>
+    `<div class="formrow"><div><label>${draftIsLive ? "Change live in-play cutoff (UK)" : "In-play betting cutoff (UK)"}</label>${dtPicker("inplay_" + g.id, ts, { label: "Set in-play cutoff", onConfirm: `dtPickConfirm('inplay_${g.id}',v=>setInPlayCutoff('${g.id}',v))` })}</div><div class="muted small">Latest allowed: ${fmtDT(max)}</div></div>`;
+  const normalNote =
+    g.status === "draft"
+      ? "Normal odds aren't published. Publishing in-play alone makes this an in-play-only week; you can still release normal odds later before their cutoff."
+      : g.normalOff
+        ? "In-play only this week: normal odds are off."
+        : "";
+  return `<div class="card" id="inplay-admin-${g.id}"><h3>🔴 ${esc(g.name)} · In-play odds</h3>${inPlayHealthHtml(g)}<button class="btn" onclick="requestInPlay('${g.id}')" ${busy ? "disabled" : ""}>${busy ? "⏳ Refreshing…" : "🔄 Refresh in-play odds"}</button>${p ? ` <button class="btn danger" onclick="withdrawInPlay('${g.id}')">↩ Pull back in-play odds</button> <button class="btn secondary" onclick="openPoster('inplay','${g.id}')">In-play poster</button>` : ""}<p class="muted small">Pulls the latest scores straight from FPL (about a minute), reprices every match and publishes the new odds automatically if nothing is blocking them. Works on its own until this gameweek is settled. ${fplStart ? `<b>FPL gameweek starts: ${fmtDT(fplStart)}</b>. ` : ""}${beforeStart ? "Until then prices copy this week's board odds." : "While games are in play, odds stay open for up to 15 minutes (you still approve each bet); between games, until the next kickoff."}${normalNote ? `<br>${normalNote}` : ""}</p>${p ? `<p class="muted small"><b>Live for players</b> until ${fmtDT(p.cutoff)}${draftIsLive ? "" : " · a newer draft is below"}</p>` : ""}${draftIsLive ? picker(p.cutoff, p.maxCutoff) : ""}${d && !draftIsLive ? `${picker(d.cutoff, d.maxCutoff)}<button class="btn" onclick="publishInPlay('${g.id}')" ${g.status === "settled" ? "disabled" : ""}>Publish these in-play odds</button>` : ""}${d ? inPlayBoard(g, true) : ""}</div>`;
 }
-function setInPlayCutoff(id, ts) {
-  const d = inPlayState[id]?.draft;
-  if (!d) return;
-  if (ts > Date.now() && ts <= d.maxCutoff) {
+// The date picker hands back UK local text ("2026-11-07T15:00"), not a timestamp — the old
+// handler compared that text with a number, so every chosen cutoff was silently rejected.
+async function setInPlayCutoff(id, value) {
+  const ts = typeof value === "number" ? value : parseDTLocal(value);
+  const d = inPlayState[id]?.draft,
+    p = inPlayPublished(id);
+  const live = !!(p && (!d || p.revision === d.revision));
+  const target = live ? p : d;
+  if (!target) return;
+  if (!ts || ts <= Date.now() || ts > target.maxCutoff) {
+    toast(
+      "Choose a future cutoff no later than " + fmtDT(target.maxCutoff),
+      true,
+    );
+    return;
+  }
+  if (live) {
+    if (!requireAdmin()) return;
+    try {
+      const res = await db.ref(INPLAY_ROOT + "/" + id).transaction((rec) => {
+        if (!rec?.published || rec.published.revision !== p.revision) return;
+        rec.published.cutoff = ts;
+        if (rec.draft?.revision === p.revision) rec.draft.cutoff = ts;
+        return rec;
+      });
+      if (!res.committed) throw Error("the market changed; try again");
+      inPlayState[id] = res.snapshot.val();
+      toast("In-play bets now close " + fmtDT(ts));
+    } catch (e) {
+      toast("Could not change the cutoff: " + e.message, true);
+    }
+  } else {
     d.cutoff = ts;
-    render();
-  } else
-    toast("Choose a future cutoff no later than " + fmtDT(d.maxCutoff), true);
+    toast("Cutoff set to " + fmtDT(ts) + ". Publish to apply it.");
+  }
+  render();
+}
+// Publishing in-play on an unpublished week turns it into a live, in-play-only week so results,
+// settlement and Matchday all track it. Writes only the gameweek list, never the bets branch.
+async function markInPlayOnly(id) {
+  const g = gw(id);
+  if (!g || g.status !== "draft") return;
+  const gameweeks = structuredClone(S.gameweeks),
+    next = gameweeks.find((x) => x.id === id);
+  next.status = "open";
+  next.normalOff = true;
+  next.inPlayOnlyAt = Date.now();
+  const auditLog = [
+    ...S.audit,
+    {
+      at: Date.now(),
+      by: me.id,
+      action: "in-play only",
+      detail: g.name + ": in-play published without normal odds",
+    },
+  ].slice(-500);
+  await db
+    .ref()
+    .update({ [ROOT + "/gameweeks"]: gameweeks, [ROOT + "/audit"]: auditLog });
+  S.gameweeks = gameweeks;
+  S.audit = auditLog;
 }
 async function requestInPlay(id) {
   if (!requireAdmin()) return;
   const g = gw(id);
-  if (!g || !["open", "draft"].includes(g.status)) return;
+  if (!g || g.status === "settled") return;
   const request = {
     id: "ip_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8),
     requestedAt: Date.now(),
@@ -213,8 +268,7 @@ async function requestInPlay(id) {
   const ref = db.ref(INPLAY_ROOT + "/" + id + "/request");
   try {
     await ref.set(request);
-    if (g.status === "open" && !oddsWithdrawn(id))
-      inPlayAutoRequests.add(request.id);
+    inPlayAutoRequests.add(request.id);
   } catch (e) {
     toast("Could not request a refresh: " + e.message, true);
     return;
@@ -284,9 +338,12 @@ async function publishInPlay(id, { auto = false } = {}) {
   const chosen = inPlayState[id]?.draft;
   if (!chosen) return;
   const cutoff = chosen.cutoff;
-  const baselineError = oddsWithdrawn(id)
-    ? "Normal odds have been pulled back."
-    : LennonInPlay.baselineError(chosen, S, gw(id), Date.now());
+  const baselineError = LennonInPlay.baselineError(
+    chosen,
+    S,
+    gw(id),
+    Date.now(),
+  );
   if (baselineError) {
     toast(baselineError, true);
     return;
@@ -303,7 +360,6 @@ async function publishInPlay(id, { auto = false } = {}) {
         );
         if (
           error ||
-          oddsWithdrawn(id) ||
           LennonInPlay.baselineError(record.draft, S, gw(id), Date.now())
         )
           return;
@@ -328,6 +384,13 @@ async function publishInPlay(id, { auto = false } = {}) {
       return;
     }
     const saved = result.snapshot.val().published;
+    await markInPlayOnly(id).catch((e) =>
+      toast(
+        "In-play is live, but marking the week in-play only failed: " +
+          e.message,
+        true,
+      ),
+    );
     await db
       .ref("lennon-lounge-inplay-history/" + id + "/" + saved.revision)
       .set(saved)

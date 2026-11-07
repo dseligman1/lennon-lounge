@@ -227,7 +227,7 @@ test("withdrawal blocks new normal bets and acceptance while retaining existing 
     }),
   );
 });
-test("withdrawing in-play prices blocks stale submissions and acceptance but preserves frozen accepted bets", async () => {
+test("withdrawing in-play prices blocks stale submissions; bets placed while live can still be approved later", async () => {
   const market = {
     status: "published",
     revision: "r1",
@@ -261,7 +261,14 @@ test("withdrawing in-play prices blocks stale submissions and acceptance but pre
     remove(ref(db("admin"), "lennon-lounge-inplay/gw_1/published")),
   );
   await assertFails(set(ref(db("alice"), "lennon-lounge/bets/c"), bet));
-  await assertFails(set(ref(db("admin"), "lennon-lounge/bets/b"), bet));
+  await assertFails(
+    set(ref(db("alice"), "lennon-lounge/bets/c"), {
+      ...bet,
+      status: "pending",
+    }),
+  );
+  // 2026-11-07: the house approves every bet, so one placed while the market was live stays approvable.
+  await assertSucceeds(set(ref(db("admin"), "lennon-lounge/bets/b"), bet));
   await assertFails(
     set(ref(db("admin"), "lennon-lounge/bets/b"), { ...bet, inplay: false }),
   );
@@ -292,6 +299,39 @@ test("admin publication update is atomic across the gameweek and protected gate 
     update(ref(db("admin")), {
       "lennon-lounge/gameweeks/0/status": "open",
       "lennon-lounge-publication/gw_1/status": "published",
+    }),
+  );
+});
+
+test("in-play bets are independent of a pulled-back normal board", async () => {
+  await seed("lennon-lounge-publication/gw_1", { status: "withdrawn" });
+  await seed("lennon-lounge-inplay/gw_1/published", {
+    status: "published",
+    revision: "r1",
+    cutoff: Date.now() + 60000,
+    matches: { m_1: { suspended: false, odds: { home: 2 } } },
+  });
+  const leg = {
+    gwId: "gw_1",
+    marketRevision: "r1",
+    type: "match",
+    matchId: "m_1",
+    pick: "home",
+    odds: 2,
+  };
+  await assertSucceeds(
+    set(ref(db("alice"), "lennon-lounge/bets/ip"), {
+      gwId: "gw_1",
+      inplay: true,
+      status: "pending",
+      legs: [leg],
+    }),
+  );
+  await assertFails(
+    set(ref(db("alice"), "lennon-lounge/bets/normal"), {
+      gwId: "gw_1",
+      status: "pending",
+      legs: [{ type: "match", matchId: "m_1", pick: "home", odds: 2 }],
     }),
   );
 });

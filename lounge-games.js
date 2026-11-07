@@ -11,7 +11,7 @@
     Array.isArray(x) ? x.filter(Boolean) : Object.values(x || {});
   function entryError(round, entry, existing, now) {
     if (existing)
-      return "You have already entered this gameweek. Your next go opens with next week’s odds.";
+      return "You have already entered this gameweek. Your next go opens automatically for next gameweek.";
     if (
       !round ||
       round.status !== "open" ||
@@ -30,7 +30,8 @@
     return null;
   }
   function makeRound(state, g, now) {
-    if (!g || g.status !== "open" || !Number.isInteger(Number(g.event)))
+    // Opens independently of the betting odds (2026-11-07); only a settled week is excluded.
+    if (!g || g.status === "settled" || !Number.isInteger(Number(g.event)))
       return null;
     const officialDeadline = Number(state.fpl?.events?.[g.event]?.deadline);
     const dates = [
@@ -59,6 +60,18 @@
       status: "open",
       fixtures,
     };
+  }
+  // The free game for the nearest gameweek that has not started yet. Only that one week opens, so
+  // managers always play "next gameweek" and later staged weeks wait their turn.
+  function nextRound(state, rounds, now, withdrawn = () => false) {
+    const target = arr(state.gameweeks)
+      .filter((g) => g && g.status !== "settled" && Number(g.event) > 0)
+      .sort((a, b) => Number(a.event) - Number(b.event))
+      .map((g) => ({ g, round: makeRound(state, g, now) }))
+      .find((x) => x.round);
+    if (!target || rounds?.[target.g.event] || withdrawn(target.g.id))
+      return null;
+    return target.round;
   }
   function settleRound(round, entries, matches, entryMap, now) {
     if (!round || now < round.cutoff) return null;
@@ -124,8 +137,10 @@
     };
   }
   function selectGameweek(state, now, selectedEvent) {
+    const started = (g) =>
+      Number(state.fpl?.events?.[g.event]?.deadline || g.deadline) <= now;
     const weeks = arr(state.gameweeks)
-      .filter((g) => g.event && g.status !== "draft")
+      .filter((g) => g.event && (g.status !== "draft" || started(g)))
       .sort((a, b) => Number(a.event) - Number(b.event));
     return (
       weeks.find((g) => Number(g.event) === Number(selectedEvent)) ||
@@ -177,6 +192,7 @@
     arr,
     entryError,
     makeRound,
+    nextRound,
     settleRound,
     selectGameweek,
     appendTimeline,

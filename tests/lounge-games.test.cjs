@@ -39,7 +39,12 @@ test("publishing creates a £50-per-winner round capped at the official deadline
   assert.equal(round.cutoff, now + 60000);
   assert.equal(round.prizePence, 5000);
   assert.equal(round.prizeMode, "each");
-  assert.equal(G.makeRound(state, { ...g, status: "draft" }, now), null);
+  // Opens independently of odds publication; only settled weeks are excluded.
+  assert.equal(
+    G.makeRound(state, { ...g, status: "draft" }, now).cutoff,
+    round.cutoff,
+  );
+  assert.equal(G.makeRound(state, { ...g, status: "settled" }, now), null);
   assert.equal(G.makeRound(state, g, round.cutoff), null);
   assert.equal(G.makeRound({ fpl: {} }, g, now), null);
 });

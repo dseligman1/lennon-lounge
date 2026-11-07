@@ -1,5 +1,12 @@
 # Lennon Lounge v2 — Feature Build Progress
 
+## ROUND 19 — independent in-play, working cutoffs, auto free game, 2026-11-07
+
+- Dan's report: chosen cutoff made no difference; in-play couldn't run without normal odds; free game didn't offer a new go.
+- Causes: in-play cutoff picker passed text to a number check (always rejected); in-play, Bet Builder, approvals, Matchday and free-game creation all required the normal board to be published/open; free game only opened on Publish (GW10 normal odds were never published); database rules blocked approving in-play bets once their price set changed or expired.
+- Fixes: in-play independent until settlement (in-play-only weeks via `normalOff`), normal pull-back leaves in-play alone, working cutoff picker incl. live markets, in-play approvals any time before settlement for bets placed in-window (rules + app), free game auto-opens for the next unstarted gameweek from an admin's app, Matchday follows started unpublished weeks.
+- Tests: 57 Node (new `tests/decoupling.test.cjs`; three tests updated from the old coupled behaviour), browser suites, rules emulator tests in CI (one updated, one added).
+
 ## ROUND 18 — one-tap in-play refresh, status dot and odds calibration, 2026-11-07
 
 - Root cause of "refresh shows nothing": the in-play worker only ran on GitHub's `*/5` schedule (actually every 4–7 hours) unless the instant dispatch worked, and the UI said "queued" with no failure signal. FPL's CDN also served league scores hours old.

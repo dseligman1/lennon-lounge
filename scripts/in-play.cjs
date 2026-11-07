@@ -66,10 +66,8 @@ async function generate(
   const startedAt = clock(),
     event = Number(g.event),
     fresh = fetchJson;
-  if (!["open", "draft"].includes(g.status) || !event)
-    throw Error(
-      "Choose an open or draft FPL-linked gameweek to generate a preview.",
-    );
+  if (g.status === "settled" || !event)
+    throw Error("Choose an unsettled FPL-linked gameweek.");
   const boot = await fresh(
     "https://draft.premierleague.com/api/bootstrap-static",
   );
@@ -80,7 +78,8 @@ async function generate(
   if (Date.parse(ev.deadline_time) > clock()) {
     const now = clock(),
       startsAt = Date.parse(ev.deadline_time),
-      maxCutoff = Math.min(startsAt, g.deadline || startsAt),
+      // In-play is independent of the normal board's own cutoff: previews run to the FPL start.
+      maxCutoff = startsAt,
       originalOdds = IP.normalOdds(state, g),
       forecast =
         g.forecast || M.snapshot(M.forecast(state, event, { samples: 4000 }));

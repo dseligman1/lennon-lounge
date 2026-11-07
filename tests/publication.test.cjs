@@ -107,7 +107,8 @@ test("draft gameweeks expose in-play generation and cutoff before the first run"
   const h = setup();
   h.run("g.status='draft'");
   const html = h.run("inPlayAdminCard(g)");
-  assert.ok(html.includes("Gameweek cutoff:"));
+  assert.ok(html.includes("🔄 Refresh in-play odds"));
+  assert.ok(html.includes("Normal odds aren't published"));
   assert.ok(html.includes("requestInPlay('gw_74')"));
   assert.ok(!html.includes("Publish these in-play odds"));
 });

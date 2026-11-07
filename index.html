@@ -852,12 +852,12 @@
 
 
 <link rel="stylesheet" href="lounge-games.css?v=20261029">
-<script src="lounge-games.js?v=20261029"></script>
-<script src="lounge-games-ui.js?v=20261107"></script>
+<script src="lounge-games.js?v=20261107b"></script>
+<script src="lounge-games-ui.js?v=20261107b"></script>
 <script src="odds-model.js?v=20261107"></script>
-<script src="in-play-market.js?v=20261107"></script>
-<script src="publication-ui.js?v=20261029b"></script>
-<script src="in-play-ui.js?v=20261107"></script>
+<script src="in-play-market.js?v=20261107b"></script>
+<script src="publication-ui.js?v=20261107b"></script>
+<script src="in-play-ui.js?v=20261107b"></script>
 <script>
 /* ================================================================
    LENNON LOUNGE v2.0 — Firebase-backed multi-device webapp
@@ -1492,14 +1492,17 @@ function toast(msg, err){
   clearTimeout(t._h); t._h=setTimeout(()=>t.style.display='none',2800);
 }
 function gwDeadlinePassed(g){ return g.deadline && Date.now()>g.deadline; }
-function publishedGws(){ return S.gameweeks.filter(g=>g.status==='open'&&!oddsWithdrawn(g.id)); }
+function publishedGws(){ return S.gameweeks.filter(g=>g.status==='open'&&!g.normalOff&&!oddsWithdrawn(g.id)); }
+// 2026-11-07: normal and in-play markets are independent. Normal odds need a published, un-pulled
+// board before its cutoff; in-play only needs a live in-play market and an unsettled gameweek.
 function bettableNow(g){
-  if(!g||g.status!=='open'||oddsWithdrawn(g.id)) return null;
+  if(!g||g.status==='settled') return null;
   const now=Date.now();
-  if(!g.deadline||now<g.deadline) return 'pre';
+  if(g.status==='open'&&!g.normalOff&&!oddsWithdrawn(g.id)&&(!g.deadline||now<g.deadline)) return 'pre';
   if(LennonInPlay.isOpen(inPlayPublished(g.id),now)) return 'inplay';
   return null;
 }
+function inPlayWeeks(){ return S.gameweeks.filter(g=>g.status!=='settled'&&inPlayPublished(g.id)).sort((a,b)=>(a.event||0)-(b.event||0)); }
 function audit(action, detail){
   S.audit.push({at:Date.now(), by:me?me.id:'system', action, detail:String(detail||'')});
   if(S.audit.length>500) S.audit=S.audit.slice(-500);
@@ -2777,13 +2780,13 @@ function isMobileLayout(){ return window.innerWidth<=880; }
 function vBuilder(){
   const open=publishedGws();
   const pre=open.filter(g=>bettableNow(g)==='pre');
-  const inplay=open.filter(g=>LennonInPlay.isOpen(inPlayPublished(g.id),Date.now()));
+  const inplay=inPlayWeeks().filter(g=>LennonInPlay.isOpen(inPlayPublished(g.id),Date.now()));
   const paused=open.filter(g=>!bettableNow(g));
   const list=builderSec==='pre'?pre:inplay;
   // Draft gameweeks (synced but not yet published) — shown read-only so players can see
   // what's coming, per the house's request. Sorted earliest-first since that's the order
   // they'll actually get published in.
-  const upcoming=builderSec==='pre'?S.gameweeks.filter(g=>g.status==='draft'||oddsWithdrawn(g.id)).sort((a,b)=>(a.event||0)-(b.event||0)):[];
+  const upcoming=builderSec==='pre'?S.gameweeks.filter(g=>(g.status==='draft'||oddsWithdrawn(g.id))&&!g.normalOff).sort((a,b)=>(a.event||0)-(b.event||0)):[];
   // Only build gw-board HTML for the section actually being shown — the in-play tab renders
   // just its coming-soon banner (below), so skip the vGwBoard() calls entirely there, same as
   // before this batch.
@@ -2811,7 +2814,7 @@ function vBuilder(){
     ${seasonBetsSummaryCard()}
     ${builderSec==='pre'?bespokeRequestCard():''}
     ${builderSec==='pre'?vAlgoZone():''}
-    ${builderSec==='inplay'?`${open.filter(g=>inPlayPublished(g.id)).map(g=>inPlayBoard(g)).join('')||'<div class="card"><p>No in-play market published yet.</p></div>'}${mobile?`<div class="slip" style="position:static">${slipHtml}</div>`:''}`:`
+    ${builderSec==='inplay'?`${inPlayWeeks().map(g=>inPlayBoard(g)).join('')||'<div class="card"><p>No in-play market published yet.</p></div>'}${mobile?`<div class="slip" style="position:static">${slipHtml}</div>`:''}`:`
     ${list.length===0?`<div class="card"><h3>😴 Nothing open for pre-match betting</h3><p class="muted">The house has not published a board yet.</p></div>`:''}
     ${paused.length?paused.map(g=>`<div class="card"><h3>⏸ ${esc(g.name)}</h3><p class="muted">Cutoff passed — betting is paused until first kick-off${g.kickoff?' ('+fmtDT(g.kickoff)+')':''}, then In-Play opens.</p></div>`).join(''):''}
     ${currentBoard}
@@ -3227,7 +3230,7 @@ function toggleBox(id){ document.getElementById(id).classList.toggle('open'); }
 
 function sendCounter(id){
   const b=getBet(id);
-  const error=inPlayBetError(b);if(error){toast(error,true);return;}
+  const error=b.inplay?LennonInPlay.acceptError(b,gw(b.gwId)):null;if(error){toast(error,true);return;}
   const stake=parseFloat(document.getElementById('cs_'+id).value);
   const odds=parseFloat(document.getElementById('co_'+id).value);
   const msg=document.getElementById('cm_'+id).value.trim();
@@ -3242,8 +3245,8 @@ function sendCounter(id){
 
 async function acceptOffer(id){
   const b=getBet(id);
-  if(oddsWithdrawn(b.gwId)){toast('These odds have been pulled back.',true);return;}
-  if(b.inplay){try{await refreshInPlay(b.gwId);}catch(e){toast("Cannot verify in-play market",true);return;}const error=inPlayBetError(b);if(error){toast(error,true);return;}}
+  if(!b.inplay&&oddsWithdrawn(b.gwId)){toast('These odds have been pulled back.',true);return;}
+  if(b.inplay){const error=LennonInPlay.acceptError(b,gw(b.gwId));if(error){toast(error,true);return;}}
   b.stake=b.offer.stake; b.effOdds=b.offer.effOdds; b.offer=null;
   b.status='accepted'; pushHist(b,'accepted house offer'); save(); render(); bosh();
   setTimeout(()=>toast('Deal! Bet is ON'),1100);
@@ -4335,8 +4338,9 @@ async function houseAccept(id){
   // which should mean this is normally a group of exactly one by the time this runs).
   const matches=S.bets.filter(x=>x.id===id);
   if(!matches.length) return;
-  if(oddsWithdrawn(matches[0].gwId)){toast('These odds have been pulled back.',true);return;}
-  if(matches[0].inplay){try{await refreshInPlay(matches[0].gwId);}catch(e){toast('Cannot verify in-play market',true);return;}const error=inPlayBetError(matches[0]);if(error){toast(error,true);return;}}
+  if(!matches[0].inplay&&oddsWithdrawn(matches[0].gwId)){toast('These odds have been pulled back.',true);return;}
+  // In-play bets can be approved after their window closes: what matters is they were placed in it.
+  if(matches[0].inplay){const error=LennonInPlay.acceptError(matches[0],gw(matches[0].gwId));if(error){toast(error,true);return;}}
   matches.forEach(b=>{
     if(b.status==='counter_user'&&b.offer){ b.stake=b.offer.stake; b.effOdds=b.offer.effOdds; b.offer=null; }
     b.status='accepted'; b.acceptedAt=Date.now();
@@ -5063,7 +5067,7 @@ function isBespokeBet(b){ return !!(b&&b.legs&&b.legs.length===1&&b.legs[0].type
 // manual look in the bet's history", not proof of anything.
 const ODDS_CHECK_TOLERANCE = 0.01; // 1 cent of decimal odds — absorbs float rounding, not real drift
 function officialOddsCheck(bet, state){
-  if(bet.inplay){const error=inPlayBetError(bet);return {flagged:!!error,official:null,reason:error||'In-play price verified against its published revision.'};}
+  if(bet.inplay){const error=LennonInPlay.acceptError(bet,gw(bet.gwId));return {flagged:!!error,official:null,reason:error||'In-play bet placed while its published price was live.'};}
   if(isBespokeBet(bet)){
     return {flagged:true, official:null, reason:'Player-proposed price — no board odds exist to verify this against.'};
   }
@@ -5433,7 +5437,7 @@ function vOddSetter(){
   ${!nextDraft&&open.length===0?'<div class="card"><p class="muted">Nothing loaded yet. Back Office → FPL Sync → "Sync & stage gameweeks".</p></div>':''}
   ${nextDraft?oddsCard(nextDraft,true)+inPlayAdminCard(nextDraft):''}
   ${recalledDrafts.map(g=>oddsCard(g,true)+inPlayAdminCard(g)).join('')}
-  ${open.map(g=>oddsCard(g,oddsWithdrawn(g.id))+inPlayAdminCard(g)).join('')}
+  ${open.map(g=>(g.normalOff?normalOffCard(g):oddsCard(g,oddsWithdrawn(g.id)))+inPlayAdminCard(g)).join('')}
   ${laterDrafts.length?`<div class="card"><p class="muted small">+${laterDrafts.length} more gameweek(s) staged and visible to players under "Coming up" (${laterDrafts.map(g=>esc(g.name)).join(', ')}) — not shown here for review yet since their odds are based on today's form and will be stale by the time they're due. They'll appear here for review once ${esc(nextDraft?nextDraft.name:'the current one')} is published.</p></div>`:''}
   ${laterDrafts.map(g=>`<details class="card"><summary>${esc(g.name)} · Preview in-play</summary>${inPlayAdminCard(g)}</details>`).join('')}
   ${(nextDraft||open.length)?specialMarketBuilderCard():''}
@@ -5518,10 +5522,36 @@ function oddsCard(g,isDraft){
       ${isDraft?`<button class="btn big" onclick="publishGw('${g.id}')">🚀 Publish — release odds &amp; open for betting</button>`:`<button class="btn gold small" onclick="releaseOdds('${g.id}')">📣 Release odds</button> <button class="btn danger small" onclick="withdrawOdds('${g.id}')">↩ Pull back odds</button>`}
       <button class="btn secondary small" onclick="openPoster('odds','${g.id}')">${isDraft?'👀 Preview poster':'📣 Poster'}</button>
       <button class="btn secondary small" onclick="rerecommend('${g.id}')">↺ Reset all to recommended</button>
+      ${isDraft&&g.status==='draft'?`<button class="btn secondary small" onclick="skipNormalOdds('${g.id}')" title="Never publish normal odds for this week; in-play can still run">🚫 Skip normal odds (in-play only)</button>`:''}
       ${isDraft&&!S.bets.some(b=>b.gwId===g.id)&&!LennonGames.arr(scoreRounds).some(r=>r.gwId===g.id)?`<button class="btn danger small" onclick="delGw('${g.id}')">Delete</button>`:''}
     </div>
     ${!isDraft&&g.oddsReleasedAt?`<div class="muted small" style="margin-top:6px">Odds last released ${fmtDT(g.oddsReleasedAt)}</div>`:''}
   </div>`;
+}
+// In-play-only week: normal odds are never offered, but the fixtures stay for in-play, results and settlement.
+function normalOffCard(g){
+  const canRelease=g.deadline&&Date.now()<g.deadline;
+  return `<div class="card" id="odds-${g.id}"><div class="gwhead"><h3 style="margin:0">📅 ${esc(g.name)} <span class="pill st-pending">IN-PLAY ONLY</span></h3><span class="deadline passed">Normal odds off</span></div>
+    <p class="muted small">Normal pre-match odds are not offered this week. In-play odds below run on their own until the week is settled.</p>
+    ${gwBetsPanel(g)}
+    <div class="actions" style="margin-top:10px">${canRelease?`<button class="btn small" onclick="publishGw('${g.id}')">🚀 Release normal odds after all</button>`:''}${!S.bets.some(b=>b.gwId===g.id)&&!inPlayPublished(g.id)?` <button class="btn secondary small" onclick="unskipNormalOdds('${g.id}')">↺ Back to draft</button>`:''}</div></div>`;
+}
+async function skipNormalOdds(gwId){
+  if(!requireAdmin()) return;
+  const g=gw(gwId); if(!g||g.status!=='draft') return;
+  if(!confirm(`Skip normal odds for ${g.name}?\n\nPlayers won't see pre-match odds for this week. You can still publish in-play odds, and results and settlement work as normal.`)) return;
+  g.status='open'; g.normalOff=true; delete g.oddsReleasedAt;
+  audit('normal odds skipped',g.name+' — in-play only');
+  try{ await db.ref().update({[ROOT+'/gameweeks']:S.gameweeks,[ROOT+'/audit']:S.audit}); }catch(e){ toast('Could not save: '+e.message,true); return; }
+  render(); toast(g.name+': in-play only');
+}
+async function unskipNormalOdds(gwId){
+  if(!requireAdmin()) return;
+  const g=gw(gwId); if(!g||!g.normalOff||S.bets.some(b=>b.gwId===g.id)||inPlayPublished(g.id)) return;
+  g.status='draft'; delete g.normalOff;
+  audit('normal odds unskipped',g.name);
+  try{ await db.ref().update({[ROOT+'/gameweeks']:S.gameweeks,[ROOT+'/audit']:S.audit}); }catch(e){ toast('Could not save: '+e.message,true); return; }
+  render(); toast(g.name+' is back in draft');
 }
 function setOdds(gwId,mId,k,val){
   const g=gw(gwId); const m=g.matches.find(m=>m.id===mId); if(!m) return;
@@ -5592,7 +5622,7 @@ async function publishGw(gwId){
   // this already flips status and notifies every non-admin player. What was missing (added below/
   // in releaseOdds()) was (a) a stamped oddsReleasedAt so the home page can show a "new odds" banner,
   // and (b) a way to re-announce odds after they're tweaked on an already-open gameweek.
-  const g=gw(gwId); g.forecast=LennonModel.snapshot(modelForecast(S,g.event)); g.forecastSavedAt=Date.now(); g.status='open'; g.oddsReleasedAt=Date.now(); createPromoForGw(g);
+  const g=gw(gwId); g.forecast=LennonModel.snapshot(modelForecast(S,g.event)); g.forecastSavedAt=Date.now(); g.status='open'; delete g.normalOff; g.oddsReleasedAt=Date.now(); createPromoForGw(g);
   audit('published',g.name);
   try { await savePublishedGw(g); } catch { toast('Could not publish odds. Please retry.',true); return; }
   let freeGameFailed=false;

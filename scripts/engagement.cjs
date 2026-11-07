@@ -73,7 +73,7 @@ async function run(db, fetchJson = get, clock = Date.now, dryRun = false) {
   const candidates = Games.arr(state.gameweeks)
     .filter(
       (g) =>
-        g.status !== "draft" &&
+        // Any week whose FPL gameweek has started, including in-play-only or unpublished weeks.
         g.event &&
         Date.parse(
           events.find((e) => Number(e.id) === Number(g.event))?.deadline_time,

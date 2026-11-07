@@ -37,7 +37,7 @@ module.exports = async (page, out) => {
     return { s: structuredClone(S), g: structuredClone(g) };
   });
   const card = page.locator("#inplay-admin-" + g.id);
-  await card.getByText(/Gameweek cutoff:/).waitFor();
+  await card.getByText(/FPL gameweek starts:/).waitFor();
   await card
     .getByRole("button", { name: "🔄 Refresh in-play odds", exact: true })
     .click();
@@ -68,11 +68,12 @@ module.exports = async (page, out) => {
     },
     { d, id: g.id },
   );
+  // In-play is independent: it can be published before (or without) the normal board.
   assert.equal(
     await card
       .getByRole("button", { name: "Publish these in-play odds", exact: true })
       .isDisabled(),
-    true,
+    false,
   );
   for (const width of [390, 1280]) {
     await page.setViewportSize({ width, height: 900 });
@@ -143,8 +144,10 @@ module.exports = async (page, out) => {
     .locator("#odds-" + g.id)
     .getByRole("button", { name: "↩ Pull back odds", exact: true })
     .click();
-  assert.equal(await page.evaluate((id) => gw(id).status, g.id), "draft");
-  assert.equal(await page.evaluate((id) => inPlayPublished(id), g.id), null);
+  // Normal pull-back leaves the live in-play market alone; the week becomes in-play only.
+  assert.equal(await page.evaluate((id) => gw(id).status, g.id), "open");
+  assert.equal(await page.evaluate((id) => gw(id).normalOff, g.id), true);
+  assert.notEqual(await page.evaluate((id) => inPlayPublished(id), g.id), null);
   await page.evaluate(() => {
     me = TEAMS.find((t) => !t.admin);
     delete scoreRounds[10];
@@ -164,11 +167,12 @@ module.exports = async (page, out) => {
   await page
     .locator("#odds-" + g.id)
     .getByRole("button", {
-      name: "🚀 Publish — release odds & open for betting",
+      name: "🚀 Release normal odds after all",
       exact: true,
     })
     .click();
   assert.equal(await page.evaluate((id) => oddsWithdrawn(id), g.id), false);
+  assert.equal(await page.evaluate((id) => !!gw(id).normalOff, g.id), false);
   await page.waitForTimeout(600);
   await page.evaluate(() => {
     db.ref = publicationOldRef;

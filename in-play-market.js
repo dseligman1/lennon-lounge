@@ -44,14 +44,14 @@
       ]),
     );
   }
+  // In-play is independent of the normal board (2026-11-07): it can be published alone for any
+  // gameweek until that gameweek is settled. Pre-start previews still copy the board's prices, so a
+  // price edit since generation means regenerating.
   function baselineError(draft, state, g, now) {
-    if (!g || g.status !== "open")
-      return "Publish the normal gameweek odds first. You can still preview this draft.";
+    if (!g || g.status === "settled") return "This gameweek has been settled.";
     if (!draft?.preStart) return null;
     if (now >= draft.startsAt)
       return "The gameweek has started. Generate fresh in-play odds.";
-    if (draft.maxCutoff > (g.deadline || Infinity))
-      return "The gameweek cutoff changed. Generate a new preview.";
     const current = normalOdds(state, g);
     if (
       Object.keys(current).length !==
@@ -152,6 +152,22 @@
       return "The selected odds no longer match the published market.";
     return null;
   }
+  // Approving later is fine: a bet only needs to have been placed while its in-play price was live
+  // (database rules check that at placement using server time).
+  function acceptError(bet, g) {
+    if (!g || g.status === "settled") return "This gameweek has been settled.";
+    for (const l of arr(bet?.legs).filter((l) => l.marketRevision)) {
+      if (!Number.isFinite(Number(l.odds)))
+        return "This in-play selection has no valid price.";
+      if (
+        Number.isFinite(l.marketCutoff) &&
+        Number.isFinite(bet.placedAt) &&
+        bet.placedAt > l.marketCutoff + 5000
+      )
+        return "This bet was placed after the in-play cutoff.";
+    }
+    return null;
+  }
   function publishRecord(draft, cutoff, now, by, previous) {
     const error = publishError(draft, cutoff, now);
     if (error) throw Error(error);
@@ -231,6 +247,7 @@
     publishRecord,
     parsePlayerLive,
     provisionalBonus,
+    acceptError,
     normalOdds,
     baselineError,
     withdrawRecord,

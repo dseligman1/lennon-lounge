@@ -79,11 +79,19 @@ test("pre-gameweek previews match every normal price, including manual odds, boo
   );
   assert.deepEqual(s, before);
   const IP = require("../in-play-market.js");
-  assert.match(IP.baselineError(d, s, g, now), /Publish the normal/);
+  // In-play is independent of the normal board: a draft (unpublished) week can publish it alone.
+  assert.equal(IP.baselineError(d, s, g, now), null);
   g.status = "open";
   assert.equal(IP.baselineError(d, s, g, now), null);
   g.deadline = now + 30000;
-  assert.match(IP.baselineError(d, s, g, now), /cutoff changed/);
+  assert.equal(
+    IP.baselineError(d, s, g, now),
+    null,
+    "normal cutoff no longer gates in-play",
+  );
+  g.status = "settled";
+  assert.match(IP.baselineError(d, s, g, now), /settled/);
+  g.status = "open";
   g.deadline = now + 7200000;
   g.matches[0].odds.home++;
   assert.match(IP.baselineError(d, s, g, now), /changed/);

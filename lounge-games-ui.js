@@ -41,6 +41,7 @@ function startGamesListeners() {
   gamesListen(SCORE_ROOT + "/rounds", (snap) => {
     scoreRounds = snap.val() || {};
     scoreReady = true;
+    setTimeout(() => autoOpenScoreRound(), 0);
     scoreError = "";
     Object.keys(scoreRounds)
       .filter((event) => scoreRounds[event])
@@ -119,6 +120,26 @@ async function openScoreRound(g) {
   await db
     .ref(`${SCORE_ROOT}/rounds/${g.event}`)
     .transaction((old) => (old ? undefined : round), undefined, false);
+}
+// Admin app opens the next gameweek's free game as soon as it's due; the GitHub worker does the
+// same on its runs, so it opens even if nobody with admin rights has the app open.
+let scoreAutoOpening = false;
+async function autoOpenScoreRound() {
+  if (!me?.admin || !scoreReady || scoreAutoOpening) return;
+  const round = LennonGames.nextRound(S, scoreRounds, gamesNow(), (id) =>
+    oddsWithdrawn(id),
+  );
+  if (!round) return;
+  scoreAutoOpening = true;
+  try {
+    await db
+      .ref(`${SCORE_ROOT}/rounds/${round.event}`)
+      .transaction((old) => (old ? undefined : round), undefined, false);
+  } catch (e) {
+    console.error("Free game auto-open failed:", e);
+  } finally {
+    scoreAutoOpening = false;
+  }
 }
 async function retryScoreRound(id) {
   if (!requireAdmin()) return;
@@ -241,7 +262,7 @@ function scoreOutcomeHtml(round, entry) {
   const outcome = scoreResults[round.event]?.outcomes?.[me.id];
   const f = round.fixtures[entry.matchId];
   const actual = scoreResults[round.event]?.scores?.[entry.matchId];
-  return `<div class="sg-locked" role="status"><span class="sg-eyebrow">${outcome ? (outcome.won ? "BOTH SCORES. BANG ON." : "FINAL RESULT") : "YOUR PREDICTION IS LOCKED"}</span><div class="sg-score"><span>${esc(gamesName(f.home))}</span><strong>${entry.homePts}<i>–</i>${entry.awayPts}</strong><span>${esc(gamesName(f.away))}</span></div>${outcome ? `<p>${outcome.won ? `<b class="sg-win">You won ${GBP(outcome.amountPence / 100)}!</b> ${scorePaid[round.event]?.[me.id] ? "Paid by the house." : "The house will arrange your payout."}` : `Final score: <b>${actual.homePts}–${actual.awayPts}</b>. Another shot next gameweek.`}</p>` : "<p>Accepted ✓ · Saved in My Bets. Your next free entry opens when next gameweek’s odds go live.</p>"}<button class="btn secondary small" onclick="myBetsSec='${outcome ? (outcome.won ? "won" : "lost") : "active"}';go('mybets')">View in My Bets →</button> <button class="btn secondary small" onclick="openMatchday(${round.event})">Follow it on Matchday Live →</button></div>`;
+  return `<div class="sg-locked" role="status"><span class="sg-eyebrow">${outcome ? (outcome.won ? "BOTH SCORES. BANG ON." : "FINAL RESULT") : "YOUR PREDICTION IS LOCKED"}</span><div class="sg-score"><span>${esc(gamesName(f.home))}</span><strong>${entry.homePts}<i>–</i>${entry.awayPts}</strong><span>${esc(gamesName(f.away))}</span></div>${outcome ? `<p>${outcome.won ? `<b class="sg-win">You won ${GBP(outcome.amountPence / 100)}!</b> ${scorePaid[round.event]?.[me.id] ? "Paid by the house." : "The house will arrange your payout."}` : `Final score: <b>${actual.homePts}–${actual.awayPts}</b>. Another shot next gameweek.`}</p>` : "<p>Accepted ✓ · Saved in My Bets. Your next free entry opens automatically for next gameweek.</p>"}<button class="btn secondary small" onclick="myBetsSec='${outcome ? (outcome.won ? "won" : "lost") : "active"}';go('mybets')">View in My Bets →</button> <button class="btn secondary small" onclick="openMatchday(${round.event})">Follow it on Matchday Live →</button></div>`;
 }
 function scoreHistoryHtml() {
   const rows = LennonGames.arr(scoreResults)
@@ -264,7 +285,7 @@ function scoreGameHome() {
     content = '<p role="status">Checking your free entry…</p>';
   else if (!r)
     content =
-      '<div class="sg-locked"><span class="sg-eyebrow">NEXT ROUND</span><h3>Your free shot is coming.</h3><p>It opens here as soon as the next gameweek’s odds are published.</p></div>';
+      '<div class="sg-locked"><span class="sg-eyebrow">NEXT ROUND</span><h3>Your free shot is coming.</h3><p>It opens here automatically for the next gameweek, before its FPL deadline.</p></div>';
   else if (!scoreEntryReady[r.event])
     content = '<p role="status">Checking your entry…</p>';
   else if (scoreEntries[r.event])
@@ -273,7 +294,7 @@ function scoreGameHome() {
     content =
       '<div class="sg-locked"><span class="sg-eyebrow">AWAITING ODDS</span><h3>This round is on hold.</h3><p>Your free shot reopens when the house releases the odds again.</p></div>';
   else if (r.status !== "open" || now >= r.cutoff)
-    content = `<div class="sg-locked"><span class="sg-eyebrow">${esc(r.name)} · CLOSED</span><h3>The teams are in.</h3><p>You didn’t enter this round. Your next free shot opens when next gameweek’s odds go live.</p><button class="btn secondary small" onclick="openMatchday(${r.event})">Open Matchday Live →</button></div>`;
+    content = `<div class="sg-locked"><span class="sg-eyebrow">${esc(r.name)} · CLOSED</span><h3>The teams are in.</h3><p>You didn’t enter this round. Your next free shot opens automatically for next gameweek.</p><button class="btn secondary small" onclick="openMatchday(${r.event})">Open Matchday Live →</button></div>`;
   else {
     const d = scoreDraft(r.event),
       f = r.fixtures[d.matchId];
@@ -292,14 +313,12 @@ function scoreGameHome() {
 }
 function scoreAdminHtml() {
   if (!me?.admin) return "";
-  const missing = S.gameweeks.filter(
-    (g) =>
-      g.status === "open" &&
-      !scoreRounds[g.event] &&
-      LennonGames.makeRound(S, g, gamesNow()),
+  const due = LennonGames.nextRound(S, scoreRounds, gamesNow(), (id) =>
+    oddsWithdrawn(id),
   );
+  const missing = due ? S.gameweeks.filter((g) => g.id === due.gwId) : [];
   const rounds = LennonGames.arr(scoreRounds).sort((a, b) => b.event - a.event);
-  return `<div class="card"><h3>🎯 Free £50 score game</h3><p class="muted small">One entry per manager per gameweek. Every exact winner receives £50 cash. Winners are graded automatically from official final FPL scores; prizes are separate from betting P&L.</p>${missing.map((g) => `<p>${esc(g.name)} odds are published but the free game needs opening. <button class="btn gold small" onclick="retryScoreRound('${g.id}')">Open free game</button></p>`).join("")}${
+  return `<div class="card"><h3>🎯 Free £50 score game</h3><p class="muted small">One entry per manager per gameweek. Every exact winner receives £50 cash. Winners are graded automatically from official final FPL scores; prizes are separate from betting P&L.</p>${missing.map((g) => `<p>${esc(g.name)} free game is due but not open yet. <button class="btn gold small" onclick="retryScoreRound('${g.id}')">Open free game</button></p>`).join("")}${
     rounds
       .map((r) => {
         const result = scoreResults[r.event],
