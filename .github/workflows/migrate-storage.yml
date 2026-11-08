@@ -1,0 +1,26 @@
+name: Convert Storage (one-off)
+# 2026-11-08: converts old list storage to keyed-by-id storage for change-only saving.
+# Dry run by default. Safe to re-run; does nothing once converted.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Write the conversion (untick for a dry run)"
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Convert
+        env:
+          MIGRATE_APPLY: ${{ inputs.apply }}
+          FIREBASE_DB_URL: ${{ secrets.FIREBASE_DB_URL }}
+          FIREBASE_SERVICE_KEY: ${{ secrets.FIREBASE_SERVICE_KEY }}
+        run: node scripts/migrate-storage.cjs

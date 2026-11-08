@@ -852,12 +852,13 @@
 
 
 <link rel="stylesheet" href="lounge-games.css?v=20261029">
+<script src="storage.js?v=20261108"></script>
 <script src="lounge-games.js?v=20261107b"></script>
 <script src="lounge-games-ui.js?v=20261107b"></script>
 <script src="odds-model.js?v=20261107"></script>
 <script src="in-play-market.js?v=20261107b"></script>
-<script src="publication-ui.js?v=20261108"></script>
-<script src="in-play-ui.js?v=20261108"></script>
+<script src="publication-ui.js?v=20261108b"></script>
+<script src="in-play-ui.js?v=20261108b"></script>
 <script>
 /* ================================================================
    LENNON LOUNGE v2.0 — Firebase-backed multi-device webapp
@@ -1135,30 +1136,69 @@ function migrate(s) {
   if (!s.usage.daily) s.usage.daily = {};
   if (!s.usage.hourly) s.usage.hourly = {};
   if (!s.usage.lastSeen) s.usage.lastSeen = {};
+  // Keyed lists (bets, chat, audit, grants, rewards, usage events): ids on every item, time order.
+  LennonStorage.normalise(s);
   return s;
 }
 
-function nid(p) { return p + '_' + (S.seq++); }
+// Unique without a shared counter: the old S.seq counter let two devices hand out the same id.
+function nid(p) { return LennonStorage.newId(p); }
 
 /* ================================================================
    FIREBASE SAVE / LOAD
    ================================================================ */
-let _saveTimer = null;
+// Change-only saving (2026-11-08, PROGRESS.md ROUND 21). `base` is the last state this device
+// received from Firebase; a save sends only the paths where S now differs from it (see
+// storage.js), never the whole tree, so a tab holding old data can't undo anyone else's changes.
+// While a save is waiting, incoming snapshots are held back so they can't wipe the unsaved
+// change; the save itself then brings S up to date.
+let _saveTimer = null, base = null, _legacy = [], _dirty = false, _heldSnap;
+function adoptSnapshot(data) {
+  _legacy = LennonStorage.legacyPaths(data);
+  base = migrate(data);
+  S = structuredClone(base);
+}
+function resyncFromServer() {
+  return db.ref(ROOT).once('value').then(snap => {
+    if (_dirty || !snap.val()) return;
+    adoptSnapshot(snap.val());
+    if (me) render();
+  }).catch(() => {});
+}
+function saveFailed(e) {
+  console.error('Save failed:', e);
+  if (me) toast(isPermissionDenied(e) ? "Couldn't save: that change isn't allowed or is out of date. Refreshed to the latest." : "Couldn't save: check your connection and try again.", true);
+  resyncFromServer();
+}
+function flush(extra) {
+  clearTimeout(_saveTimer); _saveTimer = null;
+  const held = _heldSnap; _heldSnap = undefined; _dirty = false;
+  if (!S || !base) return extra ? db.ref().update(extra) : Promise.resolve();
+  LennonStorage.normalise(S, {fresh: true});
+  const changes = LennonStorage.diff(S, base, _legacy), updates = {};
+  for (const [path, value] of Object.entries(changes)) {
+    if (me && !me.admin && !LennonStorage.playerMayWrite(path, me.id)) { console.warn('Not saved (house-only data):', path); continue; }
+    updates[ROOT + '/' + path] = value;
+  }
+  Object.assign(updates, extra || {});
+  if (!Object.keys(updates).length) {
+    if (held !== undefined) { adoptSnapshot(held); if (me) render(); }
+    return Promise.resolve();
+  }
+  base = structuredClone(S); _legacy = [];
+  let write;
+  try { write = db.ref().update(updates); } catch (e) { write = Promise.reject(e); }
+  if (held !== undefined) write.then(resyncFromServer, () => {});
+  return write;
+}
 function save() {
+  _dirty = true;
   clearTimeout(_saveTimer);
-  _saveTimer = setTimeout(() => {
-    if (!S) return;
-    db.ref(ROOT).set(S).catch(e => console.error('Save failed:', e));
-  }, 300);
+  _saveTimer = setTimeout(() => { flush().catch(saveFailed); }, 300);
 }
 
-function saveNow() {
-  // Cancel any pending debounced write so it can't land later with a stale
-  // copy of S and clobber this immediate, synchronous-as-possible write.
-  clearTimeout(_saveTimer);
-  _saveTimer = null;
-  if (!S) return Promise.resolve();
-  return db.ref(ROOT).set(S).catch(e => { console.error('Save failed:', e); throw e; });
+function saveNow(extra) {
+  return flush(extra).catch(e => { saveFailed(e); throw e; });
 }
 
 function load() {
@@ -1170,10 +1210,13 @@ function startListener() {
   dbListener = db.ref(ROOT).on('value', snap => {
     const data = snap.val();
     if (!data) {
-      S = freshState();
-      db.ref(ROOT).set(S);
+      S = freshState(); base = structuredClone(S); _legacy = [];
+      if (me && me.admin) db.ref(ROOT).set(LennonStorage.toStored(S));
+    } else if (_dirty) {
+      _heldSnap = data;
+      return;
     } else {
-      S = migrate(data);
+      adoptSnapshot(data);
       if (me) flushUsageQueue();
     }
     if (me) render();
@@ -1203,14 +1246,14 @@ function startConnectionMonitor() {
     const connected = !!snap.val();
     setSyncDot(connected);
     if (connected) {
-      if (_everConnected) { db.ref(ROOT).once('value'); toast('Back online — synced'); }
+      if (_everConnected) { resyncFromServer(); toast('Back online — synced'); }
       _everConnected = true;
     } else if (_everConnected) {
       toast('Connection lost — reconnecting…', true);
     }
   });
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && me) db.ref(ROOT).once('value');
+    if (document.visibilityState === 'visible' && me) resyncFromServer();
   });
 }
 function setSyncDot(connected) {
@@ -1506,8 +1549,8 @@ function bettableNow(g){
 }
 function inPlayWeeks(){ return S.gameweeks.filter(g=>g.status!=='settled'&&inPlayPublished(g.id)).sort((a,b)=>(a.event||0)-(b.event||0)); }
 function audit(action, detail){
-  S.audit.push({at:Date.now(), by:me?me.id:'system', action, detail:String(detail||'')});
-  if(S.audit.length>500) S.audit=S.audit.slice(-500);
+  S.audit.push({id:nid('aud'), at:Date.now(), by:me?me.id:'system', action, detail:String(detail||'')});
+  if(me&&me.admin&&S.audit.length>500) S.audit=S.audit.slice(-500);
 }
 /* ================================================================
    USAGE / ENGAGEMENT TRACKING — Back Office "Usage" card
@@ -1531,7 +1574,7 @@ function logUsage(type, tab, atOverride){
   if(!me) return;
   if(!S||!S.usage){ if(_usageQueue.length<20) _usageQueue.push({type,tab,at:Date.now()}); return; }
   const at=atOverride||Date.now(), tid=me.id;
-  S.usage.events.push(tab?{at,team:tid,type,tab}:{at,team:tid,type});
+  S.usage.events.push(tab?{id:nid('ev'),at,team:tid,type,tab}:{id:nid('ev'),at,team:tid,type});
   if(S.usage.events.length>4000) S.usage.events=S.usage.events.slice(-4000);
   const dk=ukDateKey(at);
   if(!S.usage.daily[dk]) S.usage.daily[dk]={};
@@ -1549,13 +1592,9 @@ function logUsage(type, tab, atOverride){
   save();
 }
 // Client-side-only gate: stops the app's own UI from calling an admin action for a non-admin
-// session (e.g. a stray button reachable by URL/state manipulation). This is NOT real
-// security — Firebase rules are wide open (.read/.write: true, see SETUP.md Step 7) and every
-// function here is a plain global, so anyone with devtools open can call it directly or write
-// to the database with a raw HTTP request regardless of this check. It only raises the bar
-// for accidental/casual misuse, not a deliberate one. Real protection needs Firebase Auth +
-// server-enforced rules keyed to specific admin UIDs — out of scope for this pass; flagged to
-// the user rather than silently treated as solved.
+// session. Real enforcement is in database.rules.json (2026-11-08): only house managers can
+// change shared data; players can change only their own bets (within limits), their own reward
+// tokens, and add chat/log entries.
 function requireAdmin(){
   if(me&&me.admin) return true;
   toast('Admins only',true);
@@ -1569,8 +1608,7 @@ function requireAdmin(){
 // are never sent.
 function saveFields(obj){
   Object.assign(S, obj);
-  clearTimeout(_saveTimer); _saveTimer=null;
-  return db.ref(ROOT).update(obj).catch(e=>{ console.error('Save failed:', e); throw e; });
+  return saveNow();
 }
 
 /* ================================================================
@@ -3050,7 +3088,7 @@ async function placeBet(){
     // In-play bets are checked by the database against the live market (server time), so a bet
     // made in the last seconds can be refused. Write now and say so, rather than "Bet placed" and
     // the bet silently disappearing on the next refresh.
-    if(inplaySlip) saveNow().catch(()=>toast('Bet NOT placed: the in-play market closed or changed before it saved. Check the latest odds.',true));
+    if(inplaySlip) flush().catch(()=>{ toast('Bet NOT placed: the in-play market closed or changed before it saved. Check the latest odds.',true); resyncFromServer(); });
     else save();
   }
 }
@@ -4201,8 +4239,8 @@ function sendChat(){
   const inp=document.getElementById('chatInp'); const txt=inp.value.trim();
   if(!txt) return;
   if(!S.chat) S.chat=[];
-  S.chat.push({by:me.id,text:txt,at:Date.now()});
-  if(S.chat.length>200) S.chat=S.chat.slice(-200);
+  S.chat.push({id:nid('chat'),by:me.id,text:txt,at:Date.now()});
+  if(me.admin&&S.chat.length>200) S.chat=S.chat.slice(-200);
   save(); render();
   setTimeout(()=>{ const i=document.getElementById('chatInp'); if(i) i.focus(); },30);
 }

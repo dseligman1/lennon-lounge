@@ -26,14 +26,9 @@ function stopPublicationListener() {
 }
 async function savePublishedGw(g) {
   const gate = { status: "published", at: Date.now(), by: me.id };
-  // Leave the bets branch untouched: a player may submit while the admin reviews odds.
-  await db.ref().update({
-    [ROOT + "/gameweeks"]: S.gameweeks,
-    [ROOT + "/promos"]: S.promos,
-    [ROOT + "/audit"]: S.audit,
-    [ROOT + "/seq"]: S.seq,
-    [PUBLICATION_ROOT + "/" + g.id]: gate,
-  });
+  // Change-only save plus the gate in one atomic update; only what changed is sent, so a player's
+  // bet placed while the admin reviews odds is never touched.
+  await saveNow({ [PUBLICATION_ROOT + "/" + g.id]: gate });
   publicationState[g.id] = gate;
 }
 async function withdrawOdds(id) {
@@ -53,36 +48,18 @@ async function withdrawOdds(id) {
     const record = (await db.ref(INPLAY_ROOT + "/" + id).once("value")).val();
     const keepLive =
       !!record?.published || S.bets.some((b) => b.gwId === id && b.inplay);
-    const gameweeks = structuredClone(S.gameweeks),
-      next = gameweeks.find((g) => g.id === id);
+    const next = S.gameweeks.find((g) => g.id === id);
     if (!next || next.status !== "open") return;
     if (keepLive) next.normalOff = true;
     else next.status = "draft";
     delete next.oddsReleasedAt;
     delete next.inplayCutoff;
-    const promos = S.promos.map((p) =>
-      p.gwId === id ? { ...p, active: false } : p,
-    );
-    const auditLog = [
-      ...S.audit,
-      {
-        at: now,
-        by: me.id,
-        action: "odds withdrawn",
-        detail: g.name + " — existing bets retained",
-      },
-    ].slice(-500);
+    S.promos.forEach((p) => {
+      if (p.gwId === id) p.active = false;
+    });
+    audit("odds withdrawn", g.name + " — existing bets retained");
     const gate = { status: "withdrawn", at: now, by: me.id };
-    const updates = {
-      [ROOT + "/gameweeks"]: gameweeks,
-      [ROOT + "/promos"]: promos,
-      [ROOT + "/audit"]: auditLog,
-      [PUBLICATION_ROOT + "/" + id]: gate,
-    };
-    await db.ref().update(updates);
-    S.gameweeks = gameweeks;
-    S.promos = promos;
-    S.audit = auditLog;
+    await saveNow({ [PUBLICATION_ROOT + "/" + id]: gate });
     publicationState[id] = gate;
     slip = slip.filter((l) => l.gwId !== id || l.marketRevision);
     slipBundles = slipBundles.filter((b) => b.gwId !== id);

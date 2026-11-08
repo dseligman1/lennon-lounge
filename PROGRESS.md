@@ -1,5 +1,14 @@
 # Lennon Lounge v2 — Feature Build Progress
 
+## ROUND 21 — change-only saving and house-only rules, 2026-11-08
+
+- Problem (from the ROUND 20 sweep, Dan: "100% needs to be sorted"): every save rewrote the whole `lennon-lounge` tree, so a phone holding old data could silently undo newer changes (an approval, a settlement, someone else's bet); and any logged-in member could rewrite anything.
+- Change-only saving (`storage.js`, `flush()` in index.html): a save sends only the paths this device changed against the last data it received. Snapshots arriving while a save is pending are held so they can't wipe the unsaved change. Failed saves now say so and re-sync instead of failing silently.
+- Keyed lists: bets, chat, activity log, promo grants, reward tokens and usage events are stored keyed by item id, so two people adding at once can't land on the same slot. Ids no longer come from the shared `seq` counter (two devices could hand out the same id). One-off conversion: `scripts/migrate-storage.cjs` (Actions → "Convert Storage (one-off)").
+- Database rules: only house managers (selig, rowez) change shared data. Players can create their own pending bets, cancel/decline/counter/accept-the-exact-house-offer on their own bets, add messages, add/use their own reward tokens, add chat/log/grant entries, and write usage stats. They can't change price, legs, status-to-accepted/won, payouts, or anyone else's bets; list-shaped writes are refused, so out-of-date app versions can't revert the layout.
+- Residual (accepted): a player using developer tools could still create a pending bet claiming a boost/free bet or add a reward token for themselves; the house sees it flagged and approves every bet.
+- Tests: 67 Node (new `tests/storage.test.cjs`, including the real app run as a player sending only player paths), rules emulator tests extended (CI), browser suites.
+
 ## ROUND 20 — periodic code sweep, 2026-11-08
 
 - Full review of in-play, free game, publication, bet placement/approval, settlement, P&L, rules and workers. Tests and all Actions green beforehand.

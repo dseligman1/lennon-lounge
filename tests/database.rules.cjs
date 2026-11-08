@@ -188,33 +188,48 @@ test("withdrawal blocks new normal bets and acceptance while retaining existing 
     teamId: "player",
     status: "accepted",
     stake: 10,
+    placedAt: Date.now(),
     legs: [
       { gwId: "gw_1", type: "match", matchId: "m_1", pick: "home", odds: 2 },
     ],
   };
   await seed("lennon-lounge/bets", {
-    a: bet,
-    pending: { ...bet, status: "pending" },
+    a: { ...bet, id: "a" },
+    pending: { ...bet, id: "pending", status: "pending" },
   });
   await seed("lennon-lounge-publication/gw_1", { status: "withdrawn" });
   await assertFails(
     set(ref(db("alice"), "lennon-lounge/bets/b"), {
       ...bet,
+      id: "b",
       status: "pending",
     }),
   );
-  await assertFails(set(ref(db("admin"), "lennon-lounge/bets/pending"), bet));
-  await assertSucceeds(set(ref(db("alice"), "lennon-lounge/bets/a"), bet));
-  await assertSucceeds(
-    set(ref(db("admin"), "lennon-lounge/bets/a"), { ...bet, status: "won" }),
+  await assertFails(
+    set(ref(db("admin"), "lennon-lounge/bets/pending"), {
+      ...bet,
+      id: "pending",
+    }),
   );
-  // A legacy whole-state write cannot remove the separate publication gate.
   await assertSucceeds(
+    set(ref(db("alice"), "lennon-lounge/bets/a"), { ...bet, id: "a" }),
+  );
+  await assertSucceeds(
+    set(ref(db("admin"), "lennon-lounge/bets/a"), {
+      ...bet,
+      id: "a",
+      status: "won",
+    }),
+  );
+  // 2026-11-08: players can no longer write shared data such as the gameweek list at all.
+  await assertFails(
     set(ref(db("alice"), "lennon-lounge/gameweeks"), [
       { id: "gw_1", status: "open" },
     ]),
   );
-  await assertFails(set(ref(db("alice"), "lennon-lounge/bets/b"), bet));
+  await assertFails(
+    set(ref(db("alice"), "lennon-lounge/bets/b"), { ...bet, id: "b" }),
+  );
   await assertSucceeds(
     set(ref(db("admin"), "lennon-lounge-publication/gw_1"), {
       status: "published",
@@ -223,6 +238,7 @@ test("withdrawal blocks new normal bets and acceptance while retaining existing 
   await assertSucceeds(
     set(ref(db("alice"), "lennon-lounge/bets/b"), {
       ...bet,
+      id: "b",
       status: "pending",
     }),
   );
@@ -236,6 +252,9 @@ test("withdrawing in-play prices blocks stale submissions; bets placed while liv
   };
   const bet = {
     gwId: "gw_1",
+    teamId: "player",
+    stake: 5,
+    placedAt: Date.now(),
     inplay: true,
     status: "accepted",
     legs: [
@@ -249,29 +268,31 @@ test("withdrawing in-play prices blocks stale submissions; bets placed while liv
       },
     ],
   };
+  const as = (id, extra = {}) => ({ ...bet, id, ...extra });
   await seed("lennon-lounge-inplay/gw_1/published", market);
-  await assertSucceeds(set(ref(db("alice"), "lennon-lounge/bets/a"), bet));
-  await assertSucceeds(
-    set(ref(db("alice"), "lennon-lounge/bets/b"), {
-      ...bet,
-      status: "pending",
-    }),
-  );
+  await assertFails(set(ref(db("alice"), "lennon-lounge/bets/a"), as("a")));
+  for (const id of ["a", "b"])
+    await assertSucceeds(
+      set(
+        ref(db("alice"), "lennon-lounge/bets/" + id),
+        as(id, { status: "pending" }),
+      ),
+    );
+  await assertSucceeds(set(ref(db("admin"), "lennon-lounge/bets/a"), as("a")));
   await assertSucceeds(
     remove(ref(db("admin"), "lennon-lounge-inplay/gw_1/published")),
   );
-  await assertFails(set(ref(db("alice"), "lennon-lounge/bets/c"), bet));
   await assertFails(
-    set(ref(db("alice"), "lennon-lounge/bets/c"), {
-      ...bet,
-      status: "pending",
-    }),
+    set(
+      ref(db("alice"), "lennon-lounge/bets/c"),
+      as("c", { status: "pending" }),
+    ),
   );
   // 2026-11-07: the house approves every bet, so one placed while the market was live stays approvable.
-  await assertSucceeds(set(ref(db("admin"), "lennon-lounge/bets/b"), bet));
-  await assertSucceeds(set(ref(db("alice"), "lennon-lounge/bets/a"), bet));
+  await assertSucceeds(set(ref(db("admin"), "lennon-lounge/bets/b"), as("b")));
+  await assertSucceeds(set(ref(db("alice"), "lennon-lounge/bets/a"), as("a")));
   await assertSucceeds(
-    set(ref(db("admin"), "lennon-lounge/bets/a"), { ...bet, status: "won" }),
+    set(ref(db("admin"), "lennon-lounge/bets/a"), as("a", { status: "won" })),
   );
 });
 
@@ -318,6 +339,10 @@ test("in-play bets are independent of a pulled-back normal board", async () => {
   };
   await assertSucceeds(
     set(ref(db("alice"), "lennon-lounge/bets/ip"), {
+      id: "ip",
+      teamId: "player",
+      stake: 5,
+      placedAt: Date.now(),
       gwId: "gw_1",
       inplay: true,
       status: "pending",
@@ -326,9 +351,204 @@ test("in-play bets are independent of a pulled-back normal board", async () => {
   );
   await assertFails(
     set(ref(db("alice"), "lennon-lounge/bets/normal"), {
+      id: "normal",
+      teamId: "player",
+      stake: 5,
+      placedAt: Date.now(),
       gwId: "gw_1",
       status: "pending",
       legs: [{ type: "match", matchId: "m_1", pick: "home", odds: 2 }],
     }),
   );
+});
+
+// 2026-11-08: players can change only their own bets (within strict limits), their own reward
+// tokens, and add chat/log entries. Everything else is house-only.
+const L = "lennon-lounge";
+const myBet = (id, extra = {}) => ({
+  id,
+  teamId: "player",
+  gwId: "gw_1",
+  status: "pending",
+  stake: 10,
+  effOdds: 2,
+  placedAt: Date.now(),
+  legs: [
+    { gwId: "gw_1", type: "match", matchId: "m_1", pick: "home", odds: 2 },
+  ],
+  history: [{ by: "player", action: "placed", at: Date.now() }],
+  limitFlags: ["over"],
+  ...extra,
+});
+test("players cannot write shared data or the whole tree; house managers can", async () => {
+  for (const [path, value] of [
+    [L, { gameweeks: [] }],
+    [L + "/gameweeks/0/status", "open"],
+    [L + "/settings/maxPayout", 99999],
+    [L + "/teams/0/name", "Hacked"],
+    [L + "/promos/0/odds", 50],
+    [L + "/seq", 1],
+    [L + "/bets", { b1: myBet("b1") }],
+  ])
+    await assertFails(set(ref(db("alice"), path), value));
+  await assertSucceeds(set(ref(db("admin"), L + "/settings/maxPayout"), 2000));
+  await assertSucceeds(
+    set(ref(db("admin"), L + "/gameweeks/0/status"), "open"),
+  );
+});
+test("a player creates only their own pending bet and cannot edit price, legs, result or others' bets", async () => {
+  const B = (id) => ref(db("alice"), L + "/bets/" + id);
+  await assertFails(set(B("x1"), myBet("x1", { teamId: "other" })));
+  await assertFails(set(B("x2"), myBet("x2", { status: "accepted" })));
+  await assertFails(set(B("x3"), myBet("x3", { settledPayout: 500 })));
+  await assertFails(set(B("x4"), myBet("wrong-key")));
+  await assertFails(
+    set(B("x5"), myBet("x5", { placedAt: Date.now() - 86400000 })),
+  );
+  await assertSucceeds(set(B("b1"), myBet("b1")));
+  await assertFails(set(ref(db("bob"), L + "/bets/b1/status"), "cancelled"));
+  await assertFails(set(B("b1/stake"), 100));
+  await assertFails(set(B("b1/effOdds"), 9));
+  await assertFails(set(B("b1/legs/0/odds"), 9));
+  await assertFails(set(B("b1/legs/0/pick"), "away"));
+  await assertFails(
+    set(B("b1/legs/1"), {
+      type: "match",
+      matchId: "m_2",
+      pick: "home",
+      odds: 2,
+    }),
+  );
+  await assertFails(set(B("b1/status"), "accepted"));
+  await assertFails(set(B("b1/status"), "won"));
+  await assertFails(set(B("b1/limitFlags"), null));
+  await assertFails(set(B("b1/history"), null));
+  await assertFails(remove(B("b1")));
+  await assertSucceeds(
+    set(B("b1/history/1"), {
+      by: "player",
+      action: "message",
+      message: "go on",
+      at: Date.now(),
+    }),
+  );
+  await assertSucceeds(set(B("b1/status"), "cancelled"));
+  // The house accepts and settles.
+  await assertSucceeds(
+    set(ref(db("admin"), L + "/bets/b2"), myBet("b2", { status: "accepted" })),
+  );
+  await assertFails(set(B("b2/status"), "won"));
+  await assertSucceeds(
+    update(ref(db("admin"), L + "/bets/b2"), {
+      status: "won",
+      settledPayout: 20,
+    }),
+  );
+  await assertFails(set(B("b2/settledPayout"), 2000));
+});
+test("counter-offers: a player accepts only the house's exact terms and cannot rewrite the offer", async () => {
+  const offer = { stake: 3, effOdds: 2.5, by: "house" };
+  await seed(L + "/bets", {
+    c1: myBet("c1", { status: "counter_house", offer }),
+    c2: myBet("c2", { status: "counter_house", offer }),
+    c3: myBet("c3", { status: "counter_house", offer }),
+  });
+  const B = (id) => ref(db("alice"), L + "/bets/" + id);
+  await assertFails(set(B("c1/offer/effOdds"), 10));
+  await assertFails(
+    update(B("c1"), { status: "accepted", offer: null, stake: 3, effOdds: 10 }),
+  );
+  await assertSucceeds(
+    update(B("c1"), {
+      status: "accepted",
+      offer: null,
+      stake: 3,
+      effOdds: 2.5,
+    }),
+  );
+  await assertSucceeds(update(B("c2"), { status: "rejected", offer: null }));
+  await assertFails(
+    update(B("c3"), {
+      status: "counter_user",
+      offer: { stake: 50, effOdds: 3, by: "house" },
+    }),
+  );
+  await assertSucceeds(
+    update(B("c3"), {
+      status: "counter_user",
+      offer: { stake: 50, effOdds: 3, by: "player" },
+    }),
+  );
+  await assertFails(
+    update(B("c3"), { status: "accepted", stake: 50, effOdds: 3 }),
+  );
+});
+test("chat, activity log and promo grants are add-only for players and keyed by id", async () => {
+  for (const [list, item] of [
+    ["chat", { by: "player", text: "hi", at: 1 }],
+    ["audit", { by: "player", action: "x", at: 1 }],
+    [
+      "rewardGrants",
+      { teamId: "player", ruleId: "r", eventKey: "bet:1", at: 1 },
+    ],
+  ]) {
+    const P = (u, id) => ref(db(u), `${L}/${list}/${id}`);
+    await assertSucceeds(set(P("alice", "i1"), { ...item, id: "i1" }));
+    await assertFails(set(P("alice", "i2"), { ...item, id: "other-key" }));
+    await assertFails(set(P("bob", "i3"), { ...item, id: "i3" }));
+    await assertFails(set(P("alice", "i1"), { ...item, id: "i1", at: 2 }));
+    await assertFails(remove(P("alice", "i1")));
+    await assertSucceeds(remove(P("admin", "i1")));
+  }
+  await assertFails(
+    set(ref(db("alice"), L + "/chat/long"), {
+      id: "long",
+      by: "player",
+      text: "x".repeat(301),
+      at: 1,
+    }),
+  );
+});
+test("reward tokens: a player adds or uses their own, but cannot un-use, resize or touch another team's", async () => {
+  const R = (u, tid, id) => ref(db(u), `${L}/rewards/${tid}/${id}`);
+  const tok = {
+    id: "t1",
+    kind: "freebet",
+    amount: 5,
+    used: false,
+    grantedAt: 1,
+  };
+  await assertSucceeds(set(R("alice", "player", "t1"), tok));
+  await assertFails(set(R("alice", "other", "t1"), tok));
+  await assertFails(
+    set(R("alice", "player", "t2"), { ...tok, id: "t2", used: true }),
+  );
+  await assertFails(set(R("alice", "player", "t1/amount"), 500));
+  await assertSucceeds(set(R("alice", "player", "t1/used"), true));
+  await assertFails(set(R("alice", "player", "t1/used"), false));
+  await assertFails(remove(R("alice", "player", "t1")));
+  await assertSucceeds(set(R("admin", "player", "t1/used"), false));
+});
+test("usage stats stay writable by players; old list-shaped bets are refused even from the house", async () => {
+  await assertSucceeds(
+    update(ref(db("alice"), L + "/usage"), {
+      "events/ev_1": { id: "ev_1", at: 1, team: "player", type: "view" },
+      "daily/2026-11-08/player/views": 3,
+    }),
+  );
+  await assertFails(set(ref(db("admin"), L + "/bets"), [myBet("b1")]));
+  await assertFails(set(ref(db("admin"), L), { bets: [myBet("b1")] }));
+});
+test("two players adding bets at the same moment both keep their bet", async () => {
+  await Promise.all([
+    assertSucceeds(set(ref(db("alice"), L + "/bets/bet_a"), myBet("bet_a"))),
+    assertSucceeds(
+      set(
+        ref(db("bob"), L + "/bets/bet_b"),
+        myBet("bet_b", { teamId: "other" }),
+      ),
+    ),
+  ]);
+  const bets = (await get(ref(db("admin"), L + "/bets"))).val();
+  assert.deepEqual(Object.keys(bets).sort(), ["bet_a", "bet_b"]);
 });

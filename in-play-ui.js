@@ -246,25 +246,12 @@ async function setInPlayCutoff(id, value) {
 async function markInPlayOnly(id) {
   const g = gw(id);
   if (!g || g.status !== "draft") return;
-  const gameweeks = structuredClone(S.gameweeks),
-    next = gameweeks.find((x) => x.id === id);
+  const next = g;
   next.status = "open";
   next.normalOff = true;
   next.inPlayOnlyAt = Date.now();
-  const auditLog = [
-    ...S.audit,
-    {
-      at: Date.now(),
-      by: me.id,
-      action: "in-play only",
-      detail: g.name + ": in-play published without normal odds",
-    },
-  ].slice(-500);
-  await db
-    .ref()
-    .update({ [ROOT + "/gameweeks"]: gameweeks, [ROOT + "/audit"]: auditLog });
-  S.gameweeks = gameweeks;
-  S.audit = auditLog;
+  audit("in-play only", g.name + ": in-play published without normal odds");
+  await saveNow();
 }
 async function requestInPlay(id) {
   if (!requireAdmin()) return;

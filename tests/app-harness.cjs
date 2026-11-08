@@ -53,6 +53,7 @@ module.exports = function (state) {
     LennonModel: require("../odds-model.js"),
     LennonInPlay: require("../in-play-market.js"),
     LennonGames: require("../lounge-games.js"),
+    LennonStorage: require("../storage.js"),
     setTimeout: noop,
     clearTimeout: noop,
     setInterval: noop,
@@ -100,7 +101,7 @@ module.exports = function (state) {
   );
   ctx.input = structuredClone(state);
   vm.runInContext(
-    "S={...freshState(),...input}; S.settings={...DEFAULT_SETTINGS,...input.settings}; S.sim={events:{},...S.sim}; me=TEAMS[0];",
+    "S={...freshState(),...input}; S.settings={...DEFAULT_SETTINGS,...input.settings}; S.sim={events:{},...S.sim}; me=TEAMS[0]; base=structuredClone(S);",
     ctx,
   );
   return { ctx, run: (code) => vm.runInContext(code, ctx), html };
