@@ -552,3 +552,62 @@ test("two players adding bets at the same moment both keep their bet", async () 
   const bets = (await get(ref(db("admin"), L + "/bets"))).val();
   assert.deepEqual(Object.keys(bets).sort(), ["bet_a", "bet_b"]);
 });
+
+// The real app code's saves, run as a player and then as the house, must all pass the rules.
+test("the app's own change-only saves are accepted by the rules, for a player and for the house", async () => {
+  const harness = require("./app-harness.cjs"),
+    St = require("../storage.js"),
+    backup = require("../backups/2026-10-26.json");
+  const h = harness(backup);
+  h.run(`render=()=>{};toast=(m,e)=>{lastToast=m;};bosh=()=>{};triggerPhoneAlerts=()=>{};pushNotif=async()=>{};openPoster=()=>{};
+    sent=[];db.ref=()=>({update:async(u)=>{sent.push(JSON.parse(JSON.stringify(u)))},set:async()=>{throw Error('whole-tree set')},once:async()=>({val:()=>null}),on(){},off(){},push:()=>({set:async()=>{}})});
+    adoptSnapshot(structuredClone(LennonStorage.toStored(input)));
+    S.rewardRules=[{id:'rule_1',name:'Acca',active:true,trigger:{kind:'fold_size',minLegs:1},reward:{kind:'boost',pct:10}}];
+    g=S.gameweeks.find(g=>g.matches?.length);g.status='open';g.deadline=Date.now()+86400000;
+    m=g.matches.find(m=>m.home!=='henry'&&m.away!=='henry');
+    o=S.bets.find(x=>x.teamId==='henry'&&x.status==='accepted');o.status='counter_house';o.offer={stake:3,effOdds:2.5,by:'house'};
+    base=structuredClone(S);me=TEAMS.find(t=>t.id==='henry');`);
+  await seed(
+    "lennon-lounge",
+    JSON.parse(JSON.stringify(St.toStored(h.run("base")))),
+  );
+  await seed("lennon-lounge-members/henryDevice", { team: "henry" });
+  h.run(`leg=()=>[{type:'match',gwId:g.id,matchId:m.id,pick:'home',odds:2,label:'x'}];
+    submitBet({gwId:g.id,legs:leg(),effOdds:2,stake:5,message:''});
+    submitBet({gwId:g.id,legs:leg(),effOdds:2,stake:4,message:''});
+    logUsage('view','home');document.getElementById=(id)=>id.startsWith('mm_')||id==='chatInp'?{value:'banter',focus(){}}:null;sendChat();`);
+  await h.run("flush()");
+  h.run(
+    "cancelBet(S.bets.at(-2).id);sendMsg(S.bets.at(-1).id);acceptOffer(o.id)",
+  );
+  await h.run("flush()");
+  const playerWrites = h.run("sent.splice(0)");
+  assert.ok(playerWrites.length >= 2);
+  for (const u of playerWrites)
+    await assertSucceeds(update(ref(db("henryDevice")), u));
+  // A player can't accept their own bet even by calling the house function directly.
+  h.run("requireAdmin=()=>true;houseAccept(S.bets.at(-1).id)");
+  await h.run("flush()");
+  for (const u of h.run("sent.splice(0)"))
+    await assertFails(update(ref(db("henryDevice")), u));
+  // The house accepts and settles with the real app functions.
+  h.run(
+    `me=TEAMS.find(t=>t.id==='selig');adoptSnapshot(structuredClone(LennonStorage.toStored(base)));`,
+  );
+  const live = (await get(ref(db("admin"), "lennon-lounge"))).val();
+  h.run(
+    `adoptSnapshot(${JSON.stringify(live)});houseAccept(S.bets.at(-1).id);`,
+  );
+  await h.run("flush()");
+  for (const u of h.run("sent.splice(0)"))
+    await assertSucceeds(update(ref(db("admin")), u));
+  const bets = (await get(ref(db("admin"), "lennon-lounge/bets"))).val();
+  const mine = Object.values(bets).filter((b) => b.teamId === "henry");
+  assert.ok(mine.some((b) => b.status === "cancelled"));
+  assert.ok(mine.some((b) => b.status === "accepted" && b.stake === 4));
+  assert.ok(
+    mine.some(
+      (b) => b.status === "accepted" && b.stake === 3 && b.effOdds === 2.5,
+    ),
+  );
+});
