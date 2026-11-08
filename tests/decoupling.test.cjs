@@ -115,3 +115,46 @@ test("the free game opens for the next unstarted gameweek only, whether or not o
     "paused while withdrawn",
   );
 });
+
+// 2026-11-08 sweep: a draft cutoff picked before publishing must survive unrelated live updates.
+test("a picked draft cutoff survives a live in-play update for the same draft", () => {
+  const h = setup();
+  h.run(`stopInPlayListener();let ipCb;db.ref=()=>({on:(e,cb)=>(ipCb=cb),off(){},once:async()=>({val:()=>null})});
+    startInPlayListener();rec={draft:market({status:'draft'})};ipCb({val:()=>structuredClone({[g.id]:rec})});
+    requireAdmin=()=>true;picked=Date.now()+4*60000;`);
+  h.run("setInPlayCutoff(g.id, picked)");
+  h.run(
+    "ipCb({val:()=>structuredClone({[g.id]:{...rec,request:{status:'ready'}}})})",
+  );
+  assert.equal(h.run("inPlayState[g.id].draft.cutoff"), h.run("picked"));
+  h.run(
+    "ipCb({val:()=>structuredClone({[g.id]:{draft:market({status:'draft',revision:'r2'})}})})",
+  );
+  assert.notEqual(
+    h.run("inPlayState[g.id].draft.cutoff"),
+    h.run("picked"),
+    "a new draft keeps its own cutoff",
+  );
+});
+
+// 2026-11-08 sweep: extending a live cutoff keeps the revision, so a leg added earlier carried the
+// old cutoff and the bet could never be approved.
+test("placing an in-play bet records the market's current cutoff, so an extended cutoff can still be approved", async () => {
+  const h = setup();
+  h.run(`me=TEAMS.find(t=>!t.admin&&!g.matches[1].home.includes(t.id)&&g.matches[1].home!==t.id&&g.matches[1].away!==t.id)||TEAMS[1];
+    g.status='open';const ext=market({cutoff:Date.now()+600000});inPlayState[g.id]={published:ext};
+    db.ref=()=>({once:async()=>({val:()=>structuredClone({published:ext})}),set:async()=>{},update:async()=>{},push:()=>({set:async()=>{}}),on(){},off(){}});
+    slip=[{type:'match',gwId:g.id,matchId:g.matches[1].id,pick:'home',odds:2,marketRevision:'r1',marketCutoff:Date.now()-60000,label:'x'}];
+    document.getElementById=(id)=>id==='stakeInput'?{value:'5'}:id==='betMsg'?{value:''}:document.createElement('div');before=S.bets.length;`);
+  await h.run("placeBet()");
+  assert.equal(
+    h.run("S.bets.length"),
+    h.run("before") + 1,
+    h.run("typeof lastToast==='undefined'?'':lastToast"),
+  );
+  assert.equal(
+    h.run("S.bets.at(-1).legs[0].marketCutoff"),
+    h.run("inPlayState[g.id].published.cutoff"),
+  );
+  assert.equal(h.run("LennonInPlay.acceptError(S.bets.at(-1),g)"), null);
+});

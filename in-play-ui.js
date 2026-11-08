@@ -1,6 +1,8 @@
 /* In-play state is isolated from the legacy app's whole-state saves. */
 let inPlayState = {},
-  inPlayListener = null;
+  inPlayListener = null,
+  // Cutoffs an admin picked for an unpublished draft, kept apart so a live update doesn't wipe them.
+  inPlayPickedCutoff = {};
 const INPLAY_ROOT = "lennon-lounge-inplay";
 function inPlayPublished(id) {
   // Independent of the normal board: pulling back normal odds leaves in-play alone.
@@ -12,6 +14,11 @@ function startInPlayListener() {
     "value",
     (snap) => {
       inPlayState = snap.val() || {};
+      for (const [id, pick] of Object.entries(inPlayPickedCutoff)) {
+        const d = inPlayState[id]?.draft;
+        if (d && d.revision === pick.revision) d.cutoff = pick.ts;
+        else delete inPlayPickedCutoff[id];
+      }
       if (me && S) {
         render();
         inPlayAutoPublish();
@@ -19,6 +26,8 @@ function startInPlayListener() {
     },
     (err) => {
       inPlayState = {};
+      inPlayListener = null; // Firebase has dropped it; allow a restart on next login
+      inPlayPickedCutoff = {};
       toast("In-play feed unavailable: " + err.message, true);
     },
   );
@@ -27,6 +36,7 @@ function stopInPlayListener() {
   if (inPlayListener) db.ref(INPLAY_ROOT).off("value", inPlayListener);
   inPlayListener = null;
   inPlayState = {};
+  inPlayPickedCutoff = {};
 }
 async function refreshInPlay(id) {
   const snap = await db.ref(INPLAY_ROOT + "/" + id).once("value");
@@ -226,6 +236,7 @@ async function setInPlayCutoff(id, value) {
     }
   } else {
     d.cutoff = ts;
+    inPlayPickedCutoff[id] = { revision: d.revision, ts };
     toast("Cutoff set to " + fmtDT(ts) + ". Publish to apply it.");
   }
   render();

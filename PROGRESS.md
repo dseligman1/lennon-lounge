@@ -1,5 +1,12 @@
 # Lennon Lounge v2 — Feature Build Progress
 
+## ROUND 20 — periodic code sweep, 2026-11-08
+
+- Full review of in-play, free game, publication, bet placement/approval, settlement, P&L, rules and workers. Tests and all Actions green beforehand.
+- Fixed: (i) extending a live in-play cutoff left earlier slip legs with the old cutoff, so bets placed in the extra time could never be approved; placement now records the market's current cutoff. (ii) An in-play bet refused by the database (market closed in the last seconds) showed "Bet placed" then vanished; it now saves immediately and says it was not placed. (iii) A cutoff picked for an unpublished in-play draft was wiped by any live in-play update. (iv) After a forced logout the in-play and publication listeners never restarted until a page reload. (v) P&L sparkline ignored free-bet credit, so it could end on a different number from the P&L shown. (vi) Settle toast/audit counted void bets as losers.
+- Not changed (structural, reported to Dan): any logged-in member can still write the whole `lennon-lounge` tree, and most saves rewrite the whole state, so a stale tab can overwrite newer changes.
+- Tests: 59 Node (2 new in `tests/decoupling.test.cjs`, the cutoff one confirmed to fail without the fix) and the browser suites pass.
+
 ## ROUND 19 — independent in-play, working cutoffs, auto free game, 2026-11-07
 
 - Dan's report: chosen cutoff made no difference; in-play couldn't run without normal odds; free game didn't offer a new go.

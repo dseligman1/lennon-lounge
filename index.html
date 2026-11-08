@@ -856,8 +856,8 @@
 <script src="lounge-games-ui.js?v=20261107b"></script>
 <script src="odds-model.js?v=20261107"></script>
 <script src="in-play-market.js?v=20261107b"></script>
-<script src="publication-ui.js?v=20261107b"></script>
-<script src="in-play-ui.js?v=20261107b"></script>
+<script src="publication-ui.js?v=20261108"></script>
+<script src="in-play-ui.js?v=20261108"></script>
 <script>
 /* ================================================================
    LENNON LOUNGE v2.0 — Firebase-backed multi-device webapp
@@ -1341,9 +1341,11 @@ function logout() {
   _usageQueue = [];
   if (dbListener) {
     db.ref(ROOT).off('value', dbListener);
-    stopInPlayListener(); stopPublicationListener();
     dbListener = null;
   }
+  // Always detach these: after a forced logout (listener denied) dbListener is already null, and
+  // leaving them "attached" stopped them restarting on the next login.
+  stopInPlayListener(); stopPublicationListener();
   me = null;
   authPins = {};
   sessionStorage.removeItem('wlgyl_user');
@@ -1810,7 +1812,8 @@ function pnlSparklineSvg(teamId){
     .sort((a,b)=>(a.settledAt||a.placedAt)-(b.settledAt||b.placedAt));
   if(settled.length<2) return '';
   let running=0;
-  const pts=settled.map(b=>{ running+=(b.status==='won'?(b.settledPayout-b.stake):-b.stake); return running; });
+  // Same free-bet credit handling as computePnl(), so the line ends on the P&L shown beside it.
+  const pts=settled.map(b=>{ const own=b.stake-(b.stakeCredit||0); running+=(b.status==='won'?(b.settledPayout-own):-own); return running; });
   const min=Math.min(0,...pts), max=Math.max(0,...pts);
   const range=(max-min)||1;
   const W=280,H=56,PAD=4;
@@ -3024,7 +3027,14 @@ function updateSlipStakeUI(){
 }
 
 async function placeBet(){
-  if(slip.some(l=>l.marketRevision)){try{await refreshInPlay(slip[0].gwId);}catch(e){toast("Cannot verify current in-play odds. Reconnect and try again.",true);return;}}
+  const inplaySlip=slip.some(l=>l.marketRevision);
+  if(inplaySlip){
+    try{await refreshInPlay(slip[0].gwId);}catch(e){toast("Cannot verify current in-play odds. Reconnect and try again.",true);return;}
+    // An admin can move a live market's cutoff without changing its revision; carry the current
+    // cutoff onto the legs so approval checks the bet against the cutoff it was actually placed under.
+    const live=inPlayPublished(slip[0].gwId);
+    if(live) slip.forEach(l=>{ if(l.marketRevision===live.revision) l.marketCutoff=live.cutoff; });
+  }
   const stake=parseFloat(document.getElementById('stakeInput').value);
   if(!stake||stake<S.settings.minStake){ toast('Enter a stake',true); return; }
   const ctx=slipContext();
@@ -3036,7 +3046,12 @@ async function placeBet(){
   if(submitBet({gwId:ctx.g.id,legs:slip.map(l=>({...l})),effOdds:eff,stake,boostPct:tok?tok.pct:0,freeBetAmount:freeTok?Math.min(freeTok.amount,stake):0,message:msg,duplicateOf:slipDuplicateOf})){
     if(tok) tok.used=true;
     if(freeTok) freeTok.used=true;
-    slip=[]; slipDuplicateOf=null; save();
+    slip=[]; slipDuplicateOf=null;
+    // In-play bets are checked by the database against the live market (server time), so a bet
+    // made in the last seconds can be refused. Write now and say so, rather than "Bet placed" and
+    // the bet silently disappearing on the next refresh.
+    if(inplaySlip) saveNow().catch(()=>toast('Bet NOT placed: the in-play market closed or changed before it saved. Check the latest odds.',true));
+    else save();
   }
 }
 
@@ -6501,13 +6516,13 @@ function settleGw(gwId){
   const incomplete=g.matches.filter(m=>m.home&&m.away&&(!m.result||m.result.homePts===null||m.result.awayPts===null));
   if(incomplete.length){ toast(incomplete.length+' score(s) missing',true); return; }
   if(!confirm('Settle '+g.name+'? Accepted bets grade now; unaccepted bets expire.')) return;
-  let won=0,lost=0;
+  let won=0,lost=0,voided=0;
   S.bets.filter(b=>b.gwId===gwId).forEach(b=>{
     if(b.status==='accepted'){
       const r=settleBet(b,S);
       if(r){
         b.status=r.outcome; b.settledPayout=r.payout; b.settledAt=Date.now();
-        r.outcome==='won'?won++:lost++;
+        if(r.outcome==='won') won++; else if(r.outcome==='void') voided++; else lost++;
         const msg=r.outcome==='won'
           ?`🎉 BET WON! £${r.payout.toFixed(2)} incoming · ${b.legs.length} leg(s) @ ${fmtOdds(b.effOdds)}`
           :r.outcome==='void'
@@ -6526,9 +6541,9 @@ function settleGw(gwId){
   // crossed rolling-window level. fold_size/odds_threshold rules are no-ops here (they need a
   // specific bet, only checked at placement time).
   S.teams.forEach(t=>evaluatePromoRules(t.id));
-  audit('settled',`${g.name}: ${won} won, ${lost} lost`);
+  audit('settled',`${g.name}: ${won} won, ${lost} lost${voided?`, ${voided} void`:''}`);
   saveNow(); render();
-  toast(`${g.name} settled ⚖️ — ${won} winner(s), ${lost} loser(s)`);
+  toast(`${g.name} settled ⚖️ — ${won} winner(s), ${lost} loser(s)${voided?`, ${voided} void`:''}`);
   setTimeout(()=>openPoster('recap',gwId),500);
 }
 

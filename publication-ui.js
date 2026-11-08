@@ -7,10 +7,16 @@ function oddsWithdrawn(id) {
 }
 function startPublicationListener() {
   if (publicationListener) return;
-  publicationListener = db.ref(PUBLICATION_ROOT).on("value", (snap) => {
-    publicationState = snap.val() || {};
-    if (me && S) render();
-  });
+  publicationListener = db.ref(PUBLICATION_ROOT).on(
+    "value",
+    (snap) => {
+      publicationState = snap.val() || {};
+      if (me && S) render();
+    },
+    () => {
+      publicationListener = null; // Firebase has dropped it; allow a restart on next login
+    },
+  );
 }
 function stopPublicationListener() {
   if (publicationListener)
