@@ -195,3 +195,16 @@ test("special legs: points lines lock in as soon as they're decided", () => {
   assert.equal(t({ kind: "match_total", matchId: "m0", dir: "over", line: 75.5 }).icon, "✅");
   assert.equal(t({ type: "bespoke", label: "x" }).icon, "⏳");
 });
+
+test("control tower feed: kickoffs, progress and release time for the gameweeks in play", () => {
+  const now = T0 + 5 * H; // Saturday afternoon: 5 games done (0, 2.5×4 finished by +4.4h), one live
+  const fx = { 13: fixtures(T0 - 168 * H, 13).map((f) => ({ ...f, kickoff_time: new Date(Date.parse(f.kickoff_time) - 168 * H).toISOString(), started: true, finished: true })), 14: fixtures(now), 15: fixtures(T0 + 168 * H, 15).map((f) => ({ ...f, kickoff_time: new Date(Date.parse(f.kickoff_time) + 168 * H).toISOString(), started: false, finished: false, finished_provisional: false })) };
+  const tl = Core.timeline({ now, fixturesByEvent: fx, state: { gameweeks: [gw("open")] } });
+  assert.deepEqual(Object.keys(tl).map(Number).sort(), [14, 15], "the open gameweek and the next one to release");
+  assert.equal(tl[14].total, 10);
+  assert.equal(tl[14].finished, 5);
+  assert.equal(tl[14].live, 1);
+  assert.equal(tl[14].kickoffs.length, 10);
+  assert.equal(tl[15].releaseAt, T0 + 168 * H - 24 * H);
+  assert.equal(Core.timeline({ now, config: { releaseHoursBefore: 36 }, fixturesByEvent: fx, state: { gameweeks: [] } })[15].releaseAt, T0 + 168 * H - 36 * H);
+});

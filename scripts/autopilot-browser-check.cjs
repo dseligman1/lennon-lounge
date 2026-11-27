@@ -138,7 +138,54 @@ async function phoneScreens(page, pub, set) {
   await shot("odds-1", "phone-share-odds.png");
   await shot("trend-1", "phone-share-tracker.png");
   await shot("recap-1", "phone-share-recap.png");
-  await page.evaluate(() => { apCloseShare(); go("office"); });
+  // Control tower: GW in play (5/10 games, tracker 1 waiting, one bet to review), last week settled
+  // with its results poster unsent, and next week waiting to release. Screen-only changes.
+  await page.evaluate(({ now, pubId, setId, pubEv, setEv }) => {
+    const g = gw(pubId);
+    g.deadline = now - 5 * 3600000;
+    g.oddsReleasedAt = now - 29 * 3600000;
+    const ko0 = g.deadline + 80 * 60000;
+    const kick = [0, 2.5, 2.5, 2.5, 2.5, 5, 7.5, 25.5, 25.5, 28].map((h) => ko0 + h * 3600000);
+    const next = S.gameweeks.filter((x) => x.event > pubEv && x.status !== "open" && x.status !== "settled").sort((a, b) => a.event - b.event)[0];
+    const A = __SEED__["lennon-lounge-autopilot"];
+    A.status.timeline = {
+      [pubEv]: { total: 10, finished: 5, live: 1, started: 6, firstKickoff: ko0, lastKickoff: kick[9], releaseAt: ko0 - 24 * 3600000, kickoffs: kick },
+    };
+    if (next) {
+      next.deadline = ko0 + 7 * 86400000 - 80 * 60000;
+      A.status.timeline[next.event] = { total: 10, finished: 0, live: 0, started: 0, firstKickoff: ko0 + 7 * 86400000, lastKickoff: ko0 + 8 * 86400000, releaseAt: ko0 + 6 * 86400000, kickoffs: [ko0 + 7 * 86400000] };
+    }
+    A.state = { gws: {
+      [setEv]: { released: { at: now - 9 * 86400000, by: "autopilot", outboxId: null }, updates: { 0: { at: now - 7 * 86400000, finished: 4, outboxId: null, skipped: "no live bets" } }, settled: { at: now - 60000, by: "autopilot", outboxId: "recap-1", won: 1, lost: 0, void: 0, expired: 1 } },
+      [pubEv]: { released: { at: now - 29 * 3600000, by: "autopilot", outboxId: "odds-1" }, updates: { 0: { at: now - 3600000, finished: 5, index: 0, outboxId: "trend-1" } } },
+    } };
+    apCloseShare();
+    ctPick = pubId;
+    go("office");
+  }, { now, pubId: pub.gwId, setId: set.gwId, pubEv: Number(publishEv), setEv: Number(settleEv) });
+  await page.waitForSelector("#ctBody .ct-list");
+  await page.waitForTimeout(600);
+  await page.evaluate(() => document.getElementById("controlTower").scrollIntoView());
+  await page.screenshot({ path: path.join(out, "phone-tower-inplay.png"), fullPage: false });
+  const towerShot = async (file, pick) => {
+    await page.evaluate((pick) => {
+      ctPick = pick;
+      ctRedraw();
+      document.querySelectorAll("header, #bottomNav").forEach((e) => (e.style.display = "none"));
+      document.getElementById("controlTower").scrollIntoView();
+    }, pick);
+    await page.waitForTimeout(200);
+    const box = await page.evaluate(() => { const r = document.getElementById("controlTower").getBoundingClientRect(); return { y: r.top + scrollY, h: r.height }; });
+    await page.screenshot({ path: path.join(out, file), fullPage: true, clip: { x: 0, y: Math.max(0, box.y - 12), width: 390, height: box.h + 24 } });
+  };
+  await towerShot("phone-tower-inplay-full.png", pub.gwId);
+  await towerShot("phone-tower-settled-full.png", set.gwId);
+  const nextId = await page.evaluate((ev) => (S.gameweeks.filter((x) => x.event > ev && x.status !== "open" && x.status !== "settled").sort((a, b) => a.event - b.event)[0] || {}).id, Number(publishEv));
+  if (nextId) await towerShot("phone-tower-next-full.png", nextId);
+  await page.evaluate(() => {
+    document.querySelectorAll("header, #bottomNav").forEach((e) => (e.style.display = ""));
+    document.getElementById("autopilotSettings").open = true;
+  });
   await page.waitForSelector("#apCardBody table");
   await page.waitForTimeout(500);
   await page.evaluate(() => document.querySelector("#apCardBody").closest(".card").scrollIntoView());
@@ -216,6 +263,10 @@ async function phoneScreens(page, pub, set) {
     await page.waitForSelector("#posterModal.open #apCaption");
     await page.screenshot({ path: path.join(out, "share-text.png") });
     await page.evaluate(() => { apCloseShare(); go("office"); });
+    await page.waitForSelector("#ctBody .ct-list");
+    const tower = await page.evaluate(() => [...document.querySelectorAll("#ctBody .ct-title")].map((e) => e.firstChild.textContent));
+    assert.ok(tower.includes("Odds released") && tower.includes("Settle"), "control tower lists the gameweek's steps");
+    await page.evaluate(() => { document.getElementById("autopilotSettings").open = true; });
     await page.waitForSelector("#apCardBody table");
     await page.screenshot({ path: path.join(out, "office-autopilot.png"), fullPage: false });
     if (process.env.SCREENS) await phoneScreens(page, pub, set);

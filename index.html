@@ -859,7 +859,7 @@
 <script src="in-play-market.js?v=20261107b"></script>
 <script src="publication-ui.js?v=20261108b"></script>
 <script src="in-play-ui.js?v=20261108b"></script>
-<script src="autopilot-ui.js?v=20261127"></script>
+<script src="autopilot-ui.js?v=20261127b"></script>
 <script>
 /* ================================================================
    LENNON LOUNGE v2.0 — Firebase-backed multi-device webapp
@@ -6867,6 +6867,7 @@ function vOffice(){
     <div class="kpi"><div class="l">Live bets</div><div class="v">${live.length}</div></div>
     <div class="kpi"><div class="l">All-time bets</div><div class="v">${S.bets.length}</div></div>
   </div>
+  ${controlTowerCard()}
   ${autopilotCard()}
   ${posterOfficeCard()}
   ${usageOfficeCard()}

@@ -349,7 +349,47 @@ function trendText({ g, bets, teams, snap, update, link }) {
   return [...head, ...body, ...foot].join("\n");
 }
 
+/* ---------------- Control tower feed ----------------
+ * The browser can't reach the classic FPL API, so each tick saves a small per-gameweek summary
+ * (kickoffs, games done/live, release time) for Back Office → 🗼 Control tower to draw its tracker.
+ * Covers every published-but-unsettled gameweek, the next one to release, and the one before it. */
+function timeline({ now, config: saved, fixturesByEvent, state }) {
+  const cfg = config(saved);
+  const events = Object.keys(fixturesByEvent || {}).map(Number).sort((a, b) => a - b);
+  const sums = Object.fromEntries(events.map((ev) => [ev, fixtureSummary(fixturesByEvent[ev])]));
+  const nextEv = events.find((ev) => sums[ev].total && sums[ev].started === 0 && sums[ev].firstKickoff > now);
+  const want = new Set();
+  arr(state && state.gameweeks).forEach((g) => {
+    if (g.status === "open" && g.event) want.add(Number(g.event));
+  });
+  if (nextEv != null) {
+    want.add(nextEv);
+    if (sums[nextEv - 1]) want.add(nextEv - 1);
+  }
+  const out = {};
+  for (const ev of want) {
+    const s = sums[ev];
+    if (!s || !s.total) continue;
+    const kickoffs = arr(fixturesByEvent[ev])
+      .map((f) => Date.parse(f.kickoff_time))
+      .filter(Number.isFinite)
+      .sort((a, b) => a - b);
+    out[ev] = {
+      total: s.total,
+      finished: s.finished,
+      live: s.live,
+      started: s.started,
+      firstKickoff: s.firstKickoff,
+      lastKickoff: s.lastKickoff,
+      releaseAt: s.firstKickoff - cfg.releaseHoursBefore * H,
+      kickoffs,
+    };
+  }
+  return out;
+}
+
 module.exports = {
+  timeline,
   DEFAULTS,
   TREND_WINDOWS,
   config,

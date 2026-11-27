@@ -304,6 +304,7 @@ async function tick() {
     nextCheckAt: plan.nextCheckAt,
     notes: plan.notes,
     actions: plan.actions.map((a) => `${a.type} GW${a.ev}`),
+    timeline: Core.timeline({ now, config: cfg, fixturesByEvent, state: st }),
     runStartedAt: started,
     runUrl: process.env.RUN_URL || null,
   };
