@@ -103,6 +103,10 @@ module.exports = function (state) {
     fs.readFileSync(require.resolve("../lounge-games-ui.js"), "utf8"),
     ctx,
   );
+  vm.runInContext(
+    fs.readFileSync(require.resolve("../player-ui.js"), "utf8"),
+    ctx,
+  );
   ctx.input = structuredClone(state);
   vm.runInContext(
     "S={...freshState(),...input}; S.settings={...DEFAULT_SETTINGS,...input.settings}; S.sim={events:{},...S.sim}; me=TEAMS[0]; base=structuredClone(S);",
