@@ -340,6 +340,16 @@ async function main() {
     console.log(bets.filter((b) => !["settled", "won", "lost", "void", "expired", "cancelled", "rejected"].includes(b.status)).map((b) => `${b.teamId} ${b.gwId} ${b.status} £${b.stake} @${b.effOdds}`).join("\n"));
     return;
   }
+  if (MODE === "check") {
+    // Read-only proof that the house browser works here: log in, draw the next draft
+    // gameweek's odds poster without saving anything, log out.
+    const cfg = Core.config(await db(`${ROOT}/config`));
+    const gws = Object.values((await db("lennon-lounge/gameweeks")) || {}).filter(Boolean);
+    const next = gws.filter((g) => g.status === "draft" && g.event).sort((a, b) => a.event - b.event)[0];
+    if (!next) return log("No draft gameweek to check against.");
+    const out = await withHouse(cfg, (page, House) => House.publish(page, Number(next.event), { dryRun: true }));
+    return log(`Check passed: logged in as the house and drew the ${out.name} odds poster (nothing saved).`);
+  }
   for (;;) {
     let plan;
     try {

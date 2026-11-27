@@ -12,9 +12,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "watch = keep running while needed; once = one check; status = print state only"
+        description: "watch = keep running while needed; once = one tick; status = print state; check = test the house browser (no saves)"
         type: choice
-        options: [watch, once, status]
+        options: [watch, once, status, check]
         default: watch
       dry_run:
         description: "Decide and log only: no publishing, settling, pushes or writes"
