@@ -28,6 +28,22 @@ Player confidence is the simulated probability of finishing within **±2 points*
 
 Forecast snapshots, source timestamps and recommended prices are retained on recommendation/publication. Older seasons did not archive exact forecasts; `scripts/backtest.cjs` reconstructs comparable forecasts using pre-deadline backups and strictly earlier histories. It cannot recover unrecorded historical lineups, injuries, transfers or original recommendations. Never call a reconstruction an observed live forecast or treat its development-sample improvement as a future guarantee.
 
+## Autopilot (2026-11-27)
+
+`autopilot.yml` runs the week with no taps beyond sending to WhatsApp:
+
+1. **Release**, ~24h before the gameweek's first Premier League kickoff: stages the gameweek if needed, resets its odds to the model's recommendation (`rerecommend`), publishes (`publishGw`: promos, free game, gate, player notifications) and makes the odds poster.
+2. **Bet tracker**, 2–3 WhatsApp-ready updates: after 3–5 finished games, after 5–7 (at least two more than the last), and an optional third after 8–9 (two hours after the second). Each waits for a lull with no game in progress unless the window's top is reached. Skipped if there are no live bets. Text only, built from the Matchday Live snapshot: per leg ✅/❌/🟢/🟠, the model's live chance, and the house's live liability.
+3. **Settle**, once every Draft match has its final score in synced history: fills scores, `settleGw`, recap poster. Unreviewed bets would expire, so it first pushes a warning and waits `settleGraceHours` (default 12).
+
+Every WhatsApp item goes into `lennon-lounge-autopilot/outbox` (images under `/images`) and Dan's phone gets a push; tapping it opens the app on a share screen: **📲 Share to WhatsApp** (image + caption via the share sheet) or **💬 Send in WhatsApp** (text pre-typed), then pick the group. No WhatsApp bot: posting into an existing group needs an unofficial client, which breaks WhatsApp's terms and risks the number.
+
+Publishing and settling drive the real app in headless Chrome (`scripts/house-browser.cjs`) logged in as the house with the PIN read by the service account; the browser's membership is deleted afterwards. So the autopilot does exactly what the buttons do. Decisions are pure and tested (`scripts/autopilot-core.cjs`, `tests/autopilot.test.cjs`); `scripts/autopilot-browser-check.cjs` runs publish + settle + posters offline against a backup with a fake Firebase.
+
+**Timing.** GitHub ran "hourly" schedules every 3–7 hours in Nov 2026, so the schedule only wakes the autopilot. While a release is within 30h or a gameweek is in play it keeps running, checks every 5–15 min (5 while games are live), refreshes Matchday Live, runs the new-bet alert check, runs FPL sync when final scores are due, and starts its own successor before the 6h job limit. Otherwise it exits until the next hourly wake-up.
+
+**Controls.** Back Office → 🤖 Autopilot: pause/resume, release hours, settle grace, outbox, recent actions, link to the latest run. Actions → Autopilot → Run workflow: `mode=status` prints state; `dry_run` decides and logs only. Failures push an alert and retry up to three times, then hand back to Dan. It never republishes a published week, never touches a week set to in-play only, and warns rather than publishing with under 3h to kickoff.
+
 ## Normal odds, in-play and the free game are independent (2026-11-07)
 
 - **In-play runs on its own** for any gameweek until it is settled. Publishing in-play on a week whose normal odds were never published makes it an **in-play-only** week (`status: open`, `normalOff: true`): players see no pre-match board, while results, Bet Settler, Matchday and settlement treat it like any live week. Odds Setter → draft card → **🚫 Skip normal odds (in-play only)** does the same up front; the in-play-only card offers **🚀 Release normal odds after all** (before the normal cutoff) or **↺ Back to draft** (no bets, no live in-play).

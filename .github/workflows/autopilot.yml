@@ -1,0 +1,51 @@
+name: Autopilot
+
+# Weekly hands-off cycle (2026-11-27, PROGRESS.md ROUND 22, scripts/autopilot.cjs):
+# releases odds ~24h before the first kickoff, queues bet-tracker updates as games finish,
+# settles when Draft has final scores, and queues the posters for Dan's one-tap WhatsApp share.
+# The hourly schedule only wakes it up: while a gameweek is near or in play the run stays alive,
+# checks every 5-15 min and starts its own successor before the 6h job limit, because GitHub
+# ran "hourly" jobs every 3-7 hours in Nov 2026. Pause it in Back Office → 🤖 Autopilot.
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "watch = keep running while needed; once = one check; status = print state only"
+        type: choice
+        options: [watch, once, status]
+        default: watch
+      dry_run:
+        description: "Decide and log only: no publishing, settling, pushes or writes"
+        type: boolean
+        default: false
+
+concurrency:
+  group: autopilot
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write # to start its own successor run
+
+jobs:
+  autopilot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run autopilot
+        env:
+          AUTOPILOT_MODE: ${{ inputs.mode || 'watch' }}
+          AUTOPILOT_DRY_RUN: ${{ inputs.dry_run }}
+          FIREBASE_DB_URL: ${{ secrets.FIREBASE_DB_URL }}
+          FIREBASE_SERVICE_KEY: ${{ secrets.FIREBASE_SERVICE_KEY }}
+          FPL_LEAGUE_ID: ${{ secrets.FPL_LEAGUE_ID }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node scripts/autopilot.cjs

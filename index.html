@@ -859,6 +859,7 @@
 <script src="in-play-market.js?v=20261107b"></script>
 <script src="publication-ui.js?v=20261108b"></script>
 <script src="in-play-ui.js?v=20261108b"></script>
+<script src="autopilot-ui.js?v=20261127"></script>
 <script>
 /* ================================================================
    LENNON LOUNGE v2.0 — Firebase-backed multi-device webapp
@@ -6866,6 +6867,7 @@ function vOffice(){
     <div class="kpi"><div class="l">Live bets</div><div class="v">${live.length}</div></div>
     <div class="kpi"><div class="l">All-time bets</div><div class="v">${S.bets.length}</div></div>
   </div>
+  ${autopilotCard()}
   ${posterOfficeCard()}
   ${usageOfficeCard()}
   <div class="card">
@@ -7479,6 +7481,8 @@ function render(){
   // Batch 29: same treatment for the squad viewer — a background FPL sync landing while it's
   // open refreshes the pitch in place rather than leaving stale form/FDR on screen.
   if(squadModalState) renderSquadModal();
+  // 2026-11-27: open a WhatsApp item the autopilot's push linked to (?share=…), once logged in.
+  if(typeof apMaybeOpenShare==='function') apMaybeOpenShare();
   // Auto-refresh reminder on time-sensitive tabs
   clearTimeout(render._rt);
   if(['home','matchday','builder','review','settler'].includes(activeTab)){

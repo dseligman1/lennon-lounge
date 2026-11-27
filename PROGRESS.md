@@ -1,5 +1,13 @@
 # Lennon Lounge v2 — Feature Build Progress
 
+## ROUND 22 — autopilot: release, bet tracker, settle, one-tap WhatsApp, 2026-11-27
+
+- Dan: full end-to-end automation of odds release (~24h before first kickoff, recommended odds), posters, WhatsApp, bet-review pushes, 2–3 in-week bet updates (after ~3–5 and ~5–7 games), settlement and recap. Ideally no taps.
+- WhatsApp: Dan chose **one tap, no bot** after the risks of an unofficial linked-device bot on his number were explained (terms breach, possible ban). Meta's Muse agent explored separately; it can't post to groups or trigger runs.
+- New: `scripts/autopilot-core.cjs` (pure decisions + bet-tracker text), `scripts/autopilot.cjs` (runner/watcher), `scripts/house-browser.cjs` (drives the real app headlessly as the house), `scripts/notify.cjs` (push logic moved out of notify.yml, shared), `autopilot-ui.js` (share screen + Back Office card), `.github/workflows/autopilot.yml`. `sw.js` passes a tapped notification's link to an open app. Rules: `lennon-lounge-autopilot` admin-read; admins write `config` and `outbox/*/sentAt` only.
+- Timing root cause: GitHub ran hourly schedules every 3–7h, so the autopilot keeps itself running through each gameweek and restarts itself before the 6h limit.
+- Tests: `tests/autopilot.test.cjs` (13), rules test for the new subtree, offline browser check (`scripts/autopilot-browser-check.cjs`: 16 Nov backup, GW12 published at exactly the model's odds, GW10 settled with one bet graded and one unreviewed bet expired, both posters, share screen). Screenshots: `../outputs/2026-11-27-autopilot-check/`.
+
 ## ROUND 21 — change-only saving and house-only rules, 2026-11-08
 
 - Problem (from the ROUND 20 sweep, Dan: "100% needs to be sorted"): every save rewrote the whole `lennon-lounge` tree, so a phone holding old data could silently undo newer changes (an approval, a settlement, someone else's bet); and any logged-in member could rewrite anything.

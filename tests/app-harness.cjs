@@ -94,6 +94,10 @@ module.exports = function (state) {
     fs.readFileSync(require.resolve("../publication-ui.js"), "utf8"),
     ctx,
   );
+  vm.runInContext(
+    fs.readFileSync(require.resolve("../autopilot-ui.js"), "utf8"),
+    ctx,
+  );
   vm.runInContext(src, ctx);
   vm.runInContext(
     fs.readFileSync(require.resolve("../lounge-games-ui.js"), "utf8"),

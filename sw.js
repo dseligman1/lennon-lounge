@@ -21,6 +21,9 @@ self.addEventListener('notificationclick', e => {
   const url = new URL((e.notification.data && e.notification.data.url) || './', self.registration.scope).href;
   e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(wins => {
     const w = wins.find(x => x.url.startsWith(self.registration.scope));
-    return w ? w.focus() : self.clients.openWindow(url);
+    if (!w) return self.clients.openWindow(url);
+    // 2026-11-27: the app is already open, so hand it the link (autopilot "tap to share" items).
+    w.postMessage({ openUrl: url });
+    return w.focus();
   }));
 });

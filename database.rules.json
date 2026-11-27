@@ -210,6 +210,20 @@
     "lennon-lounge-publication": {
       ".read": "auth != null && root.child('lennon-lounge-members/' + auth.uid).exists()",
       ".write": "auth != null && (root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'selig' || root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'rowez')"
+    },
+    "lennon-lounge-autopilot": {
+      ".read": "auth != null && (root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'selig' || root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'rowez')",
+      "config": {
+        ".write": "auth != null && (root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'selig' || root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'rowez')"
+      },
+      "outbox": {
+        "$id": {
+          "sentAt": {
+            ".write": "auth != null && (root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'selig' || root.child('lennon-lounge-members/' + auth.uid + '/team').val() === 'rowez')",
+            ".validate": "newData.isNumber() && newData.val() <= now + 60000"
+          }
+        }
+      }
     }
   }
 }

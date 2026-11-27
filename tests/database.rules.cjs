@@ -611,3 +611,23 @@ test("the app's own change-only saves are accepted by the rules, for a player an
     ),
   );
 });
+test("autopilot data: house managers read it, pause it and mark items sent; players see nothing", async () => {
+  await seed("lennon-lounge-autopilot", {
+    config: { enabled: true },
+    outbox: { o1: { id: "o1", kind: "trend", caption: "x", createdAt: 1, sentAt: null } },
+    images: { o1: "data:image/jpeg;base64,AAAA" },
+    state: { gws: { 12: { released: { at: 1 } } } },
+  });
+  const house = db("admin"),
+    player = db("alice");
+  await assertSucceeds(get(ref(house, "lennon-lounge-autopilot/outbox")));
+  await assertSucceeds(get(ref(house, "lennon-lounge-autopilot/images/o1")));
+  await assertSucceeds(update(ref(house, "lennon-lounge-autopilot/config"), { enabled: false }));
+  await assertSucceeds(set(ref(house, "lennon-lounge-autopilot/outbox/o1/sentAt"), Date.now()));
+  await assertFails(set(ref(house, "lennon-lounge-autopilot/outbox/o1/caption"), "edited"));
+  await assertFails(set(ref(house, "lennon-lounge-autopilot/state/gws/12"), null));
+  await assertFails(get(ref(player, "lennon-lounge-autopilot/outbox")));
+  await assertFails(get(ref(player, "lennon-lounge-autopilot/config")));
+  await assertFails(update(ref(player, "lennon-lounge-autopilot/config"), { enabled: false }));
+  await assertFails(set(ref(player, "lennon-lounge-autopilot/outbox/o1/sentAt"), Date.now()));
+});
