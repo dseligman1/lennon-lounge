@@ -161,7 +161,7 @@ async function phoneScreens(page, pub, set) {
     } };
     apCloseShare();
     ctPick = pubId;
-    go("office");
+    go("tower");
   }, { now, pubId: pub.gwId, setId: set.gwId, pubEv: Number(publishEv), setEv: Number(settleEv) });
   await page.waitForSelector("#ctBody .ct-list");
   await page.waitForTimeout(600);
@@ -180,6 +180,20 @@ async function phoneScreens(page, pub, set) {
   };
   await towerShot("phone-tower-inplay-full.png", pub.gwId);
   await towerShot("phone-tower-settled-full.png", set.gwId);
+  // Tick: mark the results poster sent another way, then check it shows as done.
+  await page.evaluate(() => {
+    const step = [...document.querySelectorAll("#ctBody .ct-step")].find((li) => li.textContent.includes("Results poster"));
+    [...step.querySelectorAll("button")].find((b) => b.textContent.includes("Mark done")).click();
+  });
+  await page.waitForFunction(() => [...document.querySelectorAll("#ctBody .ct-step.done .ct-title")].some((e) => e.textContent.includes("Results poster")));
+  assert.ok(await page.evaluate(() => __SEED__["lennon-lounge-autopilot"].outbox["recap-1"].sentAt > 0), "tick recorded on the outbox item");
+  // A step with no queued copy: tick goes to config/ticks and can be undone.
+  await page.evaluate((ev) => ctTick(ev, "odds", null), Number(settleEv));
+  assert.ok(await page.evaluate((ev) => __SEED__["lennon-lounge-autopilot"].config.ticks[ev].odds > 0, Number(settleEv)), "manual tick saved");
+  await page.evaluate((ev) => ctTick(ev, "odds", null, true), Number(settleEv));
+  assert.equal(await page.evaluate((ev) => (__SEED__["lennon-lounge-autopilot"].config.ticks[ev] || {}).odds ?? null, Number(settleEv)), null, "tick undone");
+  await page.evaluate(() => { __SEED__["lennon-lounge-autopilot"].outbox["recap-1"].sentAt = null; apInfo.outbox["recap-1"].sentAt = null; });
+  console.log("PASS control tower ticks");
   const nextId = await page.evaluate((ev) => (S.gameweeks.filter((x) => x.event > ev && x.status !== "open" && x.status !== "settled").sort((a, b) => a.event - b.event)[0] || {}).id, Number(publishEv));
   if (nextId) await towerShot("phone-tower-next-full.png", nextId);
   await page.evaluate(() => {
@@ -262,10 +276,10 @@ async function phoneScreens(page, pub, set) {
     });
     await page.waitForSelector("#posterModal.open #apCaption");
     await page.screenshot({ path: path.join(out, "share-text.png") });
-    await page.evaluate(() => { apCloseShare(); go("office"); });
+    await page.evaluate(() => { apCloseShare(); go("tower"); });
     await page.waitForSelector("#ctBody .ct-list");
     const tower = await page.evaluate(() => [...document.querySelectorAll("#ctBody .ct-title")].map((e) => e.firstChild.textContent));
-    assert.ok(tower.includes("Odds released") && tower.includes("Settle"), "control tower lists the gameweek's steps");
+    assert.ok(tower.includes("Odds released") && tower.some((t) => t.startsWith("Settle")), "control tower lists the gameweek's steps");
     await page.evaluate(() => { document.getElementById("autopilotSettings").open = true; });
     await page.waitForSelector("#apCardBody table");
     await page.screenshot({ path: path.join(out, "office-autopilot.png"), fullPage: false });
