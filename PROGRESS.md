@@ -1,5 +1,18 @@
 # Lennon Lounge v2 — Feature Build Progress
 
+## ROUND 23 — player Home + Bet Builder redesign ("Your week"), 2026-11-27
+- Why: Home was ~5 phone screens, Bet Builder ~5.6, a promo pop-up covered every page, and only 2 of 10
+  players had ever bet. Dan reviewed three options (outputs/2026-11-27-player-redesign/) and picked B,
+  plus two tweaks: Build a bet leads step 2, and copy-a-mate's-bet sits just before quick-bet prices.
+- PR #2, squash-merged `27c2edf`. New `player-ui.js` defines vHome()/vBuilder(); the old pages stay
+  in index.html as vHomeClassic()/vBuilderClassic() (In-Play still uses the classic builder). To roll
+  back: revert `27c2edf`.
+- Home: 3-step tracker (free Score Shot, your bet, follow live), copy cards re-priced at today's odds
+  (own-team-blocked legs dropped, tagged duplicateOf), quick-bet prices with "👥 N" backed counts,
+  one tabbed Lounge panel (Bets/Table/Chat/Me). Bet Builder: tabbed coupon, Specials tab only when
+  there are specials, sticky slip bar on phones. maybeShowPromo() no longer pops up.
+- Tests: tests/player-ui.test.cjs (4), 85/85 pass; offline browser run at 390px and 1280px clean.
+
 ## ROUND 22 — autopilot: release, bet tracker, settle, one-tap WhatsApp, 2026-11-27
 
 - Dan: full end-to-end automation of odds release (~24h before first kickoff, recommended odds), posters, WhatsApp, bet-review pushes, 2–3 in-week bet updates (after ~3–5 and ~5–7 games), settlement and recap. Ideally no taps.
