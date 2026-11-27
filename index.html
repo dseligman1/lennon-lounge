@@ -860,6 +860,7 @@
 <script src="publication-ui.js?v=20261108b"></script>
 <script src="in-play-ui.js?v=20261108b"></script>
 <script src="autopilot-ui.js?v=20261127c"></script>
+<script src="player-ui.js?v=20261127"></script>
 <script>
 /* ================================================================
    LENNON LOUNGE v2.0 — Firebase-backed multi-device webapp
@@ -2080,6 +2081,9 @@ function createPromoForGw(g){
     text:`+${pct}% on ${who} in ${team(m.home).name} v ${team(m.away).name} — now ${fmtOdds(boosted)} (was ${fmtOdds(old)})`});
 }
 function maybeShowPromo(){
+  // 2026-11-27: no pop-up any more. The boost shows as a strip above the prices on Home and in
+  // Bet Builder, plus 🔥 on the boosted price (player-ui.js pwPromoStrip/pwOddBtn).
+  if(typeof pwPromoStrip==='function') return;
   if(!me) return;
   if(me.admin && activeTab!=='builder') return;
   const gws=publishedGws().filter(g=>!gwDeadlinePassed(g)).map(g=>g.id);
@@ -2820,7 +2824,9 @@ function submitBet({gwId, legs, effOdds, stake, viaAlgo, boostPct, freeBetAmount
 // of two possible slots actually matches the real viewport width: right under the current
 // (first, open-by-default) gameweek board on mobile, or the sticky sidebar column on desktop.
 function isMobileLayout(){ return window.innerWidth<=880; }
-function vBuilder(){
+// Previous Bet Builder (until 2026-11-27). player-ui.js's vBuilder() replaces it for pre-match and
+// still calls this for the In-Play section.
+function vBuilderClassic(){
   const open=publishedGws();
   const pre=open.filter(g=>bettableNow(g)==='pre');
   const inplay=inPlayWeeks().filter(g=>LennonInPlay.isOpen(inPlayPublished(g.id),Date.now()));
@@ -4165,7 +4171,8 @@ function duplicateBet(id){
   setTimeout(()=>{ const el=document.getElementById('stakeInput'); if(el) el.focus(); },80);
 }
 
-function vHome(){
+// Previous Home (until 2026-11-27). Replaced by vHome() in player-ui.js; kept for quick rollback.
+function vHomeClassic(){
   const {pnl,house}=computePnl(S);
   const myP=pnl[me.id]||0;
   const mine=S.bets.filter(b=>b.teamId===me.id);
