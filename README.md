@@ -42,7 +42,9 @@ Publishing and settling drive the real app in headless Chrome (`scripts/house-br
 
 **Timing.** GitHub ran "hourly" schedules every 3–7 hours in Nov 2026, so the schedule only wakes the autopilot. While a release is within 30h or a gameweek is in play it keeps running, checks every 5–15 min (5 while games are live), refreshes Matchday Live, runs the new-bet alert check, runs FPL sync when final scores are due, and starts its own successor before the 6h job limit. Otherwise it exits until the next hourly wake-up.
 
-**Controls.** Back Office → 🤖 Autopilot: pause/resume, release hours, settle grace, outbox, recent actions, link to the latest run. Actions → Autopilot → Run workflow: `mode=status` prints state; `dry_run` decides and logs only. Failures push an alert and retry up to three times, then hand back to Dan. It never republishes a published week, never touches a week set to in-play only, and warns rather than publishing with under 3h to kickoff.
+**Control tower.** Back Office → 🗼 Control tower (top card) is the house's one screen for a gameweek: a delivery-style tracker from odds release to the results poster, showing what ran, what runs next and when, and a button on each step that needs Dan. It reads the app's data plus `lennon-lounge-autopilot/{status.timeline,state/gws,outbox}`.
+
+**Controls.** Back Office → 🤖 Autopilot settings (folded under the tower): pause/resume, release hours, settle grace, outbox, recent actions, link to the latest run. Actions → Autopilot → Run workflow: `mode=status` prints state; `dry_run` decides and logs only. Failures push an alert and retry up to three times, then hand back to Dan. It never republishes a published week, never touches a week set to in-play only, and warns rather than publishing with under 3h to kickoff.
 
 ## Normal odds, in-play and the free game are independent (2026-11-07)
 
