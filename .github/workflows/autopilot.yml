@@ -22,7 +22,8 @@ on:
         default: false
 
 concurrency:
-  group: autopilot
+  # Read-only status/check runs get their own group so they don't queue behind a running watcher.
+  group: autopilot-${{ ((inputs.mode == 'status' || inputs.mode == 'check') && github.run_id) || 'main' }}
   cancel-in-progress: false
 
 permissions:
