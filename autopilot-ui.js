@@ -7,7 +7,8 @@
  * scripts/autopilot.cjs in GitHub Actions. */
 const AUTOPILOT_ROOT = "lennon-lounge-autopilot";
 let apShare = null; // {id, item, loading, error}
-let apInfo = null; // {status, config, outbox, log}
+let apInfo = null; // {status, config, outbox, log, gws}
+let apLoadedAt = 0; // last background load (for the menu badge)
 
 (function captureShareParam() {
   try {
@@ -27,6 +28,10 @@ function apMaybeOpenShare() {
   try {
     id = sessionStorage.getItem("ap_share");
   } catch (e) {}
+  if (me && me.admin && S && base && activeTab !== "tower" && Date.now() - apLoadedAt > 5 * 60000) {
+    apLoadedAt = Date.now();
+    apLoadInfo();
+  }
   if (!id || !me || !me.admin || !S || !base || apShare) return;
   try {
     sessionStorage.removeItem("ap_share");
@@ -196,7 +201,14 @@ async function apLoadInfo() {
   const el = document.getElementById("apCardBody");
   if (el) el.innerHTML = apCardBody();
   if (typeof ctRedraw === "function") ctRedraw();
+  const n = ctNeedsCount();
+  if (n !== apLastNeeds) {
+    apLastNeeds = n;
+    if (typeof renderTopNav === "function") renderTopNav();
+    if (typeof renderNavDrawer === "function") renderNavDrawer();
+  }
 }
+let apLastNeeds = 0;
 
 // Settings, outbox and history, folded under the control tower (which loads the data).
 function autopilotCard() {
@@ -362,11 +374,16 @@ function ctSteps(g) {
   const pending = bets.filter((b) => CT_OPEN_BET.includes(b.status));
   const allDone = tl ? tl.total > 0 && tl.finished >= tl.total : settled;
   const games = tl ? `${tl.finished}/${tl.total} games done${tl.live ? ` · ${tl.live} live` : ""}` : "";
-  const shareStep = (title, outId, manualKind) => {
+  const ticks = ((cfg.ticks || {})[ev]) || {};
+  const tickBtn = (key, outId) =>
+    `<button class="btn ghost small" onclick="ctTick(${ev},'${key}',${outId ? `'${esc(outId)}'` : "null"})">✓ Mark done</button>`;
+  const shareStep = (title, key, outId, manualKind) => {
     const it = ctOutItem(outId);
-    if (it && it.sentAt) return { state: "done", who: "you", title, sub: `Sent ${ctWhen(it.sentAt)}`, btns: [`<button class="btn ghost small" onclick="apOpenShare('${esc(outId)}')">Open again</button>`] };
-    if (outId) return { state: "you", who: "you", title, sub: `<b>Ready for you to send.</b> It's in your phone notifications too.`, btns: [`<button class="btn gold small" onclick="apOpenShare('${esc(outId)}')">📲 Send to WhatsApp</button>`] };
-    if (manualKind) return { state: "skip", who: "you", title, sub: "You did this step by hand, so there's no queued copy. Open the poster to send it.", btns: [`<button class="btn secondary small" onclick="openPoster('${manualKind}','${esc(g.id)}')">🖼 Open poster</button>`] };
+    const ticked = ticks[key];
+    if (it && it.sentAt) return { state: "done", who: "you", title, sub: `Done ${ctWhen(it.sentAt)}`, btns: [`<button class="btn ghost small" onclick="apOpenShare('${esc(outId)}')">Open again</button>`] };
+    if (ticked) return { state: "done", who: "you", title, sub: `Marked done ${ctWhen(ticked)}`, btns: [`<button class="btn ghost small" onclick="ctTick(${ev},'${key}',null,true)">↺ Undo</button>`] };
+    if (outId) return { state: "you", who: "you", title, sub: `<b>Ready for you to send.</b> It's in your phone notifications too. Sent it another way? Mark it done.`, btns: [`<button class="btn gold small" onclick="apOpenShare('${esc(outId)}')">📲 Send to WhatsApp</button>`, tickBtn(key, outId)] };
+    if (manualKind) return { state: "you", who: "you", title, sub: "<b>Not marked as sent.</b> You did the step before it by hand, so there's no queued copy: open the poster to send it, then mark it done.", btns: [`<button class="btn secondary small" onclick="openPoster('${manualKind}','${esc(g.id)}')">🖼 Open poster</button>`, tickBtn(key, null)] };
     return null;
   };
   const steps = [];
@@ -395,7 +412,7 @@ function ctSteps(g) {
 
   // 2. Odds poster to WhatsApp
   const oddsShare = released
-    ? shareStep("Odds poster to WhatsApp", rec.released && rec.released.outboxId, !(rec.released && rec.released.outboxId) ? "odds" : null)
+    ? shareStep("Odds poster to WhatsApp", "odds", rec.released && rec.released.outboxId, !(rec.released && rec.released.outboxId) ? "odds" : null)
     : null;
   steps.push(oddsShare || { state: "next", who: "you", title: "Odds poster to WhatsApp", sub: "Lands on your phone the moment the odds go live: tap it, then Share.", btns: [] });
 
@@ -423,8 +440,8 @@ function ctSteps(g) {
     const range = w.max < 99 ? `after ${w.min}–${w.max} games` : `after ${w.min}+ games, if any are left`;
     if (u && u.skipped) return steps.push({ state: "skip", who: "auto", title, sub: `Skipped at ${u.finished} games: nobody had a live bet.`, btns: [] });
     if (u && u.outboxId) {
-      const s = shareStep(title, u.outboxId);
-      s.sub = (s.state === "done" ? s.sub : s.sub) + ` · made at ${u.finished} games`;
+      const s = shareStep(title, "tracker" + (i + 1), u.outboxId);
+      s.sub += ` · made at ${u.finished} games`;
       return steps.push(s);
     }
     if (settled || allDone) return i < 2 && !settled ? steps.push({ state: "skip", who: "auto", title, sub: "Not needed: the games finished first.", btns: [] }) : null;
@@ -469,7 +486,7 @@ function ctSteps(g) {
   }
 
   // 9. Recap poster to WhatsApp
-  const recapShare = settled ? shareStep("Results poster to WhatsApp", rec.settled && rec.settled.outboxId, !(rec.settled && rec.settled.outboxId) ? "recap" : null) : null;
+  const recapShare = settled ? shareStep("Results poster to WhatsApp", "recap", rec.settled && rec.settled.outboxId, !(rec.settled && rec.settled.outboxId) ? "recap" : null) : null;
   steps.push(recapShare || { state: "next", who: "you", title: "Results poster to WhatsApp", sub: "Lands on your phone after settling: tap it, then Share.", btns: [] });
   return { steps, tl, games, pending };
 }
@@ -483,6 +500,49 @@ function ctPhase(g, info) {
   if (tl && tl.total && tl.finished >= tl.total) return "Games over · settling";
   if (tl && tl.started) return `In play · ${info.games}`;
   return "Betting closed · kickoff soon";
+}
+
+// Its own section in the house menu (was the top card of Back Office until 27 Nov).
+function vTower() {
+  return `<h2>🗼 Control Tower</h2><div class="sub">Each gameweek from odds release to results poster: what ran, what's next, and what needs you.</div>
+  ${controlTowerCard()}
+  ${autopilotCard()}`;
+}
+
+// Count of steps that need the house, for the menu badge. 0 until the autopilot data has loaded.
+function ctNeedsCount() {
+  if (!apInfo || apInfo.error || !S || !S.gameweeks) return 0;
+  try {
+    return ctGameweeks().reduce((n, g) => n + ctSteps(g).steps.filter((s) => s.state === "you" || s.state === "bad").length, 0);
+  } catch (e) {
+    return 0;
+  }
+}
+
+// Tick a manual step done. Queued items record it on the outbox item (as the share screen does);
+// steps with no queued copy are kept in the autopilot config under ticks/<event>/<step>.
+async function ctTick(ev, key, outId, undo) {
+  if (!requireAdmin()) return;
+  try {
+    if (outId && !undo) {
+      const at = Date.now();
+      await db.ref(AUTOPILOT_ROOT + "/outbox/" + outId + "/sentAt").set(at);
+      if (apInfo && apInfo.outbox && apInfo.outbox[outId]) apInfo.outbox[outId].sentAt = at;
+    } else {
+      const v = undo ? null : Date.now();
+      await db.ref(AUTOPILOT_ROOT + "/config/ticks/" + ev + "/" + key).set(v);
+      if (apInfo) {
+        const c = (apInfo.config = apInfo.config || {});
+        c.ticks = c.ticks || {};
+        c.ticks[ev] = { ...(c.ticks[ev] || {}), [key]: v };
+        if (v == null) delete c.ticks[ev][key];
+      }
+    }
+    toast(undo ? "Un-ticked" : "Marked done ✓");
+    render();
+  } catch (e) {
+    toast("Couldn't save: " + e.message, true);
+  }
 }
 
 function controlTowerCard() {

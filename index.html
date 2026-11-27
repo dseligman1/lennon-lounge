@@ -859,7 +859,7 @@
 <script src="in-play-market.js?v=20261107b"></script>
 <script src="publication-ui.js?v=20261108b"></script>
 <script src="in-play-ui.js?v=20261108b"></script>
-<script src="autopilot-ui.js?v=20261127b"></script>
+<script src="autopilot-ui.js?v=20261127c"></script>
 <script>
 /* ================================================================
    LENNON LOUNGE v2.0 — Firebase-backed multi-device webapp
@@ -2528,6 +2528,7 @@ function navTabs(){
     {id:'usettings',label:'⚙️ Settings'},
   ];
   if(me.admin) tabs.push(
+    {id:'tower',label:'🗼 Control Tower',house:true,badge:typeof ctNeedsCount==='function'?ctNeedsCount():0},
     {id:'review',label:'🏠 Bet Review',house:true,badge:reviewCount()},
     {id:'odds',label:'🎯 Odds Setter',house:true},
     {id:'settler',label:'⚖️ Settler',house:true},
@@ -6867,8 +6868,7 @@ function vOffice(){
     <div class="kpi"><div class="l">Live bets</div><div class="v">${live.length}</div></div>
     <div class="kpi"><div class="l">All-time bets</div><div class="v">${S.bets.length}</div></div>
   </div>
-  ${controlTowerCard()}
-  ${autopilotCard()}
+  <div class="card"><p style="margin:0">🗼 The autopilot, its settings and the gameweek tracker now live in <a href="#" onclick="go('tower');return false" style="color:var(--cyan)">Control Tower</a>.</p></div>
   ${posterOfficeCard()}
   ${usageOfficeCard()}
   <div class="card">
@@ -7423,6 +7423,10 @@ function resetAll(){
 function needsActionCount(){ if(!me||!S) return 0; return (S.bets||[]).filter(b=>b.teamId===me.id&&b.status==='counter_house').length; }
 function reviewCount(){ if(!S) return 0; return (S.bets||[]).filter(b=>['pending','counter_user'].includes(b.status)).length; }
 
+function renderTopNav(){
+  const navEl=document.getElementById('nav');
+  if(navEl) navEl.innerHTML=navTabs().map(t=>`<button class="${t.house?'houseTab':''} ${activeTab===t.id?'active':''}" onclick="go('${t.id}')">${t.label}${t.badge?`<span class="badge">${t.badge}</span>`:''}</button>`).join('');
+}
 function render(){
   if(!me||!S) return;
   ensureMatchdayListener();
@@ -7432,11 +7436,9 @@ function render(){
   const p=pnl[me.id]||0;
   const pnlEl=document.getElementById('myPnl');
   if(pnlEl) pnlEl.innerHTML=`P&L <span class="${p>0?'pos':p<0?'neg':''} mono">${GBP(p)}</span>`;
-  const tabs=navTabs();
-  const navEl=document.getElementById('nav');
-  if(navEl) navEl.innerHTML=tabs.map(t=>`<button class="${t.house?'houseTab':''} ${activeTab===t.id?'active':''}" onclick="go('${t.id}')">${t.label}${t.badge?`<span class="badge">${t.badge}</span>`:''}</button>`).join('');
+  renderTopNav();
   const views={home:vHome,matchday:vMatchday,builder:vBuilder,mybets:vMyBets,results:vResults,insights:vInsights,usettings:vUserSettings,
-    review:vReview,loader:vLoader,odds:vOddSetter,settler:()=>scoreAdminHtml()+vSettler(),promos:vPromos,office:vOffice,
+    review:vReview,loader:vLoader,odds:vOddSetter,settler:()=>scoreAdminHtml()+vSettler(),promos:vPromos,office:vOffice,tower:vTower,
     // Batch 28: reached only via the "🏆 Season Bets" summary card's click-through (Home/Builder)
     // or the bet-detail modal's duplicate-bet flow — deliberately not in navTabs()'s tab list,
     // same precedent as 'loader' above.
@@ -7471,7 +7473,7 @@ function render(){
     if(btn) btn.classList.toggle('active',activeTab===id);
   });
   const moreBtn=document.getElementById('bn-more');
-  if(moreBtn) moreBtn.classList.toggle('active',['usettings','review','loader','odds','settler','promos','office','seasonbets'].includes(activeTab));
+  if(moreBtn) moreBtn.classList.toggle('active',['usettings','review','loader','odds','settler','promos','office','tower','seasonbets'].includes(activeTab));
   // Notification dot
   renderNotifications();
   // Batch 24: keep the mobile nav drawer's list (badges, active state) in sync too.
