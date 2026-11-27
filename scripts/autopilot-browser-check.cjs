@@ -79,6 +79,88 @@ async function prepare(page) {
   });
 }
 
+// SCREENS=1: phone-width screenshots of every autopilot screen, with an illustrative bet
+// tracker (synthetic bets and live scores on the published gameweek's real fixtures).
+async function phoneScreens(page, pub, set) {
+  const Core = require("./autopilot-core.cjs");
+  const st = await page.evaluate((id) => ({ g: gw(id), teams: S.teams }), pub.gwId);
+  const ms = st.g.matches.filter((m) => m.home && m.away);
+  const scores = [[48, 31], [22, 37], [41, 40], [55, 29], [30, 30], [19, 44]];
+  const snap = { matches: {}, teams: {} };
+  ms.forEach((m, i) => {
+    const [h, a] = scores[i % scores.length];
+    const lead = h > a ? 0.78 : h < a ? 0.2 : 0.45;
+    snap.matches[m.id] = { id: m.id, home: m.home, away: m.away, currentHome: h, currentAway: a, probabilities: { home: lead, draw: 0.03, away: 0.97 - lead } };
+    snap.teams[m.home] = { remainingPlayers: i < 2 ? 0 : 4 };
+    snap.teams[m.away] = { remainingPlayers: i < 2 ? 0 : 3 };
+  });
+  const nm = (id) => st.teams.find((t) => t.id === id).name;
+  const leg = (m, pick) => ({ type: "match", matchId: m.id, pick, label: pick === "draw" ? `Draw — ${nm(m.home)} v ${nm(m.away)}` : `${nm(m[pick])} to WIN v ${nm(m[pick === "home" ? "away" : "home"])}` });
+  const bets = [
+    { teamId: "henry", gwId: st.g.id, status: "accepted", stake: 10, effOdds: 3.61, legs: [leg(ms[0], "home"), leg(ms[3], "home")] },
+    { teamId: "fride", gwId: st.g.id, status: "accepted", stake: 5, effOdds: 6.9, legs: [leg(ms[1], "home"), leg(ms[2], "home"), leg(ms[5], "away")] },
+    { teamId: "kapil", gwId: st.g.id, status: "accepted", stake: 2, effOdds: 13.5, legs: [leg(ms[4], "draw")] },
+  ];
+  const text = Core.trendText({ g: st.g, bets, teams: st.teams, snap, update: { index: 0, finished: 5, total: 10 }, link: "https://dseligman1.github.io/lennon-lounge/?from=gw12-up1-wa" });
+  fs.writeFileSync(path.join(out, "sample-bet-tracker.txt"), text);
+  const now = Date.now();
+  await page.setViewportSize({ width: 390, height: 844 });
+  // Show what an iPhone shows: headless Chrome can't share files, a phone can.
+  await page.evaluate(() => {
+    navigator.canShare = () => true;
+    navigator.share = async () => {};
+    const t = document.getElementById("toast");
+    if (t) t.style.visibility = "hidden";
+  });
+  await page.evaluate(({ text, odds, recap, now, oddsName, recapName }) => {
+    __SEED__["lennon-lounge-autopilot"] = {
+      config: { enabled: true },
+      status: { checkedAt: now - 4 * 60000, active: true, nextCheckAt: now + 6 * 60000, notes: [] },
+      outbox: {
+        "odds-1": { id: "odds-1", kind: "odds", title: oddsName + " odds poster", caption: odds.caption, hasImage: true, createdAt: now - 26 * 3600000, sentAt: now - 25.9 * 3600000 },
+        "trend-1": { id: "trend-1", kind: "trend", title: oddsName + " bet tracker 1", caption: text, hasImage: false, createdAt: now - 3600000, sentAt: null },
+        "recap-1": { id: "recap-1", kind: "recap", title: recapName + " recap poster", caption: recap.caption, hasImage: true, createdAt: now - 60000, sentAt: null },
+      },
+      images: { "odds-1": odds.image, "recap-1": recap.image },
+      log: {
+        [now - 26 * 3600000]: { at: now - 26 * 3600000, text: oddsName.replace(" ", "") + ": published at the model's odds; poster queued for WhatsApp." },
+        [now - 3600000]: { at: now - 3600000, text: oddsName.replace(" ", "") + ": bet update 1 queued at 5/10 games." },
+        [now - 60000]: { at: now - 60000, text: recapName.replace(" ", "") + ": settled (1 won, 0 lost, 0 void, 1 expired); recap queued." },
+      },
+    };
+  }, { text, odds: pub.poster, recap: set.poster, now, oddsName: pub.name, recapName: set.name });
+  const shot = async (id, file, full) => {
+    await page.evaluate(async (id) => { apShare = null; await apOpenShare(id); }, id);
+    await page.waitForSelector("#posterModal.open #apCaption");
+    await page.waitForTimeout(400);
+    await page.screenshot({ path: path.join(out, file), fullPage: !!full });
+  };
+  await shot("odds-1", "phone-share-odds.png");
+  await shot("trend-1", "phone-share-tracker.png");
+  await shot("recap-1", "phone-share-recap.png");
+  await page.evaluate(() => { apCloseShare(); go("office"); });
+  await page.waitForSelector("#apCardBody table");
+  await page.waitForTimeout(500);
+  await page.evaluate(() => document.querySelector("#apCardBody").closest(".card").scrollIntoView());
+  await page.screenshot({ path: path.join(out, "phone-office-autopilot.png") });
+  await page.evaluate(() => document.querySelector("#apCardBody table").scrollIntoView({ block: "center" }));
+  await page.screenshot({ path: path.join(out, "phone-office-outbox.png") });
+  await page.evaluate(() => go("odds"));
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: path.join(out, "phone-odds-setter.png") });
+  await page.evaluate(() => go("settler"));
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: path.join(out, "phone-settler.png") });
+  // A sample bet waiting for review (screen only; not saved).
+  await page.evaluate(({ gwId, legs }) => {
+    S.bets.push({ id: "bet_sample_review", teamId: "henry", gwId, status: "pending", stake: 10, effOdds: 3.61, legs, placedAt: Date.now() - 120000, inplay: false });
+  }, { gwId: st.g.id, legs: bets[0].legs.map((l) => ({ ...l, gwId: st.g.id, odds: 1.9 })) });
+  await page.evaluate(() => go("review"));
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: path.join(out, "phone-bet-review.png") });
+  console.log("Phone screenshots written.");
+}
+
 (async () => {
   fs.mkdirSync(out, { recursive: true });
   const h = await House.openHouse({ pin: "424242", url: "http://lennon.test/", prepare });
@@ -136,6 +218,7 @@ async function prepare(page) {
     await page.evaluate(() => { apCloseShare(); go("office"); });
     await page.waitForSelector("#apCardBody table");
     await page.screenshot({ path: path.join(out, "office-autopilot.png"), fullPage: false });
+    if (process.env.SCREENS) await phoneScreens(page, pub, set);
     if (h.errors.length) console.log("Page errors:", h.errors);
     assert.deepEqual(h.errors, []);
     console.log("PASS share screen + Back Office card. Screenshots: " + out);
