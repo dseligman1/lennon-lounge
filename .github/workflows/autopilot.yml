@@ -14,7 +14,7 @@ on:
       mode:
         description: "watch = keep running while needed; once = one tick; status = print state; check = test the house browser (no saves)"
         type: choice
-        options: [watch, once, status, check]
+        options: [watch, once, status, check, test-share]
         default: watch
       dry_run:
         description: "Decide and log only: no publishing, settling, pushes or writes"
@@ -23,7 +23,7 @@ on:
 
 concurrency:
   # Read-only status/check runs get their own group so they don't queue behind a running watcher.
-  group: autopilot-${{ ((inputs.mode == 'status' || inputs.mode == 'check') && github.run_id) || 'main' }}
+  group: autopilot-${{ ((inputs.mode == 'status' || inputs.mode == 'check' || inputs.mode == 'test-share') && github.run_id) || 'main' }}
   cancel-in-progress: false
 
 permissions:

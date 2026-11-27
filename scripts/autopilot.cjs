@@ -340,6 +340,19 @@ async function main() {
     console.log(bets.filter((b) => !["settled", "won", "lost", "void", "expired", "cancelled", "rejected"].includes(b.status)).map((b) => `${b.teamId} ${b.gwId} ${b.status} £${b.stake} @${b.effOdds}`).join("\n"));
     return;
   }
+  if (MODE === "test-share") {
+    // Sends Dan a sample bet tracker (latest settled gameweek) to try the one-tap share flow.
+    const cfg = Core.config(await db(`${ROOT}/config`));
+    const state = await db("lennon-lounge");
+    const arr = (x) => Object.values(x || {}).filter(Boolean);
+    const g = arr(state.gameweeks).filter((x) => x.status === "settled" && arr(state.bets).some((b) => b.gwId === x.id && ["won", "lost"].includes(b.status))).sort((a, b) => b.event - a.event)[0];
+    if (!g) return log("No settled gameweek with bets to sample.");
+    const snap = await db(`lennon-lounge-matchday/${g.event}/current`);
+    const bets = arr(state.bets).filter((b) => b.gwId === g.id && ["won", "lost"].includes(b.status)).map((b) => ({ ...b, status: "accepted" }));
+    const text = Core.trendText({ g, bets, teams: arr(state.teams), snap, update: { index: 0, finished: 5, total: 10 }, link: `${APP_URL}?from=test-wa` });
+    const id = await queueShare(cfg, { kind: "trend", ev: g.event, gwId: g.id, title: `TEST · ${g.name} bet tracker sample`, caption: "🧪 TEST (don't send to the group)\n" + text }, "🧪 Test: bet update ready", "Tap to try the one-tap WhatsApp share. It's a sample, so send it to yourself, not the group.");
+    return log(`Test item queued and pushed: ${id}`);
+  }
   if (MODE === "check") {
     // Read-only proof that the house browser works here: log in, draw the next draft
     // gameweek's odds poster without saving anything, log out.
